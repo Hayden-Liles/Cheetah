@@ -1,0 +1,33 @@
+[package]
+name = "cheetah"
+version = "0.1.0"
+edition = "2021"
+authors = ["Hayden Liles <lileshaydenreal@gmail.com>"]
+description = "Cheetah programming language with Python-like syntax"
+
+[dependencies]
+# Command line argument parsing
+clap = { version = "4.5.31", features = ["derive"] }
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+# Terminal coloring for better output
+colored = "3.0.0"
+# String manipulation
+unicode-segmentation = "1.10"
+# Benchmarking (for development use)
+criterion = { version = "0.5", optional = true }
+
+[dev-dependencies]
+# Testing
+quickcheck = "1.0"
+test-case = "3.1"
+
+[features]
+default = []
+benchmarks = ["dep:criterion"]
+
+[[bench]]
+name = "lexer_benchmark"
+harness = false
+required-features = ["benchmarks"]
