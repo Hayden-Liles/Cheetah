@@ -2,7 +2,6 @@ mod lexer;
 
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
 use clap::{Parser, Subcommand};
 use anyhow::{Result, Context};
 use colored::Colorize;

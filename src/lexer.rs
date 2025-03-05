@@ -322,9 +322,13 @@ impl<'a> Lexer<'a> {
         }
         
         // Check for triple-quoted strings
-        if (current_char == '"' && self.check_next('"') && self.check_next_n('"', 2)) ||
-           (current_char == '\'' && self.check_next('\'') && self.check_next_n('\'', 2)) {
-            return Some(self.handle_triple_quoted_string());
+        if (current_char == '"' && 
+        self.position + 1 < self.chars.len() && self.chars[self.position + 1] == '"' && 
+        self.position + 2 < self.chars.len() && self.chars[self.position + 2] == '"') ||
+        (current_char == '\'' && 
+        self.position + 1 < self.chars.len() && self.chars[self.position + 1] == '\'' && 
+        self.position + 2 < self.chars.len() && self.chars[self.position + 2] == '\'') {
+        return Some(self.handle_triple_quoted_string());
         }
         
         // Check for regular string literals
@@ -560,12 +564,17 @@ impl<'a> Lexer<'a> {
                     }
                 };
                 
+                // Only add the character for simple escapes, the complex ones handle adding themselves
                 if current_char != 'x' && current_char != 'u' {
                     string_content.push(escaped_char);
+                    self.consume_char(); // Consume the escape character
                 }
+                // No need to consume here for complex escapes, they handle their own consumption
+                
                 escaped = false;
             } else if current_char == '\\' {
                 escaped = true;
+                self.consume_char(); // Consume the backslash
             } else if current_char == quote_char {
                 // End of string
                 self.consume_char(); // Consume the closing quote
@@ -582,9 +591,8 @@ impl<'a> Lexer<'a> {
                 );
             } else {
                 string_content.push(current_char);
+                self.consume_char(); // Consume the character
             }
-            
-            self.consume_char();
         }
         
         // Get the text and immediately clone it to avoid borrow issues
@@ -603,7 +611,7 @@ impl<'a> Lexer<'a> {
         }
         
         Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text.to_string())
-    }
+    }    
     
     /// Handles triple-quoted strings (multi-line strings)
     fn handle_triple_quoted_string(&mut self) -> Token {
@@ -611,7 +619,7 @@ impl<'a> Lexer<'a> {
         let start_col = self.column;
         let quote_char = self.chars[self.position];
         
-        // Consume the three quotes
+        // Consume the three opening quotes
         self.consume_char();
         self.consume_char();
         self.consume_char();
@@ -625,10 +633,14 @@ impl<'a> Lexer<'a> {
             if current_char == quote_char {
                 consecutive_quotes += 1;
                 
-                // Check if we've reached the end (three consecutive quotes)
+                // Check if we've found three consecutive quotes
                 if consecutive_quotes == 3 {
+                    // Consume the third quote to complete the ending triple-quote
+                    self.consume_char();
                     break;
                 }
+                
+                self.consume_char();
             } else {
                 // If we had some quotes but not three, add them to the content
                 for _ in 0..consecutive_quotes {
@@ -636,65 +648,55 @@ impl<'a> Lexer<'a> {
                 }
                 consecutive_quotes = 0;
                 string_content.push(current_char);
+                self.consume_char();
             }
-            
-            self.consume_char();
         }
         
-        // Consume the three closing quotes if we found them
-        if consecutive_quotes == 3 {
-            self.consume_char();
-            self.consume_char();
-            self.consume_char();
-        } else {
+        // Check if we found a proper closing triple-quote
+        if consecutive_quotes < 3 {
             // Unterminated triple-quoted string
-            let text_str = self.get_slice(start_pos, self.position).to_string();
+            let text = self.get_slice(start_pos, self.position).to_string();
             self.add_error("Unterminated triple-quoted string");
             return Token::error(
                 "Unterminated triple-quoted string",
                 self.line,
                 start_col,
-                &text_str
+                &text
             );
         }
         
         let text = self.get_slice(start_pos, self.position).to_string();
-        Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text.to_string())
-    }
+        Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text)
+    }    
     
     /// Handles \x escape sequences in strings (hex values)
     fn handle_hex_escape(&mut self, string_content: &mut String) -> char {
         self.consume_char(); // Consume the 'x'
         
         let mut hex_value = String::with_capacity(2);
-        let mut escape_count = 0;
         
         // Read exactly 2 hex digits
         for _ in 0..2 {
             if self.position < self.chars.len() && 
-               self.chars[self.position].is_ascii_hexdigit() {
+                self.chars[self.position].is_ascii_hexdigit() {
                 hex_value.push(self.chars[self.position]);
                 self.consume_char();
-                escape_count += 1;
             } else {
                 self.add_error("Invalid hex escape sequence: expected 2 hex digits");
                 return '?'; // Error placeholder
             }
         }
         
-        // Clone hex_value to avoid borrow issues
-        let hex_value_clone = hex_value.clone();
-        
         // Convert hex to char
         if let Ok(byte) = u8::from_str_radix(&hex_value, 16) {
-            let c = byte as char;
-            string_content.push(c);
+            string_content.push(byte as char);
         } else {
-            let err_msg = format!("Invalid hex escape sequence: \\x{}", hex_value_clone);
+            let err_msg = format!("Invalid hex escape sequence: \\x{}", hex_value);
             self.add_error(&err_msg);
         }
         
-        '\0' // Return null char as the actual char is added to string_content
+        // Return null character since we've already added the hex character to string_content
+        '\0'
     }
     
     /// Handles \u escape sequences in strings (unicode values)
@@ -707,45 +709,70 @@ impl<'a> Lexer<'a> {
             self.consume_char();
         }
         
-        let start_pos = self.position;
-        
-        // Read 1-6 hex digits for Unicode code point
-        self.consume_while(|c| c.is_ascii_hexdigit());
-        
-        let hex_str = self.get_slice(start_pos, self.position);
-        
-        // Store the hex string to avoid borrow issues
-        let hex_string = hex_str.to_string();
-        
-        // Check closing brace if needed
-        if has_braces {
+        // For non-braced format (e.g., \u00A9), read exactly 4 hex digits
+        if !has_braces {
+            let mut hex_value = String::with_capacity(4);
+            
+            // Read exactly 4 hex digits
+            for _ in 0..4 {
+                if self.position < self.chars.len() && 
+                   self.chars[self.position].is_ascii_hexdigit() {
+                    hex_value.push(self.chars[self.position]);
+                    self.consume_char();
+                } else {
+                    self.add_error("Invalid Unicode escape sequence: expected 4 hex digits");
+                    return '?'; // Error placeholder
+                }
+            }
+            
+            // Convert to Unicode character
+            if let Ok(code_point) = u32::from_str_radix(&hex_value, 16) {
+                if let Some(c) = char::from_u32(code_point) {
+                    string_content.push(c);
+                } else {
+                    let err_msg = format!("Invalid Unicode code point: U+{:X}", code_point);
+                    self.add_error(&err_msg);
+                }
+            } else {
+                let err_msg = format!("Invalid Unicode escape sequence: \\u{}", hex_value);
+                self.add_error(&err_msg);
+            }
+        }
+        // For braced format (e.g., \u{1F600}), read 1-6 hex digits
+        else {
+            let start_pos = self.position;
+            
+            // Read 1-6 hex digits for Unicode code point
+            self.consume_while(|c| c.is_ascii_hexdigit());
+            
+            // Get the hex value as a String to avoid borrow issues
+            let hex_value = self.get_slice(start_pos, self.position).to_string();
+            
+            // Check closing brace
             if self.position < self.chars.len() && self.chars[self.position] == '}' {
                 self.consume_char();
             } else {
                 self.add_error("Unclosed Unicode escape sequence: missing closing brace");
                 return '?';
             }
-        }
-        
-        // Convert to Unicode character
-        if let Ok(code_point) = u32::from_str_radix(&hex_string, 16) {
-            match char::from_u32(code_point) {
-                Some(c) => {
+            
+            // Convert to Unicode character
+            if let Ok(code_point) = u32::from_str_radix(&hex_value, 16) {
+                if let Some(c) = char::from_u32(code_point) {
                     string_content.push(c);
-                    '\0' // Return null char as the actual char is added to string_content
-                },
-                None => {
+                } else {
                     let err_msg = format!("Invalid Unicode code point: U+{:X}", code_point);
                     self.add_error(&err_msg);
-                    '?' // Error placeholder
                 }
+            } else {
+                let err_msg = format!("Invalid Unicode escape sequence: \\u{{{}}}", hex_value);
+                self.add_error(&err_msg);
             }
-        } else {
-            let err_msg = format!("Invalid Unicode escape sequence: \\u{{{}}}", hex_string);
-            self.add_error(&err_msg);
-            '?' // Error placeholder
         }
-    }
+        
+        // Return null character since we've already added the Unicode character to string_content
+        '\0'
+    }     
     
     /// Handles operators and delimiters
     fn handle_operator_or_delimiter(&mut self) -> Token {
@@ -1015,6 +1042,11 @@ mod tests {
         let mut lexer = Lexer::new("\"\"\"This is a\nmulti-line\nstring\"\"\" '''Another\none'''");
         let tokens = lexer.tokenize();
         
+        // Print tokens for debugging
+        for (i, token) in tokens.iter().enumerate() {
+            println!("Token {}: {:?}", i, token.token_type);
+        }
+        
         assert_eq!(tokens[0].token_type, TokenType::StringLiteral("This is a\nmulti-line\nstring".to_string()));
         assert_eq!(tokens[1].token_type, TokenType::StringLiteral("Another\none".to_string()));
     }
@@ -1175,6 +1207,15 @@ print("Factorial of 5 is", result)
         let mut lexer = Lexer::new(r#""\u{1F600}" "\u00A9""#);
         let tokens = lexer.tokenize();
         
+        // Print tokens for debugging
+        for (i, token) in tokens.iter().enumerate() {
+            println!("Unicode Token {}: {:?}", i, token.token_type);
+            if let TokenType::StringLiteral(s) = &token.token_type {
+                println!("String content: '{}'", s);
+                println!("String bytes: {:?}", s.as_bytes());
+            }
+        }
+        
         assert_eq!(tokens[0].token_type, TokenType::StringLiteral("😀".to_string()));
         assert_eq!(tokens[1].token_type, TokenType::StringLiteral("©".to_string()));
     }
@@ -1183,6 +1224,15 @@ print("Factorial of 5 is", result)
     fn test_hex_escape() {
         let mut lexer = Lexer::new(r#""\x41\x42""#);
         let tokens = lexer.tokenize();
+        
+        // Print tokens for debugging
+        for (i, token) in tokens.iter().enumerate() {
+            println!("Hex Token {}: {:?}", i, token.token_type);
+            if let TokenType::StringLiteral(s) = &token.token_type {
+                println!("String content: '{}'", s);
+                println!("String bytes: {:?}", s.as_bytes());
+            }
+        }
         
         assert_eq!(tokens[0].token_type, TokenType::StringLiteral("AB".to_string()));
     }
