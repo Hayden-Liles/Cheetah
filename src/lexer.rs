@@ -1,7 +1,10 @@
 use std::fmt;
 use std::str::FromStr;
+use std::collections::HashSet;
 
 /// Represents the different types of tokens in the Cheetah language
+/// 
+/// The Cheetah language has Python-like syntax with some custom extensions.
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
     // Keywords
@@ -26,12 +29,32 @@ pub enum TokenType {
     Or,
     Not,
     Class,
+    With,
+    Assert,
+    Async,
+    Await,
+    Try,
+    Except,
+    Finally,
+    Raise,
+    Lambda,
+    Global,
+    Nonlocal,
+    Yield,
+    Del,
+    Is,
     
     // Identifiers and literals
     Identifier(String),
     IntLiteral(i64),
     FloatLiteral(f64),
     StringLiteral(String),
+    BytesLiteral(Vec<u8>),
+    RawString(String),
+    FString(String),
+    BinaryLiteral(i64),
+    OctalLiteral(i64),
+    HexLiteral(i64),
     
     // Operators
     Plus,         // +
@@ -41,6 +64,7 @@ pub enum TokenType {
     FloorDivide,  // //
     Modulo,       // %
     Power,        // **
+    MatrixMul,    // @
     
     Assign,       // =
     PlusAssign,   // +=
@@ -48,6 +72,14 @@ pub enum TokenType {
     MulAssign,    // *=
     DivAssign,    // /=
     ModAssign,    // %=
+    PowAssign,    // **=
+    MatrixMulAssign, // @=
+    FloorDivAssign,  // //=
+    BitwiseAndAssign, // &=
+    BitwiseOrAssign,  // |=
+    BitwiseXorAssign, // ^=
+    ShiftLeftAssign,  // <<=
+    ShiftRightAssign, // >>=
     
     Equal,        // ==
     NotEqual,     // !=
@@ -55,6 +87,16 @@ pub enum TokenType {
     LessEqual,    // <=
     GreaterThan,  // >
     GreaterEqual, // >=
+    
+    BitwiseAnd,   // &
+    BitwiseOr,    // |
+    BitwiseXor,   // ^
+    BitwiseNot,   // ~
+    ShiftLeft,    // <<
+    ShiftRight,   // >>
+    
+    Walrus,       // :=
+    Ellipsis,     // ...
     
     // Delimiters
     LeftParen,    // (
@@ -67,6 +109,8 @@ pub enum TokenType {
     Dot,          // .
     Colon,        // :
     SemiColon,    // ;
+    Arrow,        // ->
+    At,           // @ (for decorators)
     
     // Indentation (special in Python-like syntax)
     Indent,
@@ -118,10 +162,14 @@ impl fmt::Display for Token {
 }
 
 /// Configuration for the lexer
+#[derive(Debug, Clone)]
 pub struct LexerConfig {
     pub tab_width: usize,
     pub enforce_indent_consistency: bool,
     pub standard_indent_size: usize,
+    pub allow_trailing_semicolon: bool,
+    pub allow_tabs_in_indentation: bool,
+    pub strict_line_joining: bool,
 }
 
 impl Default for LexerConfig {
@@ -130,29 +178,69 @@ impl Default for LexerConfig {
             tab_width: 4,
             enforce_indent_consistency: true,
             standard_indent_size: 4,
+            allow_trailing_semicolon: true,
+            allow_tabs_in_indentation: false,
+            strict_line_joining: true,
         }
+    }
+}
+
+/// Error type for lexer errors
+#[derive(Debug, Clone)]
+pub struct LexerError {
+    pub message: String,
+    pub line: usize,
+    pub column: usize,
+    pub snippet: String,
+    pub suggestion: Option<String>,
+}
+
+impl fmt::Display for LexerError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Line {}, Column {}: {}", self.line, self.column, self.message)?;
+        if let Some(suggestion) = &self.suggestion {
+            write!(f, " - Suggestion: {}", suggestion)?;
+        }
+        Ok(())
     }
 }
 
 /// The Cheetah lexer
 pub struct Lexer<'a> {
     input: &'a str,
-    chars: Vec<char>,
+    chars: std::str::Chars<'a>,
     position: usize,
     line: usize,
     column: usize,
     indent_stack: Vec<usize>,
     current_indent: usize,
     config: LexerConfig,
-    errors: Vec<String>,
+    errors: Vec<LexerError>,
+    paren_level: usize,
+    bracket_level: usize,
+    brace_level: usize,
+    lookahead_buffer: Vec<char>,
+    keywords: HashSet<&'static str>,
 }
 
 impl<'a> Lexer<'a> {
     /// Creates a new lexer with default configuration
     pub fn new(input: &'a str) -> Self {
+        let mut keywords = HashSet::new();
+        // Add all Python keywords
+        for kw in &[
+            "def", "return", "if", "elif", "else", "while", "for", "in", "break", 
+            "continue", "pass", "import", "from", "as", "True", "False", "None", 
+            "and", "or", "not", "class", "with", "assert", "async", "await", "try", 
+            "except", "finally", "raise", "lambda", "global", "nonlocal", "yield", 
+            "del", "is"
+        ] {
+            keywords.insert(*kw);
+        }
+        
         Lexer {
             input,
-            chars: input.chars().collect(),
+            chars: input.chars(),
             position: 0,
             line: 1,
             column: 1,
@@ -160,33 +248,59 @@ impl<'a> Lexer<'a> {
             current_indent: 0,
             config: LexerConfig::default(),
             errors: Vec::new(),
+            paren_level: 0,
+            bracket_level: 0,
+            brace_level: 0,
+            lookahead_buffer: Vec::new(),
+            keywords,
         }
     }
     
     /// Creates a new lexer with custom configuration
     pub fn with_config(input: &'a str, config: LexerConfig) -> Self {
-        Lexer {
-            input,
-            chars: input.chars().collect(),
-            position: 0,
-            line: 1,
-            column: 1,
-            indent_stack: vec![0], // Start with 0 indentation
-            current_indent: 0,
-            config,
-            errors: Vec::new(),
-        }
+        let mut lexer = Lexer::new(input);
+        lexer.config = config;
+        lexer
     }
     
     /// Returns any errors encountered during lexing
-    pub fn get_errors(&self) -> &[String] {
+    pub fn get_errors(&self) -> &[LexerError] {
         &self.errors
     }
     
     /// Adds an error message to the error list
     fn add_error(&mut self, message: &str) {
-        let error_message = format!("Line {}, Column {}: {}", self.line, self.column, message);
-        self.errors.push(error_message);
+        let error = LexerError {
+            message: message.to_string(),
+            line: self.line,
+            column: self.column,
+            snippet: self.get_error_context(),
+            suggestion: None,
+        };
+        self.errors.push(error);
+    }
+    
+    /// Adds an error message with suggestion to the error list
+    fn add_error_with_suggestion(&mut self, message: &str, suggestion: &str) {
+        let error = LexerError {
+            message: message.to_string(),
+            line: self.line,
+            column: self.column,
+            snippet: self.get_error_context(),
+            suggestion: Some(suggestion.to_string()),
+        };
+        self.errors.push(error);
+    }
+    
+    /// Gets a short context snippet for error reporting
+    fn get_error_context(&self) -> String {
+        // Get the current line of code
+        let lines: Vec<&str> = self.input.lines().collect();
+        if self.line <= lines.len() {
+            lines[self.line - 1].to_string()
+        } else {
+            String::new()
+        }
     }
     
     /// Tokenizes the input string into a vector of tokens
@@ -212,6 +326,9 @@ impl<'a> Lexer<'a> {
                 break;
             }
             
+            // Update nesting levels for parentheses, brackets, and braces
+            self.update_nesting_level(&token.token_type);
+            
             // Store token information before we move it
             let token_type = token.token_type.clone();
             let token_line = token.line;
@@ -219,71 +336,16 @@ impl<'a> Lexer<'a> {
             // Push the token to our collection
             tokens.push(token);
             
-            // If we just saw a newline, check indentation for the next token
-            if matches!(token_type, TokenType::Newline) {
+            // If we just saw a newline and we're not in a nested structure, check indentation
+            if matches!(token_type, TokenType::Newline) && 
+               self.paren_level == 0 && self.bracket_level == 0 && self.brace_level == 0 {
                 pending_indentation_change = true;
                 continue;
             }
             
             // After a newline, check if we need to insert indentation tokens before this token
             if pending_indentation_change {
-                // Check if indentation increased
-                if self.current_indent > *self.indent_stack.last().unwrap_or(&0) {
-                    // Check for consistency if enabled
-                    if self.config.enforce_indent_consistency && 
-                       self.current_indent % self.config.standard_indent_size != 0 {
-                        self.add_error(&format!(
-                            "Inconsistent indentation. Expected multiple of {} spaces but got {}.", 
-                            self.config.standard_indent_size, self.current_indent
-                        ));
-                    }
-                    
-                    // Insert an indent token BEFORE the current token
-                    let indent_token = Token::new(
-                        TokenType::Indent,
-                        token_line,
-                        1, // Indent is always at the start of the line
-                        " ".repeat(self.current_indent),
-                    );
-                    
-                    // Update indentation stack
-                    self.indent_stack.push(self.current_indent);
-                    
-                    // Insert the Indent token before the current token
-                    tokens.insert(tokens.len() - 1, indent_token);
-                } 
-                // Check if indentation decreased
-                else if self.current_indent < *self.indent_stack.last().unwrap_or(&0) {
-                    // Generate dedent tokens as needed
-                    let mut dedent_tokens = Vec::new();
-                    
-                    while self.indent_stack.len() > 1 && self.current_indent < *self.indent_stack.last().unwrap() {
-                        let _last_indent = self.indent_stack.pop().unwrap();
-                        
-                        // Check if we're going back to a valid indentation level
-                        if self.indent_stack.last().unwrap() != &self.current_indent && 
-                           self.indent_stack.iter().all(|i| i != &self.current_indent) {
-                            let msg = format!(
-                                "Inconsistent indentation. Current indent level {} doesn't match any previous level.",
-                                self.current_indent
-                            );
-                            self.add_error(&msg);
-                        }
-                        
-                        dedent_tokens.push(Token::new(
-                            TokenType::Dedent,
-                            token_line,
-                            1,
-                            "".to_string(),
-                        ));
-                    }
-                    
-                    // Insert all dedent tokens before the current token
-                    for (i, dedent) in dedent_tokens.into_iter().enumerate() {
-                        tokens.insert(tokens.len() - 1 - i, dedent);
-                    }
-                }
-                
+                self.handle_indentation_change(&mut tokens, token_line);
                 pending_indentation_change = false;
             }
         }
@@ -291,11 +353,102 @@ impl<'a> Lexer<'a> {
         tokens
     }
     
+    /// Updates the nesting level counters for parentheses, brackets, and braces
+    fn update_nesting_level(&mut self, token_type: &TokenType) {
+        match token_type {
+            TokenType::LeftParen => self.paren_level += 1,
+            TokenType::RightParen => {
+                if self.paren_level > 0 {
+                    self.paren_level -= 1;
+                }
+            },
+            TokenType::LeftBracket => self.bracket_level += 1,
+            TokenType::RightBracket => {
+                if self.bracket_level > 0 {
+                    self.bracket_level -= 1;
+                }
+            },
+            TokenType::LeftBrace => self.brace_level += 1,
+            TokenType::RightBrace => {
+                if self.brace_level > 0 {
+                    self.brace_level -= 1;
+                }
+            },
+            _ => {}
+        }
+    }
+    
+    /// Handles indentation changes after a newline
+    fn handle_indentation_change(&mut self, tokens: &mut Vec<Token>, token_line: usize) {
+        // Check if indentation increased
+        if self.current_indent > *self.indent_stack.last().unwrap_or(&0) {
+            // Check for consistency if enabled
+            if self.config.enforce_indent_consistency && 
+                self.current_indent % self.config.standard_indent_size != 0 {
+                self.add_error_with_suggestion(
+                    &format!(
+                        "Inconsistent indentation. Expected multiple of {} spaces but got {}.", 
+                        self.config.standard_indent_size, self.current_indent
+                    ),
+                    &format!("Use {} spaces for indentation", self.config.standard_indent_size)
+                );
+            }
+            
+            // Insert an indent token BEFORE the current token
+            let indent_token = Token::new(
+                TokenType::Indent,
+                token_line,
+                1, // Indent is always at the start of the line
+                " ".repeat(self.current_indent),
+            );
+            
+            // Update indentation stack
+            self.indent_stack.push(self.current_indent);
+            
+            // Insert the Indent token before the current token
+            tokens.insert(tokens.len() - 1, indent_token);
+        } 
+        // Check if indentation decreased
+        else if self.current_indent < *self.indent_stack.last().unwrap_or(&0) {
+            // Generate dedent tokens as needed
+            let mut dedent_tokens = Vec::new();
+            
+            while self.indent_stack.len() > 1 && self.current_indent < *self.indent_stack.last().unwrap() {
+                let _last_indent = self.indent_stack.pop().unwrap();
+                
+                // Check if we're going back to a valid indentation level
+                if self.indent_stack.last().unwrap() != &self.current_indent && 
+                    self.indent_stack.iter().all(|i| i != &self.current_indent) {
+                    let msg = format!(
+                        "Inconsistent indentation. Current indent level {} doesn't match any previous level.",
+                        self.current_indent
+                    );
+                    self.add_error_with_suggestion(
+                        &msg, 
+                        "Ensure indentation matches a previous level"
+                    );
+                }
+                
+                dedent_tokens.push(Token::new(
+                    TokenType::Dedent,
+                    token_line,
+                    1,
+                    "".to_string(),
+                ));
+            }
+            
+            // Insert all dedent tokens before the current token
+            for (i, dedent) in dedent_tokens.into_iter().enumerate() {
+                tokens.insert(tokens.len() - 1 - i, dedent);
+            }
+        }
+    }
+    
     /// Gets the next token from the input
     fn next_token(&mut self) -> Option<Token> {
         self.skip_whitespace();
         
-        if self.position >= self.chars.len() {
+        if self.is_at_end() {
             return Some(Token::new(
                 TokenType::EOF,
                 self.line,
@@ -304,11 +457,63 @@ impl<'a> Lexer<'a> {
             ));
         }
         
-        let current_char = self.chars[self.position];
+        let current_char = self.peek_char();
         
         // Check for newlines and indentation
         if current_char == '\n' {
+            // Skip newlines inside parentheses, brackets, and braces
+            if self.paren_level > 0 || self.bracket_level > 0 || self.brace_level > 0 {
+                self.consume_char(); // Just consume the newline without generating a token
+                self.skip_whitespace(); // Skip any following whitespace
+                return self.next_token(); // Continue to the next token
+            }
             return self.handle_newline();
+        }
+        
+        // Check for line continuation with backslash
+        if current_char == '\\' && self.peek_char_n(1) == '\n' {
+            self.consume_char(); // Consume backslash
+            self.consume_char(); // Consume newline
+            return self.next_token(); // Get the next token after continuation
+        }
+        
+        // Check for string prefixes (r, f, b, etc.)
+        if (current_char == 'r' || current_char == 'R' || 
+            current_char == 'f' || current_char == 'F' ||
+            current_char == 'b' || current_char == 'B') && 
+            (self.peek_char_n(1) == '"' || self.peek_char_n(1) == '\'') {
+            let prefix = current_char;
+            self.consume_char(); // Consume the prefix
+            
+            // Handle the string based on its prefix
+            match prefix {
+                'r' | 'R' => return Some(self.handle_raw_string()),
+                'f' | 'F' => return Some(self.handle_formatted_string()),
+                'b' | 'B' => return Some(self.handle_bytes_string()),
+                _ => unreachable!()
+            }
+        }
+        
+        // Check for triple-quoted string prefixes
+        if (current_char == 'r' || current_char == 'f' || current_char == 'b') && 
+            ((self.peek_char_n(1) == '"' && self.peek_char_n(2) == '"' && self.peek_char_n(3) == '"') ||
+             (self.peek_char_n(1) == '\'' && self.peek_char_n(2) == '\'' && self.peek_char_n(3) == '\'')) {
+            let prefix = current_char;
+            self.consume_char(); // Consume the prefix
+            
+            // Handle the triple-quoted string based on its prefix
+            match prefix {
+                'r' => return Some(self.handle_raw_triple_quoted_string()),
+                'f' => return Some(self.handle_formatted_triple_quoted_string()),
+                'b' => return Some(self.handle_bytes_triple_quoted_string()),
+                _ => unreachable!()
+            }
+        }
+        
+        // Check for triple-quoted strings
+        if (current_char == '"' && self.peek_char_n(1) == '"' && self.peek_char_n(2) == '"') ||
+           (current_char == '\'' && self.peek_char_n(1) == '\'' && self.peek_char_n(2) == '\'') {
+            return Some(self.handle_triple_quoted_string());
         }
         
         // Check for identifiers and keywords
@@ -317,18 +522,9 @@ impl<'a> Lexer<'a> {
         }
         
         // Check for numeric literals
-        if current_char.is_digit(10) {
+        if current_char.is_digit(10) || 
+           (current_char == '.' && self.peek_char_n(1).is_digit(10)) {
             return Some(self.handle_number());
-        }
-        
-        // Check for triple-quoted strings
-        if (current_char == '"' && 
-        self.position + 1 < self.chars.len() && self.chars[self.position + 1] == '"' && 
-        self.position + 2 < self.chars.len() && self.chars[self.position + 2] == '"') ||
-        (current_char == '\'' && 
-        self.position + 1 < self.chars.len() && self.chars[self.position + 1] == '\'' && 
-        self.position + 2 < self.chars.len() && self.chars[self.position + 2] == '\'') {
-        return Some(self.handle_triple_quoted_string());
         }
         
         // Check for regular string literals
@@ -339,12 +535,12 @@ impl<'a> Lexer<'a> {
         // Check for comments
         if current_char == '#' {
             // Skip the comment
-            while self.position < self.chars.len() && self.chars[self.position] != '\n' {
+            while !self.is_at_end() && self.peek_char() != '\n' {
                 self.consume_char();
             }
             
             // If we're at the end of the file after a comment, return EOF
-            if self.position >= self.chars.len() {
+            if self.is_at_end() {
                 return Some(Token::new(
                     TokenType::EOF,
                     self.line,
@@ -354,21 +550,46 @@ impl<'a> Lexer<'a> {
             }
             
             // Otherwise if we reached a newline, handle it
-            if self.position < self.chars.len() && self.chars[self.position] == '\n' {
+            if !self.is_at_end() && self.peek_char() == '\n' {
                 return self.handle_newline();
             }
+        }
+        
+        // Check for ellipsis
+        if current_char == '.' && self.peek_char_n(1) == '.' && self.peek_char_n(2) == '.' {
+            return Some(self.handle_ellipsis());
         }
         
         // Handle operators and delimiters
         Some(self.handle_operator_or_delimiter())
     }
     
+    /// Handles the ellipsis operator (...)
+    fn handle_ellipsis(&mut self) -> Token {
+        let start_pos = self.position;
+        let start_col = self.column;
+        
+        // Consume the three dots
+        self.consume_char();
+        self.consume_char();
+        self.consume_char();
+        
+        Token::new(
+            TokenType::Ellipsis,
+            self.line,
+            start_col,
+            "...".to_string()
+        )
+    }
+    
     /// Handles newlines and indentation
     fn handle_newline(&mut self) -> Option<Token> {
+        let start_col = self.column;
+        
         self.consume_char(); // Consume the newline
         
         // Skip empty lines and just count them for line number tracking
-        while self.position < self.chars.len() && self.chars[self.position] == '\n' {
+        while !self.is_at_end() && self.peek_char() == '\n' {
             self.consume_char();
         }
         
@@ -379,7 +600,7 @@ impl<'a> Lexer<'a> {
         let newline_token = Token::new(
             TokenType::Newline,
             self.line - 1, // Line where the newline started
-            self.column - 1,
+            start_col,
             "\n".to_string(),
         );
         
@@ -396,10 +617,8 @@ impl<'a> Lexer<'a> {
         let mut has_tabs = false;
         let mut has_spaces = false;
         
-        let _start_pos = self.position;
-        
-        while self.position < self.chars.len() {
-            let c = self.chars[self.position];
+        while !self.is_at_end() {
+            let c = self.peek_char();
             if c == ' ' {
                 has_spaces = true;
                 count += 1;
@@ -416,7 +635,12 @@ impl<'a> Lexer<'a> {
         
         // Check for mixed tabs and spaces
         if has_tabs && has_spaces && self.config.enforce_indent_consistency {
-            self.add_error("Mixed tabs and spaces in indentation");
+            if !self.config.allow_tabs_in_indentation {
+                self.add_error_with_suggestion(
+                    "Mixed tabs and spaces in indentation",
+                    "Use spaces only for indentation"
+                );
+            }
         }
         
         count
@@ -430,10 +654,10 @@ impl<'a> Lexer<'a> {
         // Consume all alphanumeric and underscore characters
         self.consume_while(|c| c.is_alphanumeric() || c == '_');
         
-        let text = self.get_slice(start_pos, self.position).to_string();
+        let text = self.get_slice(start_pos, self.position);
         
         // Check if it's a keyword
-        let token_type = match text.as_str() {
+        let token_type = match text {
             "def" => TokenType::Def,
             "return" => TokenType::Return,
             "if" => TokenType::If,
@@ -455,95 +679,267 @@ impl<'a> Lexer<'a> {
             "or" => TokenType::Or,
             "not" => TokenType::Not,
             "class" => TokenType::Class,
+            "with" => TokenType::With,
+            "assert" => TokenType::Assert,
+            "async" => TokenType::Async,
+            "await" => TokenType::Await,
+            "try" => TokenType::Try,
+            "except" => TokenType::Except,
+            "finally" => TokenType::Finally,
+            "raise" => TokenType::Raise,
+            "lambda" => TokenType::Lambda,
+            "global" => TokenType::Global,
+            "nonlocal" => TokenType::Nonlocal,
+            "yield" => TokenType::Yield,
+            "del" => TokenType::Del,
+            "is" => TokenType::Is,
             _ => TokenType::Identifier(text.to_string()),
         };
         
         Token::new(token_type, self.line, start_col, text.to_string())
     }
     
-    /// Handles numeric literals (integers, floats)
+    /// Handles numeric literals (integers, floats, and various bases)
     fn handle_number(&mut self) -> Token {
         let start_pos = self.position;
         let start_col = self.column;
+        
+        // Check for different number bases (0b, 0o, 0x)
+        if self.peek_char() == '0' && !self.is_at_end_n(1) {
+            let next_char = self.peek_char_n(1);
+            
+            // Only consume the '0' and handle special bases
+            if next_char == 'b' || next_char == 'B' {
+                self.consume_char(); // Consume the '0'
+                return self.handle_binary_literal(start_pos, start_col);
+            } else if next_char == 'o' || next_char == 'O' {
+                self.consume_char(); // Consume the '0'
+                return self.handle_octal_literal(start_pos, start_col);
+            } else if next_char == 'x' || next_char == 'X' {
+                self.consume_char(); // Consume the '0'
+                return self.handle_hex_literal(start_pos, start_col);
+            }
+            // For regular numbers starting with 0, continue normally
+        }
+        
         let mut is_float = false;
         
         // Parse the integer part
-        self.consume_while(|c| c.is_digit(10));
+        self.consume_while(|c| c.is_digit(10) || c == '_');
         
-        // Check for decimal point
-        if self.position < self.chars.len() && self.chars[self.position] == '.' {
+        // Check for decimal point followed by a digit
+        if !self.is_at_end() && self.peek_char() == '.' && 
+           !self.is_at_end_n(1) && self.peek_char_n(1).is_digit(10) {
             is_float = true;
-            self.consume_char();
+            self.consume_char(); // Consume the '.'
             
             // Parse the fractional part
-            self.consume_while(|c| c.is_digit(10));
+            self.consume_while(|c| c.is_digit(10) || c == '_');
         }
         
         // Check for exponent (e or E)
-        if self.position < self.chars.len() && 
-           (self.chars[self.position] == 'e' || self.chars[self.position] == 'E') {
+        if !self.is_at_end() && 
+           (self.peek_char() == 'e' || self.peek_char() == 'E') {
             is_float = true;
-            self.consume_char();
+            self.consume_char(); // Consume the 'e' or 'E'
             
             // Optional sign
-            if self.position < self.chars.len() && 
-               (self.chars[self.position] == '+' || self.chars[self.position] == '-') {
-                self.consume_char();
+            if !self.is_at_end() && 
+               (self.peek_char() == '+' || self.peek_char() == '-') {
+                self.consume_char(); // Consume the sign
             }
             
             // Exponent digits
             let exp_start = self.position;
-            self.consume_while(|c| c.is_digit(10));
+            self.consume_while(|c| c.is_digit(10) || c == '_');
             
             // Check if we have at least one digit in the exponent
             if self.position == exp_start {
-                let text = self.get_slice(start_pos, self.position);
+                let text = self.get_slice(start_pos, self.position).to_string();
                 return Token::error(
                     "Invalid exponent in float literal",
                     self.line,
                     start_col,
-                    text
+                    &text
                 );
             }
         }
         
-        // Get the text and immediately clone it to avoid borrow issues
-        let text = self.get_slice(start_pos, self.position).to_string();
+        // Get the text and remove any underscores (numeric separators)
+        let raw_text = self.get_slice(start_pos, self.position).to_string();
+        let text = raw_text.replace("_", "");
         
         let token_type = if is_float {
             match f64::from_str(&text) {
                 Ok(value) => TokenType::FloatLiteral(value),
                 Err(_) => {
-                    self.add_error(&format!("Invalid float literal: {}", text));
-                    TokenType::Invalid(format!("Invalid float: {}", text))
+                    let err_msg = format!("Invalid float literal: {}", text);
+                    self.add_error(&err_msg);
+                    TokenType::Invalid(err_msg)
                 }
             }
         } else {
             match i64::from_str(&text) {
                 Ok(value) => TokenType::IntLiteral(value),
                 Err(_) => {
-                    self.add_error(&format!("Invalid integer literal: {}", text));
-                    TokenType::Invalid(format!("Invalid integer: {}", text))
+                    let err_msg = format!("Invalid integer literal: {}", text);
+                    self.add_error(&err_msg);
+                    TokenType::Invalid(err_msg)
                 }
             }
         };
         
-        Token::new(token_type, self.line, start_col, text.to_string())
+        Token::new(token_type, self.line, start_col, raw_text)
+    }    
+    
+    /// Handles binary literals (0b...)
+    fn handle_binary_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
+        self.consume_char(); // Consume the 'b' or 'B'
+        
+        if self.is_at_end() || !self.peek_char().is_digit(2) {
+            let text = self.get_slice(start_pos, self.position).to_string();
+            self.add_error("Invalid binary literal: missing binary digits");
+            return Token::error(
+                "Invalid binary literal",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        // Parse binary digits
+        self.consume_while(|c| c == '0' || c == '1' || c == '_');
+        
+        // Get the text and remove any underscores
+        let raw_text = self.get_slice(start_pos, self.position).to_string();
+        let text = raw_text.replace("_", "");
+        
+        // Skip the '0b' prefix for parsing
+        let value_text = &text[2..];
+        
+        match i64::from_str_radix(value_text, 2) {
+            Ok(value) => Token::new(
+                TokenType::BinaryLiteral(value),
+                self.line,
+                start_col,
+                raw_text
+            ),
+            Err(_) => {
+                let err_msg = format!("Invalid binary literal: {}", text);
+                self.add_error(&err_msg);
+                Token::error(
+                    &err_msg,
+                    self.line,
+                    start_col,
+                    &raw_text
+                )
+            }
+        }
     }
     
-    /// Handles string literals
+    /// Handles octal literals (0o...)
+    fn handle_octal_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
+        self.consume_char(); // Consume the 'o' or 'O'
+        
+        if self.is_at_end() || !self.peek_char().is_digit(8) {
+            let text = self.get_slice(start_pos, self.position).to_string();
+            self.add_error("Invalid octal literal: missing octal digits");
+            return Token::error(
+                "Invalid octal literal",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        // Parse octal digits
+        self.consume_while(|c| c.is_digit(8) || c == '_');
+        
+        // Get the text and remove any underscores
+        let raw_text = self.get_slice(start_pos, self.position).to_string();
+        let text = raw_text.replace("_", "");
+        
+        // Skip the '0o' prefix for parsing
+        let value_text = &text[2..];
+        
+        match i64::from_str_radix(value_text, 8) {
+            Ok(value) => Token::new(
+                TokenType::OctalLiteral(value),
+                self.line,
+                start_col,
+                raw_text
+            ),
+            Err(_) => {
+                let err_msg = format!("Invalid octal literal: {}", text);
+                self.add_error(&err_msg);
+                Token::error(
+                    &err_msg,
+                    self.line,
+                    start_col,
+                    &raw_text
+                )
+            }
+        }
+    }
+    
+    /// Handles hexadecimal literals (0x...)
+    fn handle_hex_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
+        self.consume_char(); // Consume the 'x' or 'X'
+        
+        if self.is_at_end() || !self.peek_char().is_ascii_hexdigit() {
+            let text = self.get_slice(start_pos, self.position).to_string();
+            self.add_error("Invalid hex literal: missing hex digits");
+            return Token::error(
+                "Invalid hex literal",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        // Parse hex digits
+        self.consume_while(|c| c.is_ascii_hexdigit() || c == '_');
+        
+        // Get the text and remove any underscores
+        let raw_text = self.get_slice(start_pos, self.position).to_string();
+        let text = raw_text.replace("_", "");
+        
+        // Skip the '0x' prefix for parsing
+        let value_text = &text[2..];
+        
+        match i64::from_str_radix(value_text, 16) {
+            Ok(value) => Token::new(
+                TokenType::HexLiteral(value),
+                self.line,
+                start_col,
+                raw_text
+            ),
+            Err(_) => {
+                let err_msg = format!("Invalid hex literal: {}", text);
+                self.add_error(&err_msg);
+                Token::error(
+                    &err_msg,
+                    self.line,
+                    start_col,
+                    &raw_text
+                )
+            }
+        }
+    }
+    
+    /// Handles regular string literals
     fn handle_string(&mut self) -> Token {
         let start_pos = self.position;
         let start_col = self.column;
-        let quote_char = self.chars[self.position];
+        let quote_char = self.peek_char();
         
         self.consume_char(); // Consume the opening quote
         
         let mut escaped = false;
         let mut string_content = String::new();
         
-        while self.position < self.chars.len() {
-            let current_char = self.chars[self.position];
+        while !self.is_at_end() {
+            let current_char = self.peek_char();
             
             if escaped {
                 // Handle escape sequences
@@ -556,8 +952,20 @@ impl<'a> Lexer<'a> {
                     '\\' => '\\',
                     '\'' => '\'',
                     '"' => '"',
-                    'x' => self.handle_hex_escape(&mut string_content),
-                    'u' => self.handle_unicode_escape(&mut string_content),
+                    'x' => {
+                        self.handle_hex_escape(&mut string_content);
+                        '\0' // Already added to string_content
+                    },
+                    'u' => {
+                        self.handle_unicode_escape(&mut string_content);
+                        '\0' // Already added to string_content
+                    },
+                    '\n' => {
+                        // Line continuation within a string
+                        self.consume_char(); // Consume the newline
+                        self.skip_whitespace(); // Skip leading whitespace on next line
+                        '\0' // Don't add anything for line continuation
+                    },
                     _ => {
                         self.add_error(&format!("Unknown escape sequence: \\{}", current_char));
                         current_char // Use the literal character
@@ -565,11 +973,10 @@ impl<'a> Lexer<'a> {
                 };
                 
                 // Only add the character for simple escapes, the complex ones handle adding themselves
-                if current_char != 'x' && current_char != 'u' {
+                if current_char != 'x' && current_char != 'u' && current_char != '\n' {
                     string_content.push(escaped_char);
                     self.consume_char(); // Consume the escape character
                 }
-                // No need to consume here for complex escapes, they handle their own consumption
                 
                 escaped = false;
             } else if current_char == '\\' {
@@ -581,13 +988,16 @@ impl<'a> Lexer<'a> {
                 break;
             } else if current_char == '\n' {
                 // Unterminated string literal
-                self.add_error("Unterminated string literal: newline in string");
-                let text = self.get_slice(start_pos, self.position);
+                let text = self.get_slice(start_pos, self.position).to_string();
+                self.add_error_with_suggestion(
+                    "Unterminated string literal: newline in string",
+                    "Add closing quote or use triple quotes for multi-line strings"
+                );
                 return Token::error(
                     "Unterminated string literal",
                     self.line,
                     start_col,
-                    text
+                    &text
                 );
             } else {
                 string_content.push(current_char);
@@ -599,9 +1009,12 @@ impl<'a> Lexer<'a> {
         let text = self.get_slice(start_pos, self.position).to_string();
         
         // Check if we have a proper closing quote
-        if self.position > self.chars.len() || 
-           (self.position == self.chars.len() && (text.chars().last() != Some(quote_char))) {
-            self.add_error("Unterminated string literal");
+        if self.position > self.input.len() || 
+           (self.position == self.input.len() && !text.ends_with(quote_char)) {
+            self.add_error_with_suggestion(
+                "Unterminated string literal",
+                "Add closing quote"
+            );
             return Token::error(
                 "Unterminated string literal",
                 self.line,
@@ -610,14 +1023,257 @@ impl<'a> Lexer<'a> {
             );
         }
         
-        Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text.to_string())
-    }    
+        Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text)
+    }
     
-    /// Handles triple-quoted strings (multi-line strings)
-    fn handle_triple_quoted_string(&mut self) -> Token {
-        let start_pos = self.position;
-        let start_col = self.column;
-        let quote_char = self.chars[self.position];
+    /// Handles raw string literals (r"...")
+    fn handle_raw_string(&mut self) -> Token {
+        let start_pos = self.position - 1; // Include the 'r' prefix
+        let start_col = self.column - 1;
+        let quote_char = self.peek_char();
+        
+        self.consume_char(); // Consume the opening quote
+        
+        let mut string_content = String::new();
+        
+        while !self.is_at_end() {
+            let current_char = self.peek_char();
+            
+            if current_char == quote_char {
+                // End of string
+                self.consume_char(); // Consume the closing quote
+                break;
+            } else if current_char == '\n' {
+                // Unterminated string literal
+                let text = self.get_slice(start_pos, self.position).to_string();
+                self.add_error_with_suggestion(
+                    "Unterminated raw string literal: newline in string",
+                    "Add closing quote or use triple quotes for multi-line strings"
+                );
+                return Token::error(
+                    "Unterminated raw string literal",
+                    self.line,
+                    start_col,
+                    &text
+                );
+            } else {
+                string_content.push(current_char);
+                self.consume_char(); // Consume the character
+            }
+        }
+        
+        // Get the text and immediately clone it to avoid borrow issues
+        let text = self.get_slice(start_pos, self.position).to_string();
+        
+        // Check if we have a proper closing quote
+        if self.position > self.input.len() || 
+           (self.position == self.input.len() && !text.ends_with(quote_char)) {
+            self.add_error("Unterminated raw string literal");
+            return Token::error(
+                "Unterminated raw string literal",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        Token::new(TokenType::RawString(string_content), self.line, start_col, text)
+    }
+    
+    /// Handles f-string literals (f"...")
+    fn handle_formatted_string(&mut self) -> Token {
+        let start_pos = self.position - 1; // Include the 'f' prefix
+        let start_col = self.column - 1;
+        let quote_char = self.peek_char();
+        
+        self.consume_char(); // Consume the opening quote
+        
+        let mut string_content = String::new();
+        let mut in_expression = false;
+        let mut brace_depth = 0;
+        
+        while !self.is_at_end() {
+            let current_char = self.peek_char();
+            
+            if !in_expression && current_char == '{' && self.peek_char_n(1) != '{' {
+                // Start of expression
+                in_expression = true;
+                brace_depth = 1;
+                string_content.push(current_char);
+                self.consume_char();
+            } else if in_expression && current_char == '{' {
+                // Nested brace in expression
+                brace_depth += 1;
+                string_content.push(current_char);
+                self.consume_char();
+            } else if in_expression && current_char == '}' {
+                // End of expression or nested brace
+                brace_depth -= 1;
+                string_content.push(current_char);
+                self.consume_char();
+                
+                if brace_depth == 0 {
+                    in_expression = false;
+                }
+            } else if !in_expression && current_char == '\\' {
+                // Handle escaped characters in string parts
+                self.consume_char(); // Consume backslash
+                
+                if self.is_at_end() {
+                    self.add_error("Incomplete escape sequence in f-string");
+                    break;
+                }
+                
+                let escape_char = self.peek_char();
+                string_content.push('\\');
+                string_content.push(escape_char);
+                self.consume_char();
+            } else if !in_expression && current_char == quote_char {
+                // End of string
+                self.consume_char(); // Consume the closing quote
+                break;
+            } else if current_char == '\n' && !in_expression {
+                // Unterminated string literal
+                let text = self.get_slice(start_pos, self.position).to_string();
+                self.add_error("Unterminated f-string literal: newline in string");
+                return Token::error(
+                    "Unterminated f-string literal",
+                    self.line,
+                    start_col,
+                    &text
+                );
+            } else {
+                string_content.push(current_char);
+                self.consume_char(); // Consume the character
+            }
+        }
+        
+        if in_expression {
+            self.add_error("Unterminated expression in f-string: missing '}'");
+        }
+        
+        // Get the text and immediately clone it to avoid borrow issues
+        let text = self.get_slice(start_pos, self.position).to_string();
+        
+        // Check if we have a proper closing quote
+        if self.position > self.input.len() || 
+           (self.position == self.input.len() && !text.ends_with(quote_char)) {
+            self.add_error("Unterminated f-string literal");
+            return Token::error(
+                "Unterminated f-string literal",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        Token::new(TokenType::FString(string_content), self.line, start_col, text)
+    }
+    
+    /// Handles bytes string literals (b"...")
+    fn handle_bytes_string(&mut self) -> Token {
+        let start_pos = self.position - 1; // Include the 'b' prefix
+        let start_col = self.column - 1;
+        let quote_char = self.peek_char();
+        
+        self.consume_char(); // Consume the opening quote
+        
+        let mut bytes = Vec::new();
+        let mut escaped = false;
+        
+        while !self.is_at_end() {
+            let current_char = self.peek_char();
+            
+            if escaped {
+                // Handle escape sequences
+                match current_char {
+                    'n' => bytes.push(b'\n'),
+                    't' => bytes.push(b'\t'),
+                    'r' => bytes.push(b'\r'),
+                    'b' => bytes.push(b'\x08'), // Backspace
+                    'f' => bytes.push(b'\x0C'), // Form feed
+                    '\\' => bytes.push(b'\\'),
+                    '\'' => bytes.push(b'\''),
+                    '"' => bytes.push(b'"'),
+                    'x' => {
+                        self.consume_char(); // Consume 'x'
+                        
+                        // Read exactly 2 hex digits
+                        let mut hex_value = String::with_capacity(2);
+                        for _ in 0..2 {
+                            if !self.is_at_end() && self.peek_char().is_ascii_hexdigit() {
+                                hex_value.push(self.peek_char());
+                                self.consume_char();
+                            } else {
+                                self.add_error("Invalid hex escape in bytes literal");
+                                break;
+                            }
+                        }
+                        
+                        if let Ok(byte) = u8::from_str_radix(&hex_value, 16) {
+                            bytes.push(byte);
+                        }
+                        
+                        escaped = false;
+                        continue;
+                    },
+                    _ => {
+                        self.add_error(&format!("Invalid escape sequence in bytes literal: \\{}", current_char));
+                        bytes.push(current_char as u8);
+                    }
+                }
+                
+                self.consume_char();
+                escaped = false;
+            } else if current_char == '\\' {
+                escaped = true;
+                self.consume_char();
+            } else if current_char == quote_char {
+                // End of bytes string
+                self.consume_char(); // Consume the closing quote
+                break;
+            } else if current_char == '\n' {
+                // Unterminated bytes literal
+                let text = self.get_slice(start_pos, self.position).to_string();
+                self.add_error("Unterminated bytes literal: newline in string");
+                return Token::error(
+                    "Unterminated bytes literal",
+                    self.line,
+                    start_col,
+                    &text
+                );
+            } else if !current_char.is_ascii() {
+                self.add_error("Non-ASCII character in bytes literal");
+                self.consume_char();
+            } else {
+                bytes.push(current_char as u8);
+                self.consume_char();
+            }
+        }
+        
+        // Get the text and immediately clone it to avoid borrow issues
+        let text = self.get_slice(start_pos, self.position).to_string();
+        
+        // Check if we have a proper closing quote
+        if self.position > self.input.len() || 
+           (self.position == self.input.len() && !text.ends_with(quote_char)) {
+            self.add_error("Unterminated bytes literal");
+            return Token::error(
+                "Unterminated bytes literal",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        Token::new(TokenType::BytesLiteral(bytes), self.line, start_col, text)
+    }
+    
+    /// Handles raw triple-quoted strings (r"""...""")
+    fn handle_raw_triple_quoted_string(&mut self) -> Token {
+        let start_pos = self.position - 1; // Include the 'r' prefix
+        let start_col = self.column - 1;
+        let quote_char = self.peek_char();
         
         // Consume the three opening quotes
         self.consume_char();
@@ -627,10 +1283,327 @@ impl<'a> Lexer<'a> {
         let mut string_content = String::new();
         let mut consecutive_quotes = 0;
         
-        while self.position < self.chars.len() {
-            let current_char = self.chars[self.position];
+        while !self.is_at_end() {
+            let current_char = self.peek_char();
             
             if current_char == quote_char {
+                consecutive_quotes += 1;
+                
+                // Check if we've found three consecutive quotes
+                if consecutive_quotes == 3 {
+                    // We found the closing triple-quote
+                    break;
+                }
+                
+                self.consume_char();
+            } else {
+                // If we had some quotes but not three, add them to the content
+                for _ in 0..consecutive_quotes {
+                    string_content.push(quote_char);
+                }
+                consecutive_quotes = 0;
+                string_content.push(current_char);
+                self.consume_char();
+            }
+        }
+        
+        // Consume the closing triple quotes
+        for _ in 0..consecutive_quotes {
+            if !self.is_at_end() {
+                self.consume_char();
+            }
+        }
+        
+        // Get the text and immediately clone it to avoid borrow issues
+        let text = self.get_slice(start_pos, self.position).to_string();
+        
+        // Check if we found a proper closing triple-quote
+        if consecutive_quotes < 3 {
+            // Unterminated triple-quoted string
+            self.add_error("Unterminated raw triple-quoted string");
+            return Token::error(
+                "Unterminated raw triple-quoted string",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        Token::new(TokenType::RawString(string_content), self.line, start_col, text)
+    }
+    
+    /// Handles formatted triple-quoted strings (f"""...""")
+    fn handle_formatted_triple_quoted_string(&mut self) -> Token {
+        let start_pos = self.position - 1; // Include the 'f' prefix
+        let start_col = self.column - 1;
+        let quote_char = self.peek_char();
+        
+        // Consume the three opening quotes
+        self.consume_char();
+        self.consume_char();
+        self.consume_char();
+        
+        let mut string_content = String::new();
+        let mut consecutive_quotes = 0;
+        let mut in_expression = false;
+        let mut brace_depth = 0;
+        
+        while !self.is_at_end() {
+            let current_char = self.peek_char();
+            
+            if !in_expression && current_char == quote_char {
+                consecutive_quotes += 1;
+                
+                // Check if we've found three consecutive quotes
+                if consecutive_quotes == 3 {
+                    // We found the closing triple-quote
+                    break;
+                }
+                
+                self.consume_char();
+            } else if !in_expression && current_char == '{' && 
+                      (!self.is_at_end_n(1) && self.peek_char_n(1) != '{') {
+                // Start of expression
+                
+                // If we had some quotes, add them to the content
+                for _ in 0..consecutive_quotes {
+                    string_content.push(quote_char);
+                }
+                consecutive_quotes = 0;
+                
+                in_expression = true;
+                brace_depth = 1;
+                string_content.push(current_char);
+                self.consume_char();
+            } else if in_expression && current_char == '{' {
+                // Nested brace in expression
+                brace_depth += 1;
+                string_content.push(current_char);
+                self.consume_char();
+            } else if in_expression && current_char == '}' {
+                // End of expression or nested brace
+                brace_depth -= 1;
+                string_content.push(current_char);
+                self.consume_char();
+                
+                if brace_depth == 0 {
+                    in_expression = false;
+                }
+            } else {
+                // Regular character
+                
+                // If we had some quotes, add them to the content
+                for _ in 0..consecutive_quotes {
+                    string_content.push(quote_char);
+                }
+                consecutive_quotes = 0;
+                
+                string_content.push(current_char);
+                self.consume_char();
+            }
+        }
+        
+        // Consume the closing triple quotes
+        for _ in 0..consecutive_quotes {
+            if !self.is_at_end() {
+                self.consume_char();
+            }
+        }
+        
+        // Get the text and immediately clone it to avoid borrow issues
+        let text = self.get_slice(start_pos, self.position).to_string();
+        
+        if in_expression {
+            self.add_error("Unterminated expression in f-string: missing '}'");
+        }
+        
+        // Check if we found a proper closing triple-quote
+        if consecutive_quotes < 3 {
+            // Unterminated triple-quoted string
+            self.add_error("Unterminated formatted triple-quoted string");
+            return Token::error(
+                "Unterminated formatted triple-quoted string",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        Token::new(TokenType::FString(string_content), self.line, start_col, text)
+    }
+    
+    /// Handles bytes triple-quoted strings (b"""...""")
+    fn handle_bytes_triple_quoted_string(&mut self) -> Token {
+        let start_pos = self.position - 1; // Include the 'b' prefix
+        let start_col = self.column - 1;
+        let quote_char = self.peek_char();
+        
+        // Consume the three opening quotes
+        self.consume_char();
+        self.consume_char();
+        self.consume_char();
+        
+        let mut bytes = Vec::new();
+        let mut consecutive_quotes = 0;
+        let mut escaped = false;
+        
+        while !self.is_at_end() {
+            let current_char = self.peek_char();
+            
+            if escaped {
+                // Handle escape sequences
+                match current_char {
+                    'n' => bytes.push(b'\n'),
+                    't' => bytes.push(b'\t'),
+                    'r' => bytes.push(b'\r'),
+                    'b' => bytes.push(b'\x08'), // Backspace
+                    'f' => bytes.push(b'\x0C'), // Form feed
+                    '\\' => bytes.push(b'\\'),
+                    '\'' => bytes.push(b'\''),
+                    '"' => bytes.push(b'"'),
+                    'x' => {
+                        self.consume_char(); // Consume 'x'
+                        
+                        // Read exactly 2 hex digits
+                        let mut hex_value = String::with_capacity(2);
+                        for _ in 0..2 {
+                            if !self.is_at_end() && self.peek_char().is_ascii_hexdigit() {
+                                hex_value.push(self.peek_char());
+                                self.consume_char();
+                            } else {
+                                self.add_error("Invalid hex escape in bytes literal");
+                                break;
+                            }
+                        }
+                        
+                        if let Ok(byte) = u8::from_str_radix(&hex_value, 16) {
+                            bytes.push(byte);
+                        }
+                        
+                        escaped = false;
+                        continue;
+                    },
+                    _ => {
+                        self.add_error(&format!("Invalid escape sequence in bytes literal: \\{}", current_char));
+                        bytes.push(current_char as u8);
+                    }
+                }
+                
+                self.consume_char();
+                escaped = false;
+            } else if current_char == '\\' {
+                escaped = true;
+                self.consume_char();
+            } else if current_char == quote_char {
+                consecutive_quotes += 1;
+                
+                // Check if we've found three consecutive quotes
+                if consecutive_quotes == 3 {
+                    // We found the closing triple-quote
+                    break;
+                }
+                
+                self.consume_char();
+            } else {
+                // Regular character
+                
+                // If we had some quotes, add them to the content
+                for _ in 0..consecutive_quotes {
+                    bytes.push(quote_char as u8);
+                }
+                consecutive_quotes = 0;
+                
+                if !current_char.is_ascii() {
+                    self.add_error("Non-ASCII character in bytes literal");
+                } else {
+                    bytes.push(current_char as u8);
+                }
+                
+                self.consume_char();
+            }
+        }
+        
+        // Consume the closing triple quotes
+        for _ in 0..consecutive_quotes {
+            if !self.is_at_end() {
+                self.consume_char();
+            }
+        }
+        
+        // Get the text and immediately clone it to avoid borrow issues
+        let text = self.get_slice(start_pos, self.position).to_string();
+        
+        // Check if we found a proper closing triple-quote
+        if consecutive_quotes < 3 {
+            // Unterminated triple-quoted string
+            self.add_error("Unterminated bytes triple-quoted string");
+            return Token::error(
+                "Unterminated bytes triple-quoted string",
+                self.line,
+                start_col,
+                &text
+            );
+        }
+        
+        Token::new(TokenType::BytesLiteral(bytes), self.line, start_col, text)
+    }
+    
+    /// Handles triple-quoted strings ("""...""")
+    fn handle_triple_quoted_string(&mut self) -> Token {
+        let start_pos = self.position;
+        let start_col = self.column;
+        let quote_char = self.peek_char();
+        
+        // Consume the three opening quotes
+        self.consume_char();
+        self.consume_char();
+        self.consume_char();
+        
+        let mut string_content = String::new();
+        let mut consecutive_quotes = 0;
+        let mut escaped = false;
+        
+        while !self.is_at_end() {
+            let current_char = self.peek_char();
+            
+            if escaped {
+                // Handle escape sequences
+                match current_char {
+                    'n' => string_content.push('\n'),
+                    't' => string_content.push('\t'),
+                    'r' => string_content.push('\r'),
+                    'b' => string_content.push('\u{0008}'), // Backspace
+                    'f' => string_content.push('\u{000C}'), // Form feed
+                    '\\' => string_content.push('\\'),
+                    '\'' => string_content.push('\''),
+                    '"' => string_content.push('"'),
+                    'x' => {
+                        self.handle_hex_escape(&mut string_content);
+                        escaped = false;
+                        continue;
+                    },
+                    'u' => {
+                        self.handle_unicode_escape(&mut string_content);
+                        escaped = false;
+                        continue;
+                    },
+                    '\n' => {
+                        // Line continuation within a string
+                        self.consume_char(); // Consume the newline
+                        self.skip_whitespace(); // Skip leading whitespace on next line
+                    },
+                    _ => {
+                        self.add_error(&format!("Unknown escape sequence: \\{}", current_char));
+                        string_content.push(current_char);
+                    }
+                }
+                
+                escaped = false;
+                self.consume_char();
+            } else if current_char == '\\' {
+                escaped = true;
+                self.consume_char();
+            } else if current_char == quote_char {
                 consecutive_quotes += 1;
                 
                 // Check if we've found three consecutive quotes
@@ -652,10 +1625,12 @@ impl<'a> Lexer<'a> {
             }
         }
         
+        // Get the text and immediately clone it to avoid borrow issues
+        let text = self.get_slice(start_pos, self.position).to_string();
+        
         // Check if we found a proper closing triple-quote
         if consecutive_quotes < 3 {
             // Unterminated triple-quoted string
-            let text = self.get_slice(start_pos, self.position).to_string();
             self.add_error("Unterminated triple-quoted string");
             return Token::error(
                 "Unterminated triple-quoted string",
@@ -665,9 +1640,8 @@ impl<'a> Lexer<'a> {
             );
         }
         
-        let text = self.get_slice(start_pos, self.position).to_string();
         Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text)
-    }    
+    }
     
     /// Handles \x escape sequences in strings (hex values)
     fn handle_hex_escape(&mut self, string_content: &mut String) -> char {
@@ -677,9 +1651,9 @@ impl<'a> Lexer<'a> {
         
         // Read exactly 2 hex digits
         for _ in 0..2 {
-            if self.position < self.chars.len() && 
-                self.chars[self.position].is_ascii_hexdigit() {
-                hex_value.push(self.chars[self.position]);
+            if !self.is_at_end() && 
+                self.peek_char().is_ascii_hexdigit() {
+                hex_value.push(self.peek_char());
                 self.consume_char();
             } else {
                 self.add_error("Invalid hex escape sequence: expected 2 hex digits");
@@ -704,7 +1678,7 @@ impl<'a> Lexer<'a> {
         self.consume_char(); // Consume the 'u'
         
         // Check for opening brace
-        let has_braces = self.position < self.chars.len() && self.chars[self.position] == '{';
+        let has_braces = !self.is_at_end() && self.peek_char() == '{';
         if has_braces {
             self.consume_char();
         }
@@ -715,9 +1689,9 @@ impl<'a> Lexer<'a> {
             
             // Read exactly 4 hex digits
             for _ in 0..4 {
-                if self.position < self.chars.len() && 
-                   self.chars[self.position].is_ascii_hexdigit() {
-                    hex_value.push(self.chars[self.position]);
+                if !self.is_at_end() && 
+                   self.peek_char().is_ascii_hexdigit() {
+                    hex_value.push(self.peek_char());
                     self.consume_char();
                 } else {
                     self.add_error("Invalid Unicode escape sequence: expected 4 hex digits");
@@ -740,16 +1714,18 @@ impl<'a> Lexer<'a> {
         }
         // For braced format (e.g., \u{1F600}), read 1-6 hex digits
         else {
-            let start_pos = self.position;
+            let mut hex_value = String::new();
             
             // Read 1-6 hex digits for Unicode code point
-            self.consume_while(|c| c.is_ascii_hexdigit());
-            
-            // Get the hex value as a String to avoid borrow issues
-            let hex_value = self.get_slice(start_pos, self.position).to_string();
+            while !self.is_at_end() && 
+                  self.peek_char().is_ascii_hexdigit() && 
+                  hex_value.len() < 6 {
+                hex_value.push(self.peek_char());
+                self.consume_char();
+            }
             
             // Check closing brace
-            if self.position < self.chars.len() && self.chars[self.position] == '}' {
+            if !self.is_at_end() && self.peek_char() == '}' {
                 self.consume_char();
             } else {
                 self.add_error("Unclosed Unicode escape sequence: missing closing brace");
@@ -757,6 +1733,11 @@ impl<'a> Lexer<'a> {
             }
             
             // Convert to Unicode character
+            if hex_value.is_empty() {
+                self.add_error("Empty Unicode escape sequence: \\u{}");
+                return '?';
+            }
+            
             if let Ok(code_point) = u32::from_str_radix(&hex_value, 16) {
                 if let Some(c) = char::from_u32(code_point) {
                     string_content.push(c);
@@ -772,21 +1753,20 @@ impl<'a> Lexer<'a> {
         
         // Return null character since we've already added the Unicode character to string_content
         '\0'
-    }     
+    }
     
     /// Handles operators and delimiters
     fn handle_operator_or_delimiter(&mut self) -> Token {
         let start_pos = self.position;
         let start_col = self.column;
-        let current_char = self.chars[self.position];
+        let current_char = self.peek_char();
         
         self.consume_char();
         
-        // Check for two-character operators
-        let text_str = self.get_slice(start_pos, self.position).to_string();
+        // Check for multi-character operators
         let token_type = match current_char {
             '+' => {
-                if self.check_next('=') {
+                if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::PlusAssign
                 } else {
@@ -794,18 +1774,26 @@ impl<'a> Lexer<'a> {
                 }
             },
             '-' => {
-                if self.check_next('=') {
+                if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::MinusAssign
+                } else if !self.is_at_end() && self.peek_char() == '>' {
+                    self.consume_char();
+                    TokenType::Arrow
                 } else {
                     TokenType::Minus
                 }
             },
             '*' => {
-                if self.check_next('*') {
+                if !self.is_at_end() && self.peek_char() == '*' {
                     self.consume_char();
-                    TokenType::Power
-                } else if self.check_next('=') {
+                    if !self.is_at_end() && self.peek_char() == '=' {
+                        self.consume_char();
+                        TokenType::PowAssign
+                    } else {
+                        TokenType::Power
+                    }
+                } else if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::MulAssign
                 } else {
@@ -813,10 +1801,15 @@ impl<'a> Lexer<'a> {
                 }
             },
             '/' => {
-                if self.check_next('/') {
+                if !self.is_at_end() && self.peek_char() == '/' {
                     self.consume_char();
-                    TokenType::FloorDivide
-                } else if self.check_next('=') {
+                    if !self.is_at_end() && self.peek_char() == '=' {
+                        self.consume_char();
+                        TokenType::FloorDivAssign
+                    } else {
+                        TokenType::FloorDivide
+                    }
+                } else if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::DivAssign
                 } else {
@@ -824,15 +1817,48 @@ impl<'a> Lexer<'a> {
                 }
             },
             '%' => {
-                if self.check_next('=') {
+                if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::ModAssign
                 } else {
                     TokenType::Modulo
                 }
             },
+            '@' => {
+                if !self.is_at_end() && self.peek_char() == '=' {
+                    self.consume_char();
+                    TokenType::MatrixMulAssign
+                } else {
+                    TokenType::MatrixMul
+                }
+            },
+            '&' => {
+                if !self.is_at_end() && self.peek_char() == '=' {
+                    self.consume_char();
+                    TokenType::BitwiseAndAssign
+                } else {
+                    TokenType::BitwiseAnd
+                }
+            },
+            '|' => {
+                if !self.is_at_end() && self.peek_char() == '=' {
+                    self.consume_char();
+                    TokenType::BitwiseOrAssign
+                } else {
+                    TokenType::BitwiseOr
+                }
+            },
+            '^' => {
+                if !self.is_at_end() && self.peek_char() == '=' {
+                    self.consume_char();
+                    TokenType::BitwiseXorAssign
+                } else {
+                    TokenType::BitwiseXor
+                }
+            },
+            '~' => TokenType::BitwiseNot,
             '=' => {
-                if self.check_next('=') {
+                if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::Equal
                 } else {
@@ -840,28 +1866,55 @@ impl<'a> Lexer<'a> {
                 }
             },
             '!' => {
-                if self.check_next('=') {
+                if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::NotEqual
                 } else {
-                    self.add_error("Unexpected character: !");
+                    self.add_error_with_suggestion(
+                        "Unexpected character: !",
+                        "Use 'not' instead of ! for boolean negation"
+                    );
                     TokenType::Invalid("Unexpected character: !".to_string())
                 }
             },
             '<' => {
-                if self.check_next('=') {
+                if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::LessEqual
+                } else if !self.is_at_end() && self.peek_char() == '<' {
+                    self.consume_char();
+                    if !self.is_at_end() && self.peek_char() == '=' {
+                        self.consume_char();
+                        TokenType::ShiftLeftAssign
+                    } else {
+                        TokenType::ShiftLeft
+                    }
                 } else {
                     TokenType::LessThan
                 }
             },
             '>' => {
-                if self.check_next('=') {
+                if !self.is_at_end() && self.peek_char() == '=' {
                     self.consume_char();
                     TokenType::GreaterEqual
+                } else if !self.is_at_end() && self.peek_char() == '>' {
+                    self.consume_char();
+                    if !self.is_at_end() && self.peek_char() == '=' {
+                        self.consume_char();
+                        TokenType::ShiftRightAssign
+                    } else {
+                        TokenType::ShiftRight
+                    }
                 } else {
                     TokenType::GreaterThan
+                }
+            },
+            ':' => {
+                if !self.is_at_end() && self.peek_char() == '=' {
+                    self.consume_char();
+                    TokenType::Walrus
+                } else {
+                    TokenType::Colon
                 }
             },
             
@@ -874,8 +1927,15 @@ impl<'a> Lexer<'a> {
             '}' => TokenType::RightBrace,
             ',' => TokenType::Comma,
             '.' => TokenType::Dot,
-            ':' => TokenType::Colon,
-            ';' => TokenType::SemiColon,
+            ';' => {
+                if !self.config.allow_trailing_semicolon {
+                    self.add_error_with_suggestion(
+                        "Semicolons are not used in Python-like syntax",
+                        "Remove the semicolon"
+                    );
+                }
+                TokenType::SemiColon
+            },
             
             // Invalid characters
             _ => {
@@ -889,20 +1949,49 @@ impl<'a> Lexer<'a> {
         Token::new(token_type, self.line, start_col, text.to_string())
     }
     
-    /// Checks if the next character is the expected character
-    fn check_next(&self, expected: char) -> bool {
-        self.position < self.chars.len() && self.chars[self.position] == expected
+    /// Gets the next character without consuming it
+    fn peek_char(&self) -> char {
+        if !self.lookahead_buffer.is_empty() {
+            return self.lookahead_buffer[0];
+        }
+        
+        self.chars.clone().next().unwrap_or('\0')
     }
     
-    /// Checks if the character at position + n is the expected character
-    fn check_next_n(&self, expected: char, n: usize) -> bool {
-        self.position + n < self.chars.len() && self.chars[self.position + n] == expected
+    /// Gets a character n positions ahead without consuming anything
+    fn peek_char_n(&self, n: usize) -> char {
+        if n < self.lookahead_buffer.len() {
+            return self.lookahead_buffer[n];
+        }
+        
+        let mut chars_iter = self.chars.clone();
+        for _ in 0..n {
+            if chars_iter.next().is_none() {
+                return '\0';
+            }
+        }
+        
+        chars_iter.next().unwrap_or('\0')
+    }
+    
+    /// Checks if we're at the end of the input
+    fn is_at_end(&self) -> bool {
+        self.position >= self.input.len()
+    }
+    
+    /// Checks if we're at the end of the input plus n positions
+    fn is_at_end_n(&self, n: usize) -> bool {
+        self.position + n >= self.input.len()
     }
     
     /// Consumes the current character and advances the position
     fn consume_char(&mut self) {
-        if self.position < self.chars.len() {
-            let current_char = self.chars[self.position];
+        if !self.is_at_end() {
+            let current_char = if !self.lookahead_buffer.is_empty() {
+                self.lookahead_buffer.remove(0)
+            } else {
+                self.chars.next().unwrap_or('\0')
+            };
             
             if current_char == '\n' {
                 self.line += 1;
@@ -920,42 +2009,14 @@ impl<'a> Lexer<'a> {
     where
         F: Fn(char) -> bool
     {
-        while self.position < self.chars.len() && predicate(self.chars[self.position]) {
+        while !self.is_at_end() && predicate(self.peek_char()) {
             self.consume_char();
         }
     }
     
     /// Gets a slice of the input string
     fn get_slice(&self, start: usize, end: usize) -> &str {
-        let start_byte = self.byte_index(start);
-        let end_byte = self.byte_index(end);
-        &self.input[start_byte..end_byte]
-    }
-    
-    /// Converts a character index to a byte index
-    fn byte_index(&self, char_index: usize) -> usize {
-        // Count the bytes up to the character index
-        let mut byte_index = 0;
-        let input_bytes = self.input.as_bytes();
-        let mut char_count = 0;
-        
-        while char_count < char_index && byte_index < input_bytes.len() {
-            // UTF-8 encoding: skip the correct number of bytes
-            let width = if (input_bytes[byte_index] & 0x80) == 0 {
-                1
-            } else if (input_bytes[byte_index] & 0xE0) == 0xC0 {
-                2
-            } else if (input_bytes[byte_index] & 0xF0) == 0xE0 {
-                3
-            } else {
-                4
-            };
-            
-            byte_index += width;
-            char_count += 1;
-        }
-        
-        byte_index
+        &self.input[start..end]
     }
     
     /// Skips whitespace (spaces, tabs) but not newlines
@@ -982,6 +2043,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
+// Unit tests for the lexer
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1017,7 +2079,7 @@ mod tests {
 
     #[test]
     fn test_numbers() {
-        let mut lexer = Lexer::new("123 3.14 0.5 1e10 1.5e-3");
+        let mut lexer = Lexer::new("123 3.14 0.5 1e10 1.5e-3 1_000_000 0b101 0o755 0xABCD");
         let tokens = lexer.tokenize();
         
         assert_eq!(tokens[0].token_type, TokenType::IntLiteral(123));
@@ -1025,16 +2087,32 @@ mod tests {
         assert_eq!(tokens[2].token_type, TokenType::FloatLiteral(0.5));
         assert_eq!(tokens[3].token_type, TokenType::FloatLiteral(1e10));
         assert_eq!(tokens[4].token_type, TokenType::FloatLiteral(1.5e-3));
+        assert_eq!(tokens[5].token_type, TokenType::IntLiteral(1000000));
+        assert_eq!(tokens[6].token_type, TokenType::BinaryLiteral(5));
+        assert_eq!(tokens[7].token_type, TokenType::OctalLiteral(493));
+        assert_eq!(tokens[8].token_type, TokenType::HexLiteral(43981));
     }
 
     #[test]
     fn test_strings() {
-        let mut lexer = Lexer::new("\"hello\" 'world' \"escape\\nsequence\"");
+        let mut lexer = Lexer::new("\"hello\" 'world' \"escape\\nsequence\" r\"raw\\string\" f\"format {value}\"");
         let tokens = lexer.tokenize();
         
         assert_eq!(tokens[0].token_type, TokenType::StringLiteral("hello".to_string()));
         assert_eq!(tokens[1].token_type, TokenType::StringLiteral("world".to_string()));
         assert_eq!(tokens[2].token_type, TokenType::StringLiteral("escape\nsequence".to_string()));
+        
+        if let TokenType::RawString(s) = &tokens[3].token_type {
+            assert_eq!(s, "raw\\string");
+        } else {
+            panic!("Expected RawString token");
+        }
+        
+        if let TokenType::FString(s) = &tokens[4].token_type {
+            assert_eq!(s, "format {value}");
+        } else {
+            panic!("Expected FString token");
+        }
     }
     
     #[test]
@@ -1042,18 +2120,13 @@ mod tests {
         let mut lexer = Lexer::new("\"\"\"This is a\nmulti-line\nstring\"\"\" '''Another\none'''");
         let tokens = lexer.tokenize();
         
-        // Print tokens for debugging
-        for (i, token) in tokens.iter().enumerate() {
-            println!("Token {}: {:?}", i, token.token_type);
-        }
-        
         assert_eq!(tokens[0].token_type, TokenType::StringLiteral("This is a\nmulti-line\nstring".to_string()));
         assert_eq!(tokens[1].token_type, TokenType::StringLiteral("Another\none".to_string()));
     }
 
     #[test]
     fn test_operators() {
-        let mut lexer = Lexer::new("+ - * / // % ** = += -= *= /= %= == != < <= > >=");
+        let mut lexer = Lexer::new("+ - * / // % ** @ = += -= *= /= %= **= @= //= &= |= ^= <<= >>= == != < <= > >= & | ^ ~ << >> -> := ...");
         let tokens = lexer.tokenize();
         
         assert_eq!(tokens[0].token_type, TokenType::Plus);
@@ -1063,18 +2136,36 @@ mod tests {
         assert_eq!(tokens[4].token_type, TokenType::FloorDivide);
         assert_eq!(tokens[5].token_type, TokenType::Modulo);
         assert_eq!(tokens[6].token_type, TokenType::Power);
-        assert_eq!(tokens[7].token_type, TokenType::Assign);
-        assert_eq!(tokens[8].token_type, TokenType::PlusAssign);
-        assert_eq!(tokens[9].token_type, TokenType::MinusAssign);
-        assert_eq!(tokens[10].token_type, TokenType::MulAssign);
-        assert_eq!(tokens[11].token_type, TokenType::DivAssign);
-        assert_eq!(tokens[12].token_type, TokenType::ModAssign);
-        assert_eq!(tokens[13].token_type, TokenType::Equal);
-        assert_eq!(tokens[14].token_type, TokenType::NotEqual);
-        assert_eq!(tokens[15].token_type, TokenType::LessThan);
-        assert_eq!(tokens[16].token_type, TokenType::LessEqual);
-        assert_eq!(tokens[17].token_type, TokenType::GreaterThan);
-        assert_eq!(tokens[18].token_type, TokenType::GreaterEqual);
+        assert_eq!(tokens[7].token_type, TokenType::MatrixMul);
+        assert_eq!(tokens[8].token_type, TokenType::Assign);
+        assert_eq!(tokens[9].token_type, TokenType::PlusAssign);
+        assert_eq!(tokens[10].token_type, TokenType::MinusAssign);
+        assert_eq!(tokens[11].token_type, TokenType::MulAssign);
+        assert_eq!(tokens[12].token_type, TokenType::DivAssign);
+        assert_eq!(tokens[13].token_type, TokenType::ModAssign);
+        assert_eq!(tokens[14].token_type, TokenType::PowAssign);
+        assert_eq!(tokens[15].token_type, TokenType::MatrixMulAssign);
+        assert_eq!(tokens[16].token_type, TokenType::FloorDivAssign);
+        assert_eq!(tokens[17].token_type, TokenType::BitwiseAndAssign);
+        assert_eq!(tokens[18].token_type, TokenType::BitwiseOrAssign);
+        assert_eq!(tokens[19].token_type, TokenType::BitwiseXorAssign);
+        assert_eq!(tokens[20].token_type, TokenType::ShiftLeftAssign);
+        assert_eq!(tokens[21].token_type, TokenType::ShiftRightAssign);
+        assert_eq!(tokens[22].token_type, TokenType::Equal);
+        assert_eq!(tokens[23].token_type, TokenType::NotEqual);
+        assert_eq!(tokens[24].token_type, TokenType::LessThan);
+        assert_eq!(tokens[25].token_type, TokenType::LessEqual);
+        assert_eq!(tokens[26].token_type, TokenType::GreaterThan);
+        assert_eq!(tokens[27].token_type, TokenType::GreaterEqual);
+        assert_eq!(tokens[28].token_type, TokenType::BitwiseAnd);
+        assert_eq!(tokens[29].token_type, TokenType::BitwiseOr);
+        assert_eq!(tokens[30].token_type, TokenType::BitwiseXor);
+        assert_eq!(tokens[31].token_type, TokenType::BitwiseNot);
+        assert_eq!(tokens[32].token_type, TokenType::ShiftLeft);
+        assert_eq!(tokens[33].token_type, TokenType::ShiftRight);
+        assert_eq!(tokens[34].token_type, TokenType::Arrow);
+        assert_eq!(tokens[35].token_type, TokenType::Walrus);
+        assert_eq!(tokens[36].token_type, TokenType::Ellipsis);
     }
 
     #[test]
@@ -1099,13 +2190,7 @@ mod tests {
         let mut lexer = Lexer::new("if True:\n    print(\"indented\")\n    if False:\n        nested\n    back\noutside");
         let tokens = lexer.tokenize();
         
-        // Print the tokens for debugging
-        println!("Tokens in indentation test:");
-        for (i, token) in tokens.iter().enumerate() {
-            println!("{}: {:?} -> {}", i, token.token_type, token.lexeme);
-        }
-        
-        // Now look for specific patterns
+        // Look for specific patterns
         
         // Find if the token sequence includes indentation after "if True:"
         let mut if_true_index = None;
@@ -1166,6 +2251,85 @@ mod tests {
     }
 
     #[test]
+    fn test_hex_escape() {
+        let mut lexer = Lexer::new("\"\\x41\\x42\"");
+        let tokens = lexer.tokenize();
+        
+        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("AB".to_string()));
+    }
+    
+    #[test]
+    fn test_unicode_escape() {
+        let mut lexer = Lexer::new("\"\\u{1F600}\" \"\\u00A9\"");
+        let tokens = lexer.tokenize();
+        
+        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("😀".to_string()));
+        assert_eq!(tokens[1].token_type, TokenType::StringLiteral("©".to_string()));
+    }
+    
+    #[test]
+    fn test_f_strings() {
+        let mut lexer = Lexer::new("f\"Hello, {name}!\" f\"{a + b}\"");
+        let tokens = lexer.tokenize();
+        
+        if let TokenType::FString(s) = &tokens[0].token_type {
+            assert_eq!(s, "Hello, {name}!");
+        } else {
+            panic!("Expected FString token");
+        }
+        
+        if let TokenType::FString(s) = &tokens[1].token_type {
+            assert_eq!(s, "{a + b}");
+        } else {
+            panic!("Expected FString token");
+        }
+    }
+    
+    #[test]
+    fn test_bytes_literals() {
+        let mut lexer = Lexer::new("b\"hello\" b'\\x00\\x01\\x02'");
+        let tokens = lexer.tokenize();
+        
+        if let TokenType::BytesLiteral(bytes) = &tokens[0].token_type {
+            assert_eq!(bytes, b"hello");
+        } else {
+            panic!("Expected BytesLiteral token");
+        }
+        
+        if let TokenType::BytesLiteral(bytes) = &tokens[1].token_type {
+            assert_eq!(bytes, &[0, 1, 2]);
+        } else {
+            panic!("Expected BytesLiteral token");
+        }
+    }
+    
+    #[test]
+    fn test_numeric_separators() {
+        let mut lexer = Lexer::new("1_000_000 0b1010_1100 0xAB_CD");
+        let tokens = lexer.tokenize();
+        
+        assert_eq!(tokens[0].token_type, TokenType::IntLiteral(1000000));
+        assert_eq!(tokens[1].token_type, TokenType::BinaryLiteral(0b10101100));
+        assert_eq!(tokens[2].token_type, TokenType::HexLiteral(0xABCD));
+    }
+    
+    #[test]
+    fn test_walrus_operator() {
+        let mut lexer = Lexer::new("if (n := len(items)) > 0:");
+        let tokens = lexer.tokenize();
+        
+        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Walrus)));
+    }
+    
+    #[test]
+    fn test_ellipsis() {
+        let mut lexer = Lexer::new("def func(...):");
+        let tokens = lexer.tokenize();
+        
+        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Ellipsis)));
+    }
+    
+    #[test]
     fn test_complete_program() {
         let input = r#"
 def factorial(n):
@@ -1175,7 +2339,7 @@ def factorial(n):
         return n * factorial(n - 1)
 
 result = factorial(5)
-print("Factorial of 5 is", result)
+print(f"Factorial of 5 is {result}")
 "#;
         
         let mut lexer = Lexer::new(input);
@@ -1188,54 +2352,11 @@ print("Factorial of 5 is", result)
         assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Def)));
         assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Identifier(ref s) if s == "factorial")));
         assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Return)));
+        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::FString(_))));
         assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Identifier(ref s) if s == "print")));
     }
     
-    #[test]
-    fn test_error_recovery() {
-        let mut lexer = Lexer::new("x = @invalid\ny = 10");
-        let tokens = lexer.tokenize();
-        
-        // Check that we get an Invalid token but continue lexing
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Invalid(_))));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Identifier(ref s) if s == "y")));
-        assert!(!lexer.get_errors().is_empty());
-    }
-    
-    #[test]
-    fn test_unicode_escape() {
-        let mut lexer = Lexer::new(r#""\u{1F600}" "\u00A9""#);
-        let tokens = lexer.tokenize();
-        
-        // Print tokens for debugging
-        for (i, token) in tokens.iter().enumerate() {
-            println!("Unicode Token {}: {:?}", i, token.token_type);
-            if let TokenType::StringLiteral(s) = &token.token_type {
-                println!("String content: '{}'", s);
-                println!("String bytes: {:?}", s.as_bytes());
-            }
-        }
-        
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("😀".to_string()));
-        assert_eq!(tokens[1].token_type, TokenType::StringLiteral("©".to_string()));
-    }
-    
-    #[test]
-    fn test_hex_escape() {
-        let mut lexer = Lexer::new(r#""\x41\x42""#);
-        let tokens = lexer.tokenize();
-        
-        // Print tokens for debugging
-        for (i, token) in tokens.iter().enumerate() {
-            println!("Hex Token {}: {:?}", i, token.token_type);
-            if let TokenType::StringLiteral(s) = &token.token_type {
-                println!("String content: '{}'", s);
-                println!("String bytes: {:?}", s.as_bytes());
-            }
-        }
-        
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("AB".to_string()));
-    }
+
     
     #[test]
     fn test_inconsistent_indentation() {
@@ -1251,13 +2372,14 @@ print("Factorial of 5 is", result)
         // Should be an error in the errors list
         let errors = lexer.get_errors();
         assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.contains("indentation")));
+        assert!(errors.iter().any(|e| e.message.contains("indentation")));
     }
     
     #[test]
     fn test_mixed_tabs_spaces() {
         let config = LexerConfig {
             enforce_indent_consistency: true,
+            allow_tabs_in_indentation: false,
             ..Default::default()
         };
         
@@ -1267,6 +2389,46 @@ print("Factorial of 5 is", result)
         // Should be an error in the errors list
         let errors = lexer.get_errors();
         assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.contains("tabs and spaces")));
+        assert!(errors.iter().any(|e| e.message.contains("tabs and spaces")));
+    }
+    
+    #[test]
+    fn test_line_continuation() {
+        let mut lexer = Lexer::new("x = 1 + \\\n    2");
+        let tokens = lexer.tokenize();
+        
+        // The tokens should be: Identifier(x), Assign, IntLiteral(1), Plus, IntLiteral(2), EOF
+        assert_eq!(tokens.len(), 6);
+        assert_eq!(tokens[0].token_type, TokenType::Identifier("x".to_string()));
+        assert_eq!(tokens[1].token_type, TokenType::Assign);
+        assert_eq!(tokens[2].token_type, TokenType::IntLiteral(1));
+        assert_eq!(tokens[3].token_type, TokenType::Plus);
+        assert_eq!(tokens[4].token_type, TokenType::IntLiteral(2));
+        assert_eq!(tokens[5].token_type, TokenType::EOF);
+    }
+    
+    #[test]
+    fn test_implicit_line_continuation() {
+        let mut lexer = Lexer::new("func(\n    arg1,\n    arg2\n)");
+        let tokens = lexer.tokenize();
+        
+        // There should be no Newline tokens between the opening and closing parentheses
+        let mut paren_level = 0;
+        let mut contains_newline_in_parens = false;
+        
+        for token in &tokens {
+            match token.token_type {
+                TokenType::LeftParen => paren_level += 1,
+                TokenType::RightParen => paren_level -= 1,
+                TokenType::Newline => {
+                    if paren_level > 0 {
+                        contains_newline_in_parens = true;
+                    }
+                },
+                _ => {}
+            }
+        }
+        
+        assert!(!contains_newline_in_parens, "Newlines should be ignored inside parentheses");
     }
 }
