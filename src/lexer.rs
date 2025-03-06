@@ -733,18 +733,36 @@ impl<'a> Lexer<'a> {
         }
         
         let mut is_float = false;
+        let mut decimal_count = 0;
         
         // Parse the integer part
         self.consume_while(|c| c.is_digit(10) || c == '_');
         
         // Check for decimal point followed by a digit
-        if !self.is_at_end() && self.peek_char() == '.' && 
-           !self.is_at_end_n(1) && self.peek_char_n(1).is_digit(10) {
+        if !self.is_at_end() && self.peek_char() == '.' {
+            decimal_count += 1;
             is_float = true;
             self.consume_char(); // Consume the '.'
             
             // Parse the fractional part
             self.consume_while(|c| c.is_digit(10) || c == '_');
+            
+            // Check for another decimal point (like in 1.2.3)
+            if !self.is_at_end() && self.peek_char() == '.' {
+                // This is a multiple decimal point error
+                // Consume all remaining characters that could be part of the number
+                self.consume_char(); // Consume the second '.'
+                self.consume_while(|c| c.is_digit(10) || c == '_' || c == '.');
+                
+                let raw_text = self.get_slice(start_pos, self.position).to_string();
+                self.add_error("Invalid number format: multiple decimal points");
+                return Token::error(
+                    "Invalid number format: multiple decimal points",
+                    self.line,
+                    start_col,
+                    &raw_text
+                );
+            }
         }
         
         // Check for exponent (e or E)
@@ -781,7 +799,7 @@ impl<'a> Lexer<'a> {
         let text = raw_text.replace("_", "");
         
         // Multiple decimal points would be caught here
-        if text.matches('.').count() > 1 {
+        if decimal_count > 1 || text.matches('.').count() > 1 {
             self.add_error("Invalid number format: multiple decimal points");
             return Token::error(
                 "Invalid number format: multiple decimal points",
@@ -812,7 +830,7 @@ impl<'a> Lexer<'a> {
         };
         
         Token::new(token_type, self.line, start_col, raw_text)
-    }    
+    }
     
     /// Helper function to check if a character is a binary digit (0 or 1)
     fn is_binary_digit(&self, c: char) -> bool {
@@ -823,6 +841,7 @@ impl<'a> Lexer<'a> {
     fn handle_binary_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
         self.consume_char(); // Consume the 'b' or 'B'
         
+        // Check if there are digits after the prefix
         if self.is_at_end() || !self.is_binary_digit(self.peek_char()) {
             let text = self.get_slice(start_pos, self.position).to_string();
             self.add_error("Invalid binary literal: missing binary digits");
@@ -834,23 +853,20 @@ impl<'a> Lexer<'a> {
             );
         }
         
-        // Parse binary digits
-        self.consume_while(|c| c.is_digit(10) || c == '_');
+        // Consume all digits and underscores
+        let start_digits_pos = self.position;
+        self.consume_while(|c| c == '0' || c == '1' || c == '_' || c.is_digit(10));
         
-        // Check for invalid digits in the literal
+        // Check for invalid digits - any digit that is not 0 or 1
+        let digits_text = self.get_slice(start_digits_pos, self.position);
+        let has_invalid = digits_text.chars().any(|c| c != '0' && c != '1' && c != '_');
+        
         let raw_text = self.get_slice(start_pos, self.position).to_string();
-        let mut has_invalid = false;
-        for c in raw_text.chars().skip(2) { // Skip the '0b' prefix
-            if c != '_' && !self.is_binary_digit(c) {
-                self.add_error(&format!("Invalid digit '{}' in binary literal", c));
-                has_invalid = true;
-                // Don't return here, keep checking all digits to report all errors
-            }
-        }
         
         if has_invalid {
+            self.add_error("Invalid binary literal: contains non-binary digits");
             return Token::error(
-                "Invalid digit in binary literal",
+                "Invalid binary literal: contains non-binary digits",
                 self.line,
                 start_col,
                 &raw_text
@@ -880,14 +896,17 @@ impl<'a> Lexer<'a> {
                 )
             }
         }
-    }    
+    }        
     
     /// Handles octal literals (0o...)
     fn handle_octal_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
+        println!("[DEBUG] Entering handle_octal_literal");
         self.consume_char(); // Consume the 'o' or 'O'
+        println!("[DEBUG] After consuming 'o': next char = '{}'", self.peek_char());
         
         if self.is_at_end() || !self.peek_char().is_digit(8) {
             let text = self.get_slice(start_pos, self.position).to_string();
+            println!("[DEBUG] No valid octal digits found: '{}'", text);
             self.add_error("Invalid octal literal: missing octal digits");
             return Token::error(
                 "Invalid octal literal",
@@ -897,44 +916,57 @@ impl<'a> Lexer<'a> {
             );
         }
         
-        // Parse octal digits
+        // Keep track of start position for checking invalid digits later
+        let start_digits_pos = self.position;
+        println!("[DEBUG] Starting to consume digits at position {}", start_digits_pos);
+        
+        // Consume all digits and underscores
         self.consume_while(|c| c.is_digit(10) || c == '_');
         
-        // Check for invalid digits in the literal
+        // Get the complete raw text
         let raw_text = self.get_slice(start_pos, self.position).to_string();
-        let mut has_invalid = false;
-        for c in raw_text.chars().skip(2) { // Skip the '0o' prefix
-            if c != '_' && !c.is_digit(8) {
-                self.add_error(&format!("Invalid digit '{}' in octal literal", c));
-                has_invalid = true;
-                // Continue checking to report all invalid digits
-            }
-        }
+        println!("[DEBUG] Raw text: '{}'", raw_text);
         
+        // Get just the digits part for checking
+        let digits_text = self.get_slice(start_digits_pos, self.position);
+        println!("[DEBUG] Digits text: '{}'", digits_text);
+        
+        // Check for specific invalid octal digits: 8 and 9
+        let invalid_digits: Vec<char> = digits_text.chars()
+            .filter(|&c| c != '_' && (c == '8' || c == '9'))
+            .collect();
+        
+        let has_invalid = !invalid_digits.is_empty();
+        println!("[DEBUG] Has invalid octal digits: {}", has_invalid);
         if has_invalid {
+            println!("[DEBUG] Invalid digits found: {:?}", invalid_digits);
+            self.add_error("Invalid octal literal: contains non-octal digits");
             return Token::error(
-                "Invalid digit in octal literal",
+                "Invalid octal literal: contains non-octal digits",
                 self.line,
                 start_col,
                 &raw_text
             );
         }
         
-        // Get the text and remove any underscores
+        // Get the text without underscores for parsing
         let text = raw_text.replace("_", "");
-        
-        // Skip the '0o' prefix for parsing
-        let value_text = &text[2..];
+        let value_text = &text[2..]; // Skip the '0o' prefix
+        println!("[DEBUG] Value text for parsing: '{}'", value_text);
         
         match i64::from_str_radix(value_text, 8) {
-            Ok(value) => Token::new(
-                TokenType::OctalLiteral(value),
-                self.line,
-                start_col,
-                raw_text
-            ),
-            Err(_) => {
-                let err_msg = format!("Invalid octal literal: {}", text);
+            Ok(value) => {
+                println!("[DEBUG] Successfully parsed octal value: {}", value);
+                Token::new(
+                    TokenType::OctalLiteral(value),
+                    self.line,
+                    start_col,
+                    raw_text
+                )
+            },
+            Err(err) => {
+                let err_msg = format!("Invalid octal literal: {} (Error: {})", text, err);
+                println!("[DEBUG] Error parsing octal: {}", err_msg);
                 self.add_error(&err_msg);
                 Token::error(
                     &err_msg,
@@ -961,23 +993,24 @@ impl<'a> Lexer<'a> {
             );
         }
         
-        // Parse hex digits
-        self.consume_while(|c| c.is_ascii_hexdigit() || c == '_');
+        // Keep track of start position for checking invalid digits later
+        let start_digits_pos = self.position;
+        
+        // Parse all potential digits (including invalid ones)
+        // Also continue for non-hexdigits so we can properly report the error
+        self.consume_while(|c| c.is_alphanumeric() || c == '_');
+        
+        // Get the complete raw text
+        let raw_text = self.get_slice(start_pos, self.position).to_string();
         
         // Check for invalid digits in the literal
-        let raw_text = self.get_slice(start_pos, self.position).to_string();
-        let mut has_invalid = false;
-        for c in raw_text.chars().skip(2) { // Skip the '0x' prefix
-            if c != '_' && !c.is_ascii_hexdigit() {
-                self.add_error(&format!("Invalid digit '{}' in hex literal", c));
-                has_invalid = true;
-                // Continue checking to report all invalid digits
-            }
-        }
+        let digits_text = self.get_slice(start_digits_pos, self.position);
+        let has_invalid = digits_text.chars().any(|c| c != '_' && !c.is_ascii_hexdigit());
         
         if has_invalid {
+            self.add_error("Invalid hex literal: contains non-hex digits");
             return Token::error(
-                "Invalid digit in hex literal",
+                "Invalid hex literal: contains non-hex digits",
                 self.line,
                 start_col,
                 &raw_text
@@ -1008,7 +1041,7 @@ impl<'a> Lexer<'a> {
                 )
             }
         }
-    }    
+    }        
     
     /// Handles regular string literals
     fn handle_string(&mut self) -> Token {
@@ -1350,67 +1383,71 @@ impl<'a> Lexer<'a> {
     
     /// Handles raw triple-quoted strings (r"""...""")
     fn handle_raw_triple_quoted_string(&mut self) -> Token {
+        println!("[DEBUG] Entering handle_raw_triple_quoted_string");
         let start_pos = self.position - 1; // Include the 'r' prefix
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
+        println!("[DEBUG] Quote character: '{}'", quote_char);
         
         // Consume the three opening quotes
         self.consume_char();
         self.consume_char();
         self.consume_char();
+        println!("[DEBUG] After consuming opening quotes: next char = '{}'", self.peek_char());
         
-        let mut string_content = String::new();
+        // Collect all content until we find the closing triple quote
+        let mut content = String::new();
         let mut consecutive_quotes = 0;
         
         while !self.is_at_end() {
-            let current_char = self.peek_char();
+            let c = self.peek_char();
+            println!("[DEBUG] Current char: '{}', consecutive quotes: {}", c, consecutive_quotes);
             
-            if current_char == quote_char {
+            if c == quote_char {
                 consecutive_quotes += 1;
+                self.consume_char();
                 
                 // Check if we've found three consecutive quotes
                 if consecutive_quotes == 3 {
-                    // Remove the last three chars from the content if they were added
-                    if string_content.len() >= 3 && consecutive_quotes == 3 {
-                        let len = string_content.len();
-                        string_content.truncate(len - 2);
-                    }
-                    
-                    // Consume the closing triple quotes
-                    self.consume_char();
-                    self.consume_char();
-                    self.consume_char();
+                    println!("[DEBUG] Found closing triple quote");
+                    // We've already consumed all three quotes
                     break;
                 }
-                
-                string_content.push(current_char);
-                self.consume_char();
             } else {
-                // If we had some quotes but not three, we consider them part of the content
-                consecutive_quotes = 0;
-                string_content.push(current_char);
+                // If we had some quotes but not three, add them to content
+                if consecutive_quotes > 0 {
+                    println!("[DEBUG] Adding {} consecutive quotes to content", consecutive_quotes);
+                    for _ in 0..consecutive_quotes {
+                        content.push(quote_char);
+                    }
+                    consecutive_quotes = 0;
+                }
+                
+                content.push(c);
+                println!("[DEBUG] Added '{}' to content: '{}'", c, content);
                 self.consume_char();
             }
         }
         
-        // Get the text and immediately clone it to avoid borrow issues
-        let text = self.get_slice(start_pos, self.position).to_string();
+        // Get the lexeme
+        let lexeme = self.get_slice(start_pos, self.position).to_string();
+        println!("[DEBUG] Lexeme: '{}'", lexeme);
+        println!("[DEBUG] Final content: '{}'", content);
         
-        // Check if we found a proper closing triple-quote
-        if consecutive_quotes < 3 {
-            // Unterminated triple-quoted string
+        if consecutive_quotes < 3 && self.is_at_end() {
+            println!("[DEBUG] Unterminated raw triple-quoted string");
             self.add_error("Unterminated raw triple-quoted string");
             return Token::error(
                 "Unterminated raw triple-quoted string",
                 self.line,
                 start_col,
-                &text
+                &lexeme
             );
         }
         
-        // Return RawString
-        Token::new(TokenType::RawString(string_content), self.line, start_col, text)
-    }        
+        println!("[DEBUG] Successfully parsed raw triple-quoted string");
+        Token::new(TokenType::RawString(content), self.line, start_col, lexeme)
+    }                    
     
     /// Handles formatted triple-quoted strings (f"""...""")
     fn handle_formatted_triple_quoted_string(&mut self) -> Token {
@@ -1691,23 +1728,20 @@ impl<'a> Lexer<'a> {
                 self.consume_char();
             } else if current_char == quote_char {
                 consecutive_quotes += 1;
+                self.consume_char();
                 
                 // Check if we've found three consecutive quotes
                 if consecutive_quotes == 3 {
-                    // Consume the third quote to complete the ending triple-quote
-                    self.consume_char();
-                    self.consume_char();
-                    self.consume_char();
+                    // We've already consumed all three quotes
                     break;
                 }
-                
-                self.consume_char();
             } else {
                 // If we had some quotes but not three, add them to the content
                 for _ in 0..consecutive_quotes {
                     string_content.push(quote_char);
                 }
                 consecutive_quotes = 0;
+                
                 string_content.push(current_char);
                 self.consume_char();
             }
@@ -1729,7 +1763,7 @@ impl<'a> Lexer<'a> {
         }
         
         Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text)
-    }
+    }    
     
     /// Handles \x escape sequences in strings (hex values)
     fn handle_hex_escape(&mut self, string_content: &mut String) -> char {
@@ -2206,9 +2240,13 @@ mod tests {
     
     #[test]
     fn test_triple_quoted_strings() {
-        let mut lexer = Lexer::new("\"\"\"This is a\nmulti-line\nstring\"\"\" '''Another\none'''");
+        // Test with simple example first
+        let input = "\"\"\"This is a\nmulti-line\nstring\"\"\" '''Another\none'''";
+        let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         
+        // Check both triple-quoted strings
+        assert_eq!(tokens.len(), 3); // Two string tokens plus EOF
         assert_eq!(tokens[0].token_type, TokenType::StringLiteral("This is a\nmulti-line\nstring".to_string()));
         assert_eq!(tokens[1].token_type, TokenType::StringLiteral("Another\none".to_string()));
     }
@@ -2588,18 +2626,25 @@ mod comprehensive_tests {
     #[test]
     fn test_invalid_numbers() {
         let input = "0b12 0o89 0xGH 1.2.3 1e";
-        let (tokens, errors) = tokenize(input);  
+        let (tokens, _errors) = tokenize(input);  
         
-        // Note: the current implementation might generate multiple errors for some invalid numbers
-        // Focus on making sure each invalid number creates at least one error
-        assert!(errors.len() >= 4, "Expected at least 4 errors but got: {}", errors.len());
+        // Get only the tokens that should be invalid (filtering out EOF, etc.)
+        let invalid_tokens: Vec<_> = tokens.iter()
+            .filter(|token| matches!(token.token_type, TokenType::Invalid(_)))
+            .collect();
         
-        // Verify each token is marked as Invalid
-        let invalid_count = tokens.iter()
-            .filter(|t| matches!(t.token_type, TokenType::Invalid(_)))
-            .count();
+        // We should have exactly 5 invalid tokens (one for each invalid number)
+        assert_eq!(invalid_tokens.len(), 5, 
+                "Expected 5 invalid tokens but got: {} - {:?}", 
+                invalid_tokens.len(), 
+                invalid_tokens);
         
-        assert_eq!(invalid_count, 5, "Expected 5 invalid tokens but got: {}", invalid_count);
+        // Check that each token represents one of our invalid inputs
+        assert!(invalid_tokens.iter().any(|t| t.lexeme.starts_with("0b1")), "Missing invalid binary token");
+        assert!(invalid_tokens.iter().any(|t| t.lexeme.starts_with("0o8")), "Missing invalid octal token");
+        assert!(invalid_tokens.iter().any(|t| t.lexeme.starts_with("0xG")), "Missing invalid hex token");
+        assert!(invalid_tokens.iter().any(|t| t.lexeme.contains("1.2.3")), "Missing multiple decimal token");
+        assert!(invalid_tokens.iter().any(|t| t.lexeme == "1e"), "Missing invalid exponent token");
     }
 
     #[test]
@@ -2622,44 +2667,36 @@ mod comprehensive_tests {
     #[test]
     fn test_triple_quoted_strings() {
         let input = "\"\"\"multi\nline\nstring\"\"\" \
-                    r'''raw\\nmulti\\nline''' \
+                    r'''raw\\\\nmulti\\\\nline''' \
                     f\"\"\"formatted\n{x}\nstring\"\"\" \
                     b'''byte\nmulti\nline'''";
+        
+        // Process each triple-quoted string separately to isolate issues
+        let (tokens, errors) = tokenize("\"\"\"multi\nline\nstring\"\"\"");
+        assert!(errors.is_empty(), "First test failed with errors: {:?}", errors);
+        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("multi\nline\nstring".to_string()));
+        
+        let (tokens, errors) = tokenize("r'''raw\\\\nmulti\\\\nline'''");
+        assert!(errors.is_empty(), "Second test failed with errors: {:?}", errors);
+        assert_eq!(tokens[0].token_type, TokenType::RawString("raw\\\\nmulti\\\\nline".to_string()));
+        
+        let (tokens, errors) = tokenize("f\"\"\"formatted\n{x}\nstring\"\"\"");
+        assert!(errors.is_empty(), "Third test failed with errors: {:?}", errors);
+        assert_eq!(tokens[0].token_type, TokenType::FString("formatted\n{x}\nstring".to_string()));
+        
+        let (tokens, errors) = tokenize("b'''byte\nmulti\nline'''");
+        assert!(errors.is_empty(), "Fourth test failed with errors: {:?}", errors);
+        assert_eq!(tokens[0].token_type, TokenType::BytesLiteral(b"byte\nmulti\nline".to_vec()));
+        
+        // Now test all together
         let (tokens, errors) = tokenize(input);
+        assert!(errors.is_empty(), "Full test failed with errors: {:?}", errors);
         
-        assert!(errors.is_empty(), "Expected no errors but got: {:?}", errors);
-        
-        // Verify the string literal type
-        match &tokens[0].token_type {
-            TokenType::StringLiteral(content) => {
-                assert_eq!(content, "multi\nline\nstring");
-            },
-            _ => panic!("Expected StringLiteral token for triple-quoted string")
-        }
-        
-        // Verify the raw string type
-        match &tokens[1].token_type {
-            TokenType::RawString(content) => {
-                assert_eq!(content, "raw\\\\nmulti\\\\nline");
-            },
-            _ => panic!("Expected RawString token for raw triple-quoted string")
-        }
-        
-        // Verify the f-string type
-        match &tokens[2].token_type {
-            TokenType::FString(content) => {
-                assert_eq!(content, "formatted\n{x}\nstring");
-            },
-            _ => panic!("Expected FString token for formatted triple-quoted string")
-        }
-        
-        // Verify the bytes literal type
-        match &tokens[3].token_type {
-            TokenType::BytesLiteral(bytes) => {
-                assert_eq!(bytes, b"byte\nmulti\nline");
-            },
-            _ => panic!("Expected BytesLiteral token for bytes triple-quoted string")
-        }
+        // Check the tokens
+        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("multi\nline\nstring".to_string()));
+        assert_eq!(tokens[1].token_type, TokenType::RawString("raw\\\\nmulti\\\\nline".to_string()));
+        assert_eq!(tokens[2].token_type, TokenType::FString("formatted\n{x}\nstring".to_string()));
+        assert_eq!(tokens[3].token_type, TokenType::BytesLiteral(b"byte\nmulti\nline".to_vec()));
     }
 
     #[test]
@@ -2866,5 +2903,121 @@ finally:
         assert!(formatted.contains("Line 2:"));
         assert!(formatted.contains("x = 1!"));
         assert!(formatted.contains("^"));
+    }
+
+    #[test]
+    fn debug_invalid_octal_literals() {
+        let input = "0o89"; // Invalid octal - contains '8' and '9'
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        println!("=== OCTAL TEST DIAGNOSTICS ===");
+        println!("Input: {}", input);
+        println!("Token count: {}", tokens.len());
+        
+        for (i, token) in tokens.iter().enumerate() {
+            println!("Token[{}]: {:?}", i, token);
+            
+            if let TokenType::Invalid(msg) = &token.token_type {
+                println!("  -> Found invalid token with message: {}", msg);
+                
+                // This should succeed if the error is properly detected
+                assert!(msg.contains("non-octal digits") || msg.contains("Invalid octal"));
+                return;
+            }
+        }
+        
+        // If we get here, we didn't find an Invalid token
+        panic!("Failed to detect invalid octal literal");
+    }
+
+    #[test]
+    fn debug_raw_triple_quoted_string() {
+        let input = "r'''raw\\\\nmulti\\\\nline'''";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        println!("=== RAW TRIPLE QUOTED STRING TEST DIAGNOSTICS ===");
+        println!("Input: {}", input);
+        println!("Token count: {}", tokens.len());
+        
+        for (i, token) in tokens.iter().enumerate() {
+            println!("Token[{}]: {:?}", i, token);
+            
+            if let TokenType::RawString(content) = &token.token_type {
+                println!("  -> Raw string content: '{}'", content);
+                println!("  -> Content length: {}", content.len());
+                println!("  -> Char by char:");
+                
+                for (j, c) in content.chars().enumerate() {
+                    println!("     [{}]: '{}' (ASCII: {})", j, c, c as u32);
+                }
+                
+                // The test expects this exact content
+                assert_eq!(content, "raw\\\\nmulti\\\\nline");
+                return;
+            }
+        }
+        
+        panic!("Failed to find RawString token");
+    }
+
+    #[test]
+    fn debug_raw_triple_quoted_string_step_by_step() {
+        let input = "r'''raw\\\\nmulti\\\\nline'''";
+        let mut lexer = Lexer::new(input);
+        
+        // Manual step-by-step testing to trace the execution
+        println!("=== MANUAL STEP-BY-STEP DEBUGGING ===");
+        
+        // Track the 'r' at the beginning
+        assert_eq!(lexer.peek_char(), 'r');
+        lexer.consume_char();
+        
+        // Track the opening triple quotes
+        assert_eq!(lexer.peek_char(), '\'');
+        lexer.consume_char();
+        assert_eq!(lexer.peek_char(), '\'');
+        lexer.consume_char();
+        assert_eq!(lexer.peek_char(), '\'');
+        lexer.consume_char();
+        
+        // Now we should be at the 'r' of "raw"
+        assert_eq!(lexer.peek_char(), 'r');
+        
+        // Manually build the string as we would expect the function to do
+        let mut content = String::new();
+        let mut consecutive_quotes = 0;
+        
+        // Simple simulation of what handle_raw_triple_quoted_string should do
+        while !lexer.is_at_end() {
+            let c = lexer.peek_char();
+            
+            if c == '\'' {
+                consecutive_quotes += 1;
+                
+                if consecutive_quotes == 3 {
+                    // End of string
+                    break;
+                }
+                
+                lexer.consume_char();
+            } else {
+                // Add any consecutive quotes we've seen
+                for _ in 0..consecutive_quotes {
+                    content.push('\'');
+                }
+                consecutive_quotes = 0;
+                
+                // Add the current character
+                content.push(c);
+                lexer.consume_char();
+            }
+        }
+        
+        println!("Manually built content: '{}'", content);
+        println!("Expected content:       'raw\\\\nmulti\\\\nline'");
+        
+        assert_eq!(content, "raw\\\\nmulti\\\\nline");
     }
 }
