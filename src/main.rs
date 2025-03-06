@@ -122,15 +122,14 @@ fn run_repl() -> Result<()> {
     let mut bracket_level = 0;
     let mut brace_level = 0;
     let mut in_multiline_block = false;
-    let mut prompt = ">>> ".bright_green().to_string();
     
     loop {
         // Show appropriate prompt
-        if !input_buffer.is_empty() {
-            prompt = "... ".bright_yellow().to_string();
+        let prompt = if !input_buffer.is_empty() {
+            "... ".bright_yellow().to_string()
         } else {
-            prompt = ">>> ".bright_green().to_string();
-        }
+            ">>> ".bright_green().to_string()
+        };
         
         print!("{}", prompt);
         io::stdout().flush()?;
@@ -308,7 +307,7 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
     };
     
     let mut lexer = Lexer::with_config(&source, config);
-    let _tokens = lexer.tokenize();
+    let _tokens = lexer.tokenize(); // Prefix with underscore to show intentional non-use
     
     // Check for lexical errors
     let errors = lexer.get_errors();
@@ -344,7 +343,7 @@ fn format_file(filename: &str, write: bool) -> Result<()> {
     
     // Create a lexer with standard configuration
     let mut lexer = Lexer::new(&source);
-    let tokens = lexer.tokenize();
+    let _tokens = lexer.tokenize(); // Use _tokens to indicate it's intentionally unused
     
     // Check for lexical errors
     let errors = lexer.get_errors();
