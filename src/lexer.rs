@@ -444,12 +444,7 @@ impl<'a> Lexer<'a> {
         self.skip_whitespace();
         
         if self.is_at_end() {
-            return Some(Token::new(
-                TokenType::EOF,
-                self.line,
-                self.column,
-                "".to_string(),
-            ));
+            return Some(Token::new(TokenType::EOF, self.line, self.column, "".to_string()));
         }
         
         let current_char = self.peek_char();
@@ -459,6 +454,7 @@ impl<'a> Lexer<'a> {
             // Skip newlines inside parentheses, brackets, and braces
             if self.paren_level > 0 || self.bracket_level > 0 || self.brace_level > 0 {
                 self.consume_char(); // Just consume the newline without generating a token
+                self.skip_whitespace(); // Skip any following whitespace
                 return self.next_token(); // Continue to the next token
             }
             return self.handle_newline();
@@ -471,15 +467,35 @@ impl<'a> Lexer<'a> {
             return self.next_token(); // Get the next token after continuation
         }
         
-        // Check for string prefixes (r, f, b, etc.)
+        // Check for prefixed triple-quoted strings (e.g., r'''...''', f"""...""")
         if (current_char == 'r' || current_char == 'R' || 
-            current_char == 'f' || current_char == 'F' ||
+            current_char == 'f' || current_char == 'F' || 
+            current_char == 'b' || current_char == 'B') && 
+            ((self.peek_char_n(1) == '"' && self.peek_char_n(2) == '"' && self.peek_char_n(3) == '"') ||
+             (self.peek_char_n(1) == '\'' && self.peek_char_n(2) == '\'' && self.peek_char_n(3) == '\'')) {
+            let prefix = current_char;
+            self.consume_char(); // Consume the prefix
+            match prefix {
+                'r' | 'R' => return Some(self.handle_raw_triple_quoted_string()),
+                'f' | 'F' => return Some(self.handle_formatted_triple_quoted_string()),
+                'b' | 'B' => return Some(self.handle_bytes_triple_quoted_string()),
+                _ => unreachable!()
+            }
+        }
+        
+        // Check for regular triple-quoted strings (e.g., '''...''', """...""")
+        if (current_char == '"' && self.peek_char_n(1) == '"' && self.peek_char_n(2) == '"') ||
+           (current_char == '\'' && self.peek_char_n(1) == '\'' && self.peek_char_n(2) == '\'') {
+            return Some(self.handle_triple_quoted_string());
+        }
+        
+        // Check for prefixed single-quoted strings (e.g., r"...", f'...')
+        if (current_char == 'r' || current_char == 'R' || 
+            current_char == 'f' || current_char == 'F' || 
             current_char == 'b' || current_char == 'B') && 
             (self.peek_char_n(1) == '"' || self.peek_char_n(1) == '\'') {
             let prefix = current_char;
             self.consume_char(); // Consume the prefix
-            
-            // Handle the string based on its prefix
             match prefix {
                 'r' | 'R' => return Some(self.handle_raw_string()),
                 'f' | 'F' => return Some(self.handle_formatted_string()),
@@ -488,26 +504,9 @@ impl<'a> Lexer<'a> {
             }
         }
         
-        // Check for triple-quoted string prefixes
-        if (current_char == 'r' || current_char == 'f' || current_char == 'b') && 
-            ((self.peek_char_n(1) == '"' && self.peek_char_n(2) == '"' && self.peek_char_n(3) == '"') ||
-             (self.peek_char_n(1) == '\'' && self.peek_char_n(2) == '\'' && self.peek_char_n(3) == '\'')) {
-            let prefix = current_char;
-            self.consume_char(); // Consume the prefix
-            
-            // Handle the triple-quoted string based on its prefix
-            match prefix {
-                'r' => return Some(self.handle_raw_triple_quoted_string()),
-                'f' => return Some(self.handle_formatted_triple_quoted_string()),
-                'b' => return Some(self.handle_bytes_triple_quoted_string()),
-                _ => unreachable!()
-            }
-        }
-        
-        // Check for triple-quoted strings
-        if (current_char == '"' && self.peek_char_n(1) == '"' && self.peek_char_n(2) == '"') ||
-           (current_char == '\'' && self.peek_char_n(1) == '\'' && self.peek_char_n(2) == '\'') {
-            return Some(self.handle_triple_quoted_string());
+        // Check for regular single-quoted strings (e.g., "...", '...')
+        if current_char == '"' || current_char == '\'' {
+            return Some(self.handle_string());
         }
         
         // Check for identifiers and keywords
@@ -516,14 +515,8 @@ impl<'a> Lexer<'a> {
         }
         
         // Check for numeric literals
-        if current_char.is_digit(10) || 
-           (current_char == '.' && self.peek_char_n(1).is_digit(10)) {
+        if current_char.is_digit(10) || (current_char == '.' && self.peek_char_n(1).is_digit(10)) {
             return Some(self.handle_number());
-        }
-        
-        // Check for regular string literals
-        if current_char == '"' || current_char == '\'' {
-            return Some(self.handle_string());
         }
         
         // Check for comments
@@ -535,15 +528,10 @@ impl<'a> Lexer<'a> {
             
             // If we're at the end of the file after a comment, return EOF
             if self.is_at_end() {
-                return Some(Token::new(
-                    TokenType::EOF,
-                    self.line,
-                    self.column,
-                    "".to_string(),
-                ));
+                return Some(Token::new(TokenType::EOF, self.line, self.column, "".to_string()));
             }
             
-            // Otherwise if we reached a newline, handle it
+            // Otherwise, if we reached a newline, handle it
             if !self.is_at_end() && self.peek_char() == '\n' {
                 return self.handle_newline();
             }
@@ -832,213 +820,68 @@ impl<'a> Lexer<'a> {
         Token::new(token_type, self.line, start_col, raw_text)
     }
     
-    /// Helper function to check if a character is a binary digit (0 or 1)
-    fn is_binary_digit(&self, c: char) -> bool {
-        c == '0' || c == '1'
-    }
-    
     /// Handles binary literals (0b...)
     fn handle_binary_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
-        self.consume_char(); // Consume the 'b' or 'B'
-        
-        // Check if there are digits after the prefix
-        if self.is_at_end() || !self.is_binary_digit(self.peek_char()) {
-            let text = self.get_slice(start_pos, self.position).to_string();
-            self.add_error("Invalid binary literal: missing binary digits");
-            return Token::error(
-                "Invalid binary literal",
-                self.line,
-                start_col,
-                &text
-            );
-        }
-        
-        // Consume all digits and underscores
-        let start_digits_pos = self.position;
-        self.consume_while(|c| c == '0' || c == '1' || c == '_' || c.is_digit(10));
-        
-        // Check for invalid digits - any digit that is not 0 or 1
-        let digits_text = self.get_slice(start_digits_pos, self.position);
-        let has_invalid = digits_text.chars().any(|c| c != '0' && c != '1' && c != '_');
-        
+        self.consume_char(); // Consume 'b' or 'B'
+        self.consume_while(|c| c.is_digit(10) || c == '_'); // Consume all digits and '_'
         let raw_text = self.get_slice(start_pos, self.position).to_string();
-        
-        if has_invalid {
-            self.add_error("Invalid binary literal: contains non-binary digits");
-            return Token::error(
-                "Invalid binary literal: contains non-binary digits",
-                self.line,
-                start_col,
-                &raw_text
-            );
-        }
-        
-        // Get the text and remove any underscores
         let text = raw_text.replace("_", "");
-        // Skip the '0b' prefix for parsing
-        let value_text = &text[2..];
-        
+        let value_text = &text[2..]; // Skip "0b"
+        if value_text.is_empty() || value_text.chars().any(|c| c != '0' && c != '1') {
+            let err_msg = format!("Invalid binary literal: {}", text);
+            self.add_error(&err_msg);
+            return Token::error(&err_msg, self.line, start_col, &raw_text);
+        }
         match i64::from_str_radix(value_text, 2) {
-            Ok(value) => Token::new(
-                TokenType::BinaryLiteral(value),
-                self.line,
-                start_col,
-                raw_text
-            ),
+            Ok(value) => Token::new(TokenType::BinaryLiteral(value), self.line, start_col, raw_text),
             Err(_) => {
                 let err_msg = format!("Invalid binary literal: {}", text);
                 self.add_error(&err_msg);
-                Token::error(
-                    &err_msg,
-                    self.line,
-                    start_col,
-                    &raw_text
-                )
+                Token::error(&err_msg, self.line, start_col, &raw_text)
             }
         }
     }        
     
     /// Handles octal literals (0o...)
     fn handle_octal_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
-        println!("[DEBUG] Entering handle_octal_literal");
-        self.consume_char(); // Consume the 'o' or 'O'
-        println!("[DEBUG] After consuming 'o': next char = '{}'", self.peek_char());
-        
-        if self.is_at_end() || !self.peek_char().is_digit(8) {
-            let text = self.get_slice(start_pos, self.position).to_string();
-            println!("[DEBUG] No valid octal digits found: '{}'", text);
-            self.add_error("Invalid octal literal: missing octal digits");
-            return Token::error(
-                "Invalid octal literal",
-                self.line,
-                start_col,
-                &text
-            );
-        }
-        
-        // Keep track of start position for checking invalid digits later
-        let start_digits_pos = self.position;
-        println!("[DEBUG] Starting to consume digits at position {}", start_digits_pos);
-        
-        // Consume all digits and underscores
-        self.consume_while(|c| c.is_digit(10) || c == '_');
-        
-        // Get the complete raw text
+        self.consume_char(); // Consume 'o' or 'O'
+        self.consume_while(|c| c.is_digit(10) || c == '_'); // Consume all digits and '_'
         let raw_text = self.get_slice(start_pos, self.position).to_string();
-        println!("[DEBUG] Raw text: '{}'", raw_text);
-        
-        // Get just the digits part for checking
-        let digits_text = self.get_slice(start_digits_pos, self.position);
-        println!("[DEBUG] Digits text: '{}'", digits_text);
-        
-        // Check for specific invalid octal digits: 8 and 9
-        let invalid_digits: Vec<char> = digits_text.chars()
-            .filter(|&c| c != '_' && (c == '8' || c == '9'))
-            .collect();
-        
-        let has_invalid = !invalid_digits.is_empty();
-        println!("[DEBUG] Has invalid octal digits: {}", has_invalid);
-        if has_invalid {
-            println!("[DEBUG] Invalid digits found: {:?}", invalid_digits);
-            self.add_error("Invalid octal literal: contains non-octal digits");
-            return Token::error(
-                "Invalid octal literal: contains non-octal digits",
-                self.line,
-                start_col,
-                &raw_text
-            );
-        }
-        
-        // Get the text without underscores for parsing
         let text = raw_text.replace("_", "");
-        let value_text = &text[2..]; // Skip the '0o' prefix
-        println!("[DEBUG] Value text for parsing: '{}'", value_text);
-        
+        let value_text = &text[2..]; // Skip "0o"
+        if value_text.is_empty() || value_text.chars().any(|c| !('0'..'8').contains(&c)) {
+            let err_msg = format!("Invalid octal literal: {}", text);
+            self.add_error(&err_msg);
+            return Token::error(&err_msg, self.line, start_col, &raw_text);
+        }
         match i64::from_str_radix(value_text, 8) {
-            Ok(value) => {
-                println!("[DEBUG] Successfully parsed octal value: {}", value);
-                Token::new(
-                    TokenType::OctalLiteral(value),
-                    self.line,
-                    start_col,
-                    raw_text
-                )
-            },
-            Err(err) => {
-                let err_msg = format!("Invalid octal literal: {} (Error: {})", text, err);
-                println!("[DEBUG] Error parsing octal: {}", err_msg);
+            Ok(value) => Token::new(TokenType::OctalLiteral(value), self.line, start_col, raw_text),
+            Err(_) => {
+                let err_msg = format!("Invalid octal literal: {}", text);
                 self.add_error(&err_msg);
-                Token::error(
-                    &err_msg,
-                    self.line,
-                    start_col,
-                    &raw_text
-                )
+                Token::error(&err_msg, self.line, start_col, &raw_text)
             }
         }
-    }    
+    }
     
     /// Handles hexadecimal literals (0x...)
     fn handle_hex_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
-        self.consume_char(); // Consume the 'x' or 'X'
-        
-        if self.is_at_end() || !self.peek_char().is_ascii_hexdigit() {
-            let text = self.get_slice(start_pos, self.position).to_string();
-            self.add_error("Invalid hex literal: missing hex digits");
-            return Token::error(
-                "Invalid hex literal",
-                self.line,
-                start_col,
-                &text
-            );
-        }
-        
-        // Keep track of start position for checking invalid digits later
-        let start_digits_pos = self.position;
-        
-        // Parse all potential digits (including invalid ones)
-        // Also continue for non-hexdigits so we can properly report the error
-        self.consume_while(|c| c.is_alphanumeric() || c == '_');
-        
-        // Get the complete raw text
+        self.consume_char(); // Consume 'x' or 'X'
+        self.consume_while(|c| c.is_alphanumeric() || c == '_'); // Consume all alphanumerics and '_'
         let raw_text = self.get_slice(start_pos, self.position).to_string();
-        
-        // Check for invalid digits in the literal
-        let digits_text = self.get_slice(start_digits_pos, self.position);
-        let has_invalid = digits_text.chars().any(|c| c != '_' && !c.is_ascii_hexdigit());
-        
-        if has_invalid {
-            self.add_error("Invalid hex literal: contains non-hex digits");
-            return Token::error(
-                "Invalid hex literal: contains non-hex digits",
-                self.line,
-                start_col,
-                &raw_text
-            );
-        }
-        
-        // Get the text and remove any underscores
         let text = raw_text.replace("_", "");
-        
-        // Skip the '0x' prefix for parsing
-        let value_text = &text[2..];
-        
+        let value_text = &text[2..]; // Skip "0x"
+        if value_text.is_empty() || value_text.chars().any(|c| !c.is_ascii_hexdigit()) {
+            let err_msg = format!("Invalid hex literal: {}", text);
+            self.add_error(&err_msg);
+            return Token::error(&err_msg, self.line, start_col, &raw_text);
+        }
         match i64::from_str_radix(value_text, 16) {
-            Ok(value) => Token::new(
-                TokenType::HexLiteral(value),
-                self.line,
-                start_col,
-                raw_text
-            ),
+            Ok(value) => Token::new(TokenType::HexLiteral(value), self.line, start_col, raw_text),
             Err(_) => {
                 let err_msg = format!("Invalid hex literal: {}", text);
                 self.add_error(&err_msg);
-                Token::error(
-                    &err_msg,
-                    self.line,
-                    start_col,
-                    &raw_text
-                )
+                Token::error(&err_msg, self.line, start_col, &raw_text)
             }
         }
     }        
@@ -1383,70 +1226,47 @@ impl<'a> Lexer<'a> {
     
     /// Handles raw triple-quoted strings (r"""...""")
     fn handle_raw_triple_quoted_string(&mut self) -> Token {
-        println!("[DEBUG] Entering handle_raw_triple_quoted_string");
         let start_pos = self.position - 1; // Include the 'r' prefix
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
-        println!("[DEBUG] Quote character: '{}'", quote_char);
-        
-        // Consume the three opening quotes
-        self.consume_char();
-        self.consume_char();
-        self.consume_char();
-        println!("[DEBUG] After consuming opening quotes: next char = '{}'", self.peek_char());
-        
-        // Collect all content until we find the closing triple quote
-        let mut content = String::new();
+        println!("[DEBUG] Starting raw triple-quoted string with quote_char: '{}'", quote_char);
+        self.consume_char(); // Consume first quote
+        self.consume_char(); // Consume second quote
+        self.consume_char(); // Consume third quote
+        let mut string_content = String::new();
         let mut consecutive_quotes = 0;
-        
         while !self.is_at_end() {
-            let c = self.peek_char();
-            println!("[DEBUG] Current char: '{}', consecutive quotes: {}", c, consecutive_quotes);
-            
-            if c == quote_char {
+            let current_char = self.peek_char();
+            println!("[DEBUG] Current char: '{}', consecutive_quotes: {}", current_char, consecutive_quotes);
+            if current_char == quote_char {
                 consecutive_quotes += 1;
-                self.consume_char();
-                
-                // Check if we've found three consecutive quotes
                 if consecutive_quotes == 3 {
-                    println!("[DEBUG] Found closing triple quote");
-                    // We've already consumed all three quotes
+                    println!("[DEBUG] Found closing triple quotes");
                     break;
                 }
+                self.consume_char();
             } else {
-                // If we had some quotes but not three, add them to content
-                if consecutive_quotes > 0 {
-                    println!("[DEBUG] Adding {} consecutive quotes to content", consecutive_quotes);
-                    for _ in 0..consecutive_quotes {
-                        content.push(quote_char);
-                    }
-                    consecutive_quotes = 0;
+                for _ in 0..consecutive_quotes {
+                    string_content.push(quote_char);
                 }
-                
-                content.push(c);
-                println!("[DEBUG] Added '{}' to content: '{}'", c, content);
+                consecutive_quotes = 0;
+                string_content.push(current_char);
                 self.consume_char();
             }
         }
-        
-        // Get the lexeme
-        let lexeme = self.get_slice(start_pos, self.position).to_string();
-        println!("[DEBUG] Lexeme: '{}'", lexeme);
-        println!("[DEBUG] Final content: '{}'", content);
-        
-        if consecutive_quotes < 3 && self.is_at_end() {
-            println!("[DEBUG] Unterminated raw triple-quoted string");
-            self.add_error("Unterminated raw triple-quoted string");
-            return Token::error(
-                "Unterminated raw triple-quoted string",
-                self.line,
-                start_col,
-                &lexeme
-            );
+        // Consume the closing triple quotes
+        for _ in 0..consecutive_quotes {
+            if !self.is_at_end() {
+                self.consume_char();
+            }
         }
-        
-        println!("[DEBUG] Successfully parsed raw triple-quoted string");
-        Token::new(TokenType::RawString(content), self.line, start_col, lexeme)
+        let text = self.get_slice(start_pos, self.position).to_string();
+        println!("[DEBUG] Raw string lexeme: '{}', content: '{}'", text, string_content);
+        if consecutive_quotes < 3 {
+            self.add_error("Unterminated raw triple-quoted string");
+            return Token::error("Unterminated raw triple-quoted string", self.line, start_col, &text);
+        }
+        Token::new(TokenType::RawString(string_content), self.line, start_col, text)
     }                    
     
     /// Handles formatted triple-quoted strings (f"""...""")
