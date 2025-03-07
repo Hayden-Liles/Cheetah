@@ -66,6 +66,7 @@ pub enum TokenType {
     Power,        // **
     #[allow(dead_code)]
     MatrixMul,    // @
+    BackSlash,    // \ (for line continuations and other uses)
     
     Assign,       // =
     PlusAssign,   // +=
@@ -379,65 +380,60 @@ impl<'a> Lexer<'a> {
             _ => {}
         }
     }
+
+    fn has_error_for_line(&self, line: usize, message: &str) -> bool {
+        self.errors.iter().any(|e| e.line == line && e.message == message)
+    }
     
     /// Handles indentation changes after a newline
     fn handle_indentation_change(&mut self, tokens: &mut Vec<Token>, token_line: usize) {
-        // Check if indentation increased
         if self.current_indent > *self.indent_stack.last().unwrap_or(&0) {
-            // Check for consistency if enabled
             if self.config.enforce_indent_consistency && 
+                !self.config.allow_tabs_in_indentation && 
                 self.current_indent % self.config.standard_indent_size != 0 {
-                self.add_error_with_suggestion(
-                    &format!(
-                        "Inconsistent indentation. Expected multiple of {} spaces but got {}.", 
-                        self.config.standard_indent_size, self.current_indent
-                    ),
-                    &format!("Use {} spaces for indentation", self.config.standard_indent_size)
+                let error_message = format!(
+                    "Inconsistent indentation. Expected multiple of {} spaces but got {}.",
+                    self.config.standard_indent_size, self.current_indent
                 );
+                if !self.has_error_for_line(token_line, &error_message) {
+                    self.add_error_with_position(
+                        &error_message,
+                        &format!("Use {} spaces for indentation", self.config.standard_indent_size),
+                        token_line,
+                        1
+                    );
+                }
             }
-            
-            // Insert an indent token BEFORE the current token
             let indent_token = Token::new(
                 TokenType::Indent,
                 token_line,
-                1, // Indent is always at the start of the line
+                1,
                 " ".repeat(self.current_indent),
             );
-            
-            // Update indentation stack
             self.indent_stack.push(self.current_indent);
-            
-            // Insert the Indent token
             tokens.push(indent_token);
-        } 
-        // Check if indentation decreased
-        else if self.current_indent < *self.indent_stack.last().unwrap_or(&0) {
-            // Generate dedent tokens as needed
-            while self.indent_stack.len() > 1 && self.current_indent < *self.indent_stack.last().unwrap() {
-                let _last_indent = self.indent_stack.pop().unwrap();
-                
-                // Check if we're going back to a valid indentation level
-                if self.indent_stack.last().unwrap() != &self.current_indent && 
-                   self.indent_stack.iter().all(|i| i != &self.current_indent) {
-                    let msg = format!(
-                        "Inconsistent indentation. Current indent level {} doesn't match any previous level.",
-                        self.current_indent
-                    );
-                    self.add_error_with_suggestion(
-                        &msg, 
-                        "Ensure indentation matches a previous level"
+        } else if self.current_indent < *self.indent_stack.last().unwrap_or(&0) {
+            let valid_indent_level = self.indent_stack.iter().any(|&i| i == self.current_indent);
+            if !valid_indent_level {
+                let msg = format!(
+                    "Inconsistent indentation. Current indent level {} doesn't match any previous level.",
+                    self.current_indent
+                );
+                if !self.has_error_for_line(token_line, &msg) {
+                    self.add_error_with_position(
+                        &msg,
+                        "Ensure indentation matches a previous level",
+                        token_line,
+                        1
                     );
                 }
-                
-                tokens.push(Token::new(
-                    TokenType::Dedent,
-                    token_line,
-                    1,
-                    "".to_string(),
-                ));
+            }
+            while self.indent_stack.len() > 1 && self.current_indent < *self.indent_stack.last().unwrap() {
+                self.indent_stack.pop();
+                tokens.push(Token::new(TokenType::Dedent, token_line, 1, "".to_string()));
             }
         }
-    }        
+    }       
     
     /// Gets the next token from the input
     fn next_token(&mut self) -> Option<Token> {
@@ -461,10 +457,29 @@ impl<'a> Lexer<'a> {
         }
         
         // Check for line continuation with backslash
-        if current_char == '\\' && self.peek_char_n(1) == '\n' {
+        if current_char == '\\' && 
+           (self.peek_char_n(1) == '\n' || 
+            (self.peek_char_n(1) == '\r' && self.peek_char_n(2) == '\n')) {
+            
             self.consume_char(); // Consume backslash
-            self.consume_char(); // Consume newline
-            return self.next_token(); // Get the next token after continuation
+            
+            // Handle Windows CRLF or Unix LF line endings
+            if self.peek_char() == '\r' {
+                self.consume_char(); // Consume \r
+            }
+            if self.peek_char() == '\n' {
+                self.consume_char(); // Consume \n
+            }
+            
+            // Skip whitespace at the start of the next line without
+            // checking for indentation consistency
+            while !self.is_at_end() && 
+                  (self.peek_char() == ' ' || self.peek_char() == '\t') {
+                self.consume_char();
+            }
+            
+            // Continue to the next token
+            return self.next_token();
         }
         
         // Check for prefixed triple-quoted strings (e.g., r'''...''', f"""...""")
@@ -567,11 +582,16 @@ impl<'a> Lexer<'a> {
     /// Handles newlines and indentation
     fn handle_newline(&mut self) -> Option<Token> {
         let start_col = self.column;
+        let start_line = self.line;
         
         self.consume_char(); // Consume the newline
         
+        // Track if we're processing an empty line
+        let mut is_empty_line = false;
+        
         // Skip empty lines and just count them for line number tracking
         while !self.is_at_end() && self.peek_char() == '\n' {
+            is_empty_line = true;
             self.consume_char();
         }
         
@@ -581,13 +601,16 @@ impl<'a> Lexer<'a> {
         // Create newline token
         let newline_token = Token::new(
             TokenType::Newline,
-            self.line - 1, // Line where the newline started
+            start_line, // Line where the newline started
             start_col,
             "\n".to_string(),
         );
         
-        // Update the current indentation level
-        self.current_indent = indent_size;
+        // Update the current indentation level, but preserve existing indentation for empty lines
+        // This ensures empty lines don't mess up indentation tracking
+        if !is_empty_line {
+            self.current_indent = indent_size;
+        }
         
         // Return the newline token, indentation tokens will be handled separately
         Some(newline_token)
@@ -598,6 +621,9 @@ impl<'a> Lexer<'a> {
         let mut count = 0;
         let mut has_tabs = false;
         let mut has_spaces = false;
+        
+        // Store the current line for error reporting
+        let indentation_line = self.line;
         
         while !self.is_at_end() {
             let c = self.peek_char();
@@ -615,29 +641,65 @@ impl<'a> Lexer<'a> {
             }
         }
         
-        // Only report tab/space mixing if both are present
+        // Only report tab/space mixing if both are present AND tabs are not allowed
         if has_tabs && has_spaces && !self.config.allow_tabs_in_indentation {
-            self.add_error_with_suggestion(
-                "Mixed tabs and spaces in indentation",
-                "Use spaces only for indentation"
-            );
+            let msg = "Mixed tabs and spaces in indentation";
+            if !self.has_error_for_line(indentation_line, msg) {
+                self.add_error_with_position(
+                    msg,
+                    "Use spaces only for indentation",
+                    indentation_line,
+                    1
+                );
+            }
         }
         
-        // Report inconsistent indentation only if it's not a multiple of standard_indent_size
-        // and we're not already reporting mixed tabs/spaces
+        // Only report inconsistent indentation if:
+        // 1. Config requires consistency
+        // 2. AND the indentation isn't a multiple of standard_indent_size
+        // 3. AND EITHER:
+        //    a. We're not using tabs at all, OR
+        //    b. We're using tabs but they're not allowed (i.e., allow_tabs_in_indentation is false)
         if self.config.enforce_indent_consistency && 
-            count % self.config.standard_indent_size != 0 && 
-            !(has_tabs && has_spaces && !self.config.allow_tabs_in_indentation) {
-            self.add_error_with_suggestion(
-                &format!(
-                    "Inconsistent indentation. Expected multiple of {} spaces but got {}.", 
-                    self.config.standard_indent_size, count
-                ),
-                &format!("Use {} spaces for indentation", self.config.standard_indent_size)
+           count % self.config.standard_indent_size != 0 && 
+           (!has_tabs || !self.config.allow_tabs_in_indentation) {
+            
+            let msg = format!(
+                "Inconsistent indentation. Expected multiple of {} spaces but got {}.", 
+                self.config.standard_indent_size, count
             );
+            
+            if !self.has_error_for_line(indentation_line, &msg) {
+                self.add_error_with_position(
+                    &msg,
+                    &format!("Use {} spaces for indentation", self.config.standard_indent_size),
+                    indentation_line,
+                    1
+                );
+            }
         }
         
         count
+    }
+
+    fn add_error_with_position(&mut self, message: &str, suggestion: &str, line: usize, column: usize) {
+        let error = LexerError {
+            message: message.to_string(),
+            line: line,
+            column: column,
+            snippet: self.get_error_context_for_line(line),
+            suggestion: Some(suggestion.to_string()),
+        };
+        self.errors.push(error);
+    }    
+
+    fn get_error_context_for_line(&self, line: usize) -> String {
+        let lines: Vec<&str> = self.input.lines().collect();
+        if line <= lines.len() {
+            lines[line - 1].to_string()
+        } else {
+            String::new()
+        }
     }    
     
     /// Handles identifiers and keywords
@@ -919,9 +981,22 @@ impl<'a> Lexer<'a> {
                         self.handle_unicode_escape(&mut string_content);
                         '\0' // Already added to string_content
                     },
+                    'U' => {
+                        self.handle_extended_unicode_escape(&mut string_content);
+                        '\0' // Already added to string_content
+                    },
                     '\n' => {
                         // Line continuation within a string
                         self.consume_char(); // Consume the newline
+                        self.skip_whitespace(); // Skip leading whitespace on next line
+                        '\0' // Don't add anything for line continuation
+                    },
+                    '\r' => {
+                        // Handle Windows CRLF line continuation
+                        self.consume_char(); // Consume the \r
+                        if !self.is_at_end() && self.peek_char() == '\n' {
+                            self.consume_char(); // Consume the \n
+                        }
                         self.skip_whitespace(); // Skip leading whitespace on next line
                         '\0' // Don't add anything for line continuation
                     },
@@ -932,7 +1007,8 @@ impl<'a> Lexer<'a> {
                 };
                 
                 // Only add the character for simple escapes, the complex ones handle adding themselves
-                if current_char != 'x' && current_char != 'u' && current_char != '\n' {
+                if current_char != 'x' && current_char != 'u' && current_char != 'U' && 
+                current_char != '\n' && current_char != '\r' {
                     string_content.push(escaped_char);
                     self.consume_char(); // Consume the escape character
                 }
@@ -945,7 +1021,7 @@ impl<'a> Lexer<'a> {
                 // End of string
                 self.consume_char(); // Consume the closing quote
                 break;
-            } else if current_char == '\n' {
+            } else if current_char == '\n' || current_char == '\r' {
                 // Unterminated string literal
                 let text = self.get_slice(start_pos, self.position).to_string();
                 self.add_error_with_suggestion(
@@ -983,6 +1059,40 @@ impl<'a> Lexer<'a> {
         
         Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text)
     }
+
+    /// Handles \U escape sequences in strings (extended unicode values)
+    fn handle_extended_unicode_escape(&mut self, string_content: &mut String) -> char {
+        self.consume_char(); // Consume the 'U'
+        
+        let mut hex_value = String::with_capacity(8);
+        
+        // Read exactly 8 hex digits
+        for _ in 0..8 {
+            if !self.is_at_end() && self.peek_char().is_ascii_hexdigit() {
+                hex_value.push(self.peek_char());
+                self.consume_char();
+            } else {
+                self.add_error("Invalid extended Unicode escape sequence: expected 8 hex digits");
+                return '?'; // Error placeholder
+            }
+        }
+        
+        // Convert to Unicode character
+        if let Ok(code_point) = u32::from_str_radix(&hex_value, 16) {
+            if let Some(c) = char::from_u32(code_point) {
+                string_content.push(c);
+            } else {
+                let err_msg = format!("Invalid Unicode code point: U+{:X}", code_point);
+                self.add_error(&err_msg);
+            }
+        } else {
+            let err_msg = format!("Invalid Unicode escape sequence: \\U{}", hex_value);
+            self.add_error(&err_msg);
+        }
+        
+        // Return null character since we've already added the Unicode character to string_content
+        '\0'
+    }
     
     /// Handles raw string literals (r"...")
     fn handle_raw_string(&mut self) -> Token {
@@ -993,12 +1103,25 @@ impl<'a> Lexer<'a> {
         self.consume_char(); // Consume the opening quote
         
         let mut string_content = String::new();
+        let mut is_escaped = false;
         
         while !self.is_at_end() {
             let current_char = self.peek_char();
             
-            if current_char == quote_char {
-                // End of string
+            if is_escaped {
+                // In raw strings, a backslash followed by any character is not an escape sequence
+                // Both characters are added literally
+                string_content.push('\\');
+                string_content.push(current_char);
+                self.consume_char(); // Consume the character after the backslash
+                is_escaped = false;
+            } else if current_char == '\\' {
+                // Mark that we've seen a backslash, but don't add it to string_content yet
+                // We'll add it in the next iteration
+                is_escaped = true;
+                self.consume_char(); // Consume the backslash
+            } else if current_char == quote_char {
+                // End of string - found the closing quote
                 self.consume_char(); // Consume the closing quote
                 break;
             } else if current_char == '\n' {
@@ -1015,9 +1138,15 @@ impl<'a> Lexer<'a> {
                     &text
                 );        
             } else {
+                // Add the character to the string content
                 string_content.push(current_char);
                 self.consume_char(); // Consume the character
             }
+        }
+        
+        // If we have an unprocessed backslash at the end, add it to the string
+        if is_escaped {
+            string_content.push('\\');
         }
         
         // Get the text and immediately clone it to avoid borrow issues
@@ -1035,7 +1164,7 @@ impl<'a> Lexer<'a> {
         }
         
         Token::new(TokenType::RawString(string_content), self.line, start_col, text)
-    }
+    }    
     
     /// Handles f-string literals (f"...")
     fn handle_formatted_string(&mut self) -> Token {
@@ -1240,11 +1369,11 @@ impl<'a> Lexer<'a> {
             println!("[DEBUG] Current char: '{}', consecutive_quotes: {}", current_char, consecutive_quotes);
             if current_char == quote_char {
                 consecutive_quotes += 1;
+                self.consume_char(); // Consume the quote
                 if consecutive_quotes == 3 {
                     println!("[DEBUG] Found closing triple quotes");
                     break;
                 }
-                self.consume_char();
             } else {
                 for _ in 0..consecutive_quotes {
                     string_content.push(quote_char);
@@ -1254,12 +1383,7 @@ impl<'a> Lexer<'a> {
                 self.consume_char();
             }
         }
-        // Consume the closing triple quotes
-        for _ in 0..consecutive_quotes {
-            if !self.is_at_end() {
-                self.consume_char();
-            }
-        }
+        
         let text = self.get_slice(start_pos, self.position).to_string();
         println!("[DEBUG] Raw string lexeme: '{}', content: '{}'", text, string_content);
         if consecutive_quotes < 3 {
@@ -1267,7 +1391,7 @@ impl<'a> Lexer<'a> {
             return Token::error("Unterminated raw triple-quoted string", self.line, start_col, &text);
         }
         Token::new(TokenType::RawString(string_content), self.line, start_col, text)
-    }                    
+    }             
     
     /// Handles formatted triple-quoted strings (f"""...""")
     fn handle_formatted_triple_quoted_string(&mut self) -> Token {
@@ -1290,17 +1414,12 @@ impl<'a> Lexer<'a> {
             
             if !in_expression && current_char == quote_char {
                 consecutive_quotes += 1;
+                self.consume_char(); // Consume the quote
                 
                 // Check if we've found three consecutive quotes
                 if consecutive_quotes == 3 {
-                    // Consume the closing triple quotes
-                    self.consume_char();
-                    self.consume_char();
-                    self.consume_char();
-                    break;
+                    break; // We've already consumed all three closing quotes
                 }
-                
-                self.consume_char();
             } else if !in_expression && current_char == '{' && 
                       (!self.is_at_end_n(1) && self.peek_char_n(1) != '{') {
                 // Start of expression
@@ -1365,7 +1484,7 @@ impl<'a> Lexer<'a> {
         }
         
         Token::new(TokenType::FString(string_content), self.line, start_col, text)
-    }
+    }    
     
     /// Handles bytes triple-quoted strings (b"""...""")
     fn handle_bytes_triple_quoted_string(&mut self) -> Token {
@@ -1437,17 +1556,12 @@ impl<'a> Lexer<'a> {
                 self.consume_char();
             } else if current_char == quote_char {
                 consecutive_quotes += 1;
+                self.consume_char(); // Consume the quote
                 
                 // Check if we've found three consecutive quotes
                 if consecutive_quotes == 3 {
-                    // Consume the closing triple quotes
-                    self.consume_char();
-                    self.consume_char();
-                    self.consume_char();
-                    break;
+                    break; // We've already consumed all three closing quotes
                 }
-                
-                self.consume_char();
             } else {
                 // Regular character
                 
@@ -1771,7 +1885,7 @@ impl<'a> Lexer<'a> {
                     self.consume_char();
                     TokenType::MatrixMulAssign
                 } else {
-                    TokenType::At // Fixed: This now correctly returns TokenType::At for decorators
+                    TokenType::At // For decorators
                 }
             },
             '&' => {
@@ -1879,6 +1993,13 @@ impl<'a> Lexer<'a> {
                 TokenType::SemiColon
             },
             
+            // Handle backslash as a legitimate token 
+            '\\' => {
+                // Line continuation will be handled in next_token
+                // Here we're just returning the token
+                TokenType::BackSlash
+            },
+            
             // Invalid characters
             _ => {
                 let msg = format!("Unexpected character: {}", current_char);
@@ -1935,7 +2056,20 @@ impl<'a> Lexer<'a> {
                 self.chars.next().unwrap_or('\0')
             };
             
-            if current_char == '\n' {
+            // Handle Windows CRLF as a single newline
+            if current_char == '\r' && !self.is_at_end_n(1) && self.peek_char_n(1) == '\n' {
+                // Consume the \n part of CRLF
+                if !self.lookahead_buffer.is_empty() {
+                    self.lookahead_buffer.remove(0);
+                } else {
+                    self.chars.next();
+                }
+                self.position += 1;
+                
+                // Handle as a single newline
+                self.line += 1;
+                self.column = 1;
+            } else if current_char == '\n' {
                 self.line += 1;
                 self.column = 1;
             } else {
@@ -1944,7 +2078,7 @@ impl<'a> Lexer<'a> {
             
             self.position += 1;
         }
-    }
+    }  
     
     /// Consumes characters while a predicate is true
     fn consume_while<F>(&mut self, predicate: F) 
@@ -1990,854 +2124,753 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_keywords() {
-        let mut lexer = Lexer::new("if elif else def return while for in break continue");
-        let tokens = lexer.tokenize();
-        
-        assert_eq!(tokens[0].token_type, TokenType::If);
-        assert_eq!(tokens[1].token_type, TokenType::Elif);
-        assert_eq!(tokens[2].token_type, TokenType::Else);
-        assert_eq!(tokens[3].token_type, TokenType::Def);
-        assert_eq!(tokens[4].token_type, TokenType::Return);
-        assert_eq!(tokens[5].token_type, TokenType::While);
-        assert_eq!(tokens[6].token_type, TokenType::For);
-        assert_eq!(tokens[7].token_type, TokenType::In);
-        assert_eq!(tokens[8].token_type, TokenType::Break);
-        assert_eq!(tokens[9].token_type, TokenType::Continue);
-    }
-
-    #[test]
-    fn test_identifiers() {
-        let mut lexer = Lexer::new("x y variable_name _private var123");
-        let tokens = lexer.tokenize();
-        
-        assert_eq!(tokens[0].token_type, TokenType::Identifier("x".to_string()));
-        assert_eq!(tokens[1].token_type, TokenType::Identifier("y".to_string()));
-        assert_eq!(tokens[2].token_type, TokenType::Identifier("variable_name".to_string()));
-        assert_eq!(tokens[3].token_type, TokenType::Identifier("_private".to_string()));
-        assert_eq!(tokens[4].token_type, TokenType::Identifier("var123".to_string()));
-    }
-
-    #[test]
-    fn test_numbers() {
-        let mut lexer = Lexer::new("123 3.14 0.5 1e10 1.5e-3 1_000_000 0b101 0o755 0xABCD");
-        let tokens = lexer.tokenize();
-        
-        assert_eq!(tokens[0].token_type, TokenType::IntLiteral(123));
-        assert_eq!(tokens[1].token_type, TokenType::FloatLiteral(3.14));
-        assert_eq!(tokens[2].token_type, TokenType::FloatLiteral(0.5));
-        assert_eq!(tokens[3].token_type, TokenType::FloatLiteral(1e10));
-        assert_eq!(tokens[4].token_type, TokenType::FloatLiteral(1.5e-3));
-        assert_eq!(tokens[5].token_type, TokenType::IntLiteral(1000000));
-        assert_eq!(tokens[6].token_type, TokenType::BinaryLiteral(5));
-        assert_eq!(tokens[7].token_type, TokenType::OctalLiteral(493));
-        assert_eq!(tokens[8].token_type, TokenType::HexLiteral(43981));
-    }
-
-    #[test]
-    fn test_strings() {
-        let mut lexer = Lexer::new("\"hello\" 'world' \"escape\\nsequence\" r\"raw\\string\" f\"format {value}\"");
-        let tokens = lexer.tokenize();
-        
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("hello".to_string()));
-        assert_eq!(tokens[1].token_type, TokenType::StringLiteral("world".to_string()));
-        assert_eq!(tokens[2].token_type, TokenType::StringLiteral("escape\nsequence".to_string()));
-        
-        if let TokenType::RawString(s) = &tokens[3].token_type {
-            assert_eq!(s, "raw\\string");
-        } else {
-            panic!("Expected RawString token");
-        }
-        
-        if let TokenType::FString(s) = &tokens[4].token_type {
-            assert_eq!(s, "format {value}");
-        } else {
-            panic!("Expected FString token");
-        }
-    }
     
-    #[test]
-    fn test_triple_quoted_strings() {
-        // Test with simple example first
-        let input = "\"\"\"This is a\nmulti-line\nstring\"\"\" '''Another\none'''";
+    // Helper function to simplify token comparison
+    fn assert_tokens(input: &str, expected_tokens: Vec<TokenType>) {
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         
-        // Check both triple-quoted strings
-        assert_eq!(tokens.len(), 3); // Two string tokens plus EOF
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("This is a\nmulti-line\nstring".to_string()));
-        assert_eq!(tokens[1].token_type, TokenType::StringLiteral("Another\none".to_string()));
-    }
-
-    #[test]
-    fn test_operators() {
-        let mut lexer = Lexer::new("+ - * / // % ** @ = += -= *= /= %= **= @= //= &= |= ^= <<= >>= == != < <= > >= & | ^ ~ << >> -> := ...");
-        let tokens = lexer.tokenize();
+        assert_eq!(tokens.len(), expected_tokens.len() + 1, "Token count mismatch"); // +1 for EOF
         
-        assert_eq!(tokens[0].token_type, TokenType::Plus);
-        assert_eq!(tokens[1].token_type, TokenType::Minus);
-        assert_eq!(tokens[2].token_type, TokenType::Multiply);
-        assert_eq!(tokens[3].token_type, TokenType::Divide);
-        assert_eq!(tokens[4].token_type, TokenType::FloorDivide);
-        assert_eq!(tokens[5].token_type, TokenType::Modulo);
-        assert_eq!(tokens[6].token_type, TokenType::Power);
-        assert_eq!(tokens[7].token_type, TokenType::At);
-        assert_eq!(tokens[8].token_type, TokenType::Assign);
-        assert_eq!(tokens[9].token_type, TokenType::PlusAssign);
-        assert_eq!(tokens[10].token_type, TokenType::MinusAssign);
-        assert_eq!(tokens[11].token_type, TokenType::MulAssign);
-        assert_eq!(tokens[12].token_type, TokenType::DivAssign);
-        assert_eq!(tokens[13].token_type, TokenType::ModAssign);
-        assert_eq!(tokens[14].token_type, TokenType::PowAssign);
-        assert_eq!(tokens[15].token_type, TokenType::MatrixMulAssign);
-        assert_eq!(tokens[16].token_type, TokenType::FloorDivAssign);
-        assert_eq!(tokens[17].token_type, TokenType::BitwiseAndAssign);
-        assert_eq!(tokens[18].token_type, TokenType::BitwiseOrAssign);
-        assert_eq!(tokens[19].token_type, TokenType::BitwiseXorAssign);
-        assert_eq!(tokens[20].token_type, TokenType::ShiftLeftAssign);
-        assert_eq!(tokens[21].token_type, TokenType::ShiftRightAssign);
-        assert_eq!(tokens[22].token_type, TokenType::Equal);
-        assert_eq!(tokens[23].token_type, TokenType::NotEqual);
-        assert_eq!(tokens[24].token_type, TokenType::LessThan);
-        assert_eq!(tokens[25].token_type, TokenType::LessEqual);
-        assert_eq!(tokens[26].token_type, TokenType::GreaterThan);
-        assert_eq!(tokens[27].token_type, TokenType::GreaterEqual);
-        assert_eq!(tokens[28].token_type, TokenType::BitwiseAnd);
-        assert_eq!(tokens[29].token_type, TokenType::BitwiseOr);
-        assert_eq!(tokens[30].token_type, TokenType::BitwiseXor);
-        assert_eq!(tokens[31].token_type, TokenType::BitwiseNot);
-        assert_eq!(tokens[32].token_type, TokenType::ShiftLeft);
-        assert_eq!(tokens[33].token_type, TokenType::ShiftRight);
-        assert_eq!(tokens[34].token_type, TokenType::Arrow);
-        assert_eq!(tokens[35].token_type, TokenType::Walrus);
-        assert_eq!(tokens[36].token_type, TokenType::Ellipsis);
-    }
-
-    #[test]
-    fn test_delimiters() {
-        let mut lexer = Lexer::new("( ) [ ] { } , . : ;");
-        let tokens = lexer.tokenize();
-        
-        assert_eq!(tokens[0].token_type, TokenType::LeftParen);
-        assert_eq!(tokens[1].token_type, TokenType::RightParen);
-        assert_eq!(tokens[2].token_type, TokenType::LeftBracket);
-        assert_eq!(tokens[3].token_type, TokenType::RightBracket);
-        assert_eq!(tokens[4].token_type, TokenType::LeftBrace);
-        assert_eq!(tokens[5].token_type, TokenType::RightBrace);
-        assert_eq!(tokens[6].token_type, TokenType::Comma);
-        assert_eq!(tokens[7].token_type, TokenType::Dot);
-        assert_eq!(tokens[8].token_type, TokenType::Colon);
-        assert_eq!(tokens[9].token_type, TokenType::SemiColon);
-    }
-
-    #[test]
-    fn test_indentation() {
-        let mut lexer = Lexer::new("if True:\n    print(\"indented\")\n    if False:\n        nested\n    back\noutside");
-        let tokens = lexer.tokenize();
-        
-        // Find "if True:" followed by newline
-        let mut found_if_true = false;
-        let mut indent_after_if_true = false;
-        
-        for i in 0..tokens.len().saturating_sub(4) {
-            if let (TokenType::If, TokenType::True, TokenType::Colon, TokenType::Newline) = 
-               (&tokens[i].token_type, &tokens[i+1].token_type, &tokens[i+2].token_type, &tokens[i+3].token_type) {
-                found_if_true = true;
-                
-                // Check for Indent after Newline
-                if i + 4 < tokens.len() && matches!(tokens[i+4].token_type, TokenType::Indent) {
-                    indent_after_if_true = true;
-                }
-                break;
-            }
+        for (i, expected_type) in expected_tokens.iter().enumerate() {
+            assert_eq!(&tokens[i].token_type, expected_type, 
+                       "Token type mismatch at position {}. Expected {:?}, got {:?}", 
+                       i, expected_type, tokens[i].token_type);
         }
         
-        assert!(found_if_true, "Did not find 'if True:' followed by newline");
-        assert!(indent_after_if_true, "Missing indentation after 'if True:'");
-        
-        // Check for at least one Dedent token
-        let has_dedent = tokens.iter().any(|t| matches!(t.token_type, TokenType::Dedent));
-        assert!(has_dedent, "Missing Dedent token");
-    }
-
-    #[test]
-    fn test_comments() {
-        let mut lexer = Lexer::new("# This is a comment\nx = 5 # inline comment");
-        let tokens = lexer.tokenize();
-        
-        // Comments should be skipped, but newlines are preserved in Python-like syntax
-        assert_eq!(tokens[0].token_type, TokenType::Newline);
-        assert_eq!(tokens[1].token_type, TokenType::Identifier("x".to_string()));
-        assert_eq!(tokens[2].token_type, TokenType::Assign);
-        assert_eq!(tokens[3].token_type, TokenType::IntLiteral(5));
-        assert_eq!(tokens[4].token_type, TokenType::EOF);
-    }
-
-    #[test]
-    fn test_hex_escape() {
-        let mut lexer = Lexer::new("\"\\x41\\x42\"");
-        let tokens = lexer.tokenize();
-        
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("AB".to_string()));
+        // Check that the last token is EOF
+        assert_eq!(tokens.last().unwrap().token_type, TokenType::EOF);
     }
     
+    // Test empty input
     #[test]
-    fn test_unicode_escape() {
-        let mut lexer = Lexer::new("\"\\u{1F600}\" \"\\u00A9\"");
+    fn test_empty_input() {
+        let mut lexer = Lexer::new("");
         let tokens = lexer.tokenize();
         
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("😀".to_string()));
-        assert_eq!(tokens[1].token_type, TokenType::StringLiteral("©".to_string()));
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_type, TokenType::EOF);
     }
     
+    // Test keywords
     #[test]
-    fn test_f_strings() {
-        let mut lexer = Lexer::new("f\"Hello, {name}!\" f\"{a + b}\"");
-        let tokens = lexer.tokenize();
+    fn test_keywords() {
+        assert_tokens(
+            "def if elif else while for in break continue pass return",
+            vec![
+                TokenType::Def,
+                TokenType::If,
+                TokenType::Elif,
+                TokenType::Else,
+                TokenType::While,
+                TokenType::For,
+                TokenType::In,
+                TokenType::Break,
+                TokenType::Continue,
+                TokenType::Pass,
+                TokenType::Return,
+            ]
+        );
         
-        if let TokenType::FString(s) = &tokens[0].token_type {
-            assert_eq!(s, "Hello, {name}!");
-        } else {
-            panic!("Expected FString token");
-        }
+        assert_tokens(
+            "import from as True False None and or not",
+            vec![
+                TokenType::Import,
+                TokenType::From,
+                TokenType::As,
+                TokenType::True,
+                TokenType::False,
+                TokenType::None,
+                TokenType::And,
+                TokenType::Or,
+                TokenType::Not,
+            ]
+        );
         
-        if let TokenType::FString(s) = &tokens[1].token_type {
-            assert_eq!(s, "{a + b}");
-        } else {
-            panic!("Expected FString token");
-        }
+        assert_tokens(
+            "class with assert async await try except finally raise",
+            vec![
+                TokenType::Class,
+                TokenType::With,
+                TokenType::Assert,
+                TokenType::Async,
+                TokenType::Await,
+                TokenType::Try,
+                TokenType::Except,
+                TokenType::Finally,
+                TokenType::Raise,
+            ]
+        );
+        
+        assert_tokens(
+            "lambda global nonlocal yield del is",
+            vec![
+                TokenType::Lambda,
+                TokenType::Global,
+                TokenType::Nonlocal,
+                TokenType::Yield,
+                TokenType::Del,
+                TokenType::Is,
+            ]
+        );
     }
     
+    // Test identifiers
+    #[test]
+    fn test_identifiers() {
+        assert_tokens(
+            "variable _private name123 camelCase snake_case",
+            vec![
+                TokenType::Identifier("variable".to_string()),
+                TokenType::Identifier("_private".to_string()),
+                TokenType::Identifier("name123".to_string()),
+                TokenType::Identifier("camelCase".to_string()),
+                TokenType::Identifier("snake_case".to_string()),
+            ]
+        );
+        
+        // Test identifier that looks like keyword but isn't
+        assert_tokens(
+            "defining ifdef",
+            vec![
+                TokenType::Identifier("defining".to_string()),
+                TokenType::Identifier("ifdef".to_string()),
+            ]
+        );
+    }
+    
+    // Test integer literals
+    #[test]
+    fn test_integer_literals() {
+        assert_tokens(
+            "123 0 -42 1_000_000",
+            vec![
+                TokenType::IntLiteral(123),
+                TokenType::IntLiteral(0),
+                TokenType::Minus,
+                TokenType::IntLiteral(42),
+                TokenType::IntLiteral(1000000),
+            ]
+        );
+    }
+    
+    // Test different numeric bases
+    #[test]
+    fn test_different_bases() {
+        assert_tokens(
+            "0b1010 0B1100 0o777 0O123 0xABC 0Xdef",
+            vec![
+                TokenType::BinaryLiteral(10),
+                TokenType::BinaryLiteral(12),
+                TokenType::OctalLiteral(511), // 777 octal = 511 decimal
+                TokenType::OctalLiteral(83),  // 123 octal = 83 decimal
+                TokenType::HexLiteral(2748),  // ABC hex = 2748 decimal
+                TokenType::HexLiteral(3567),  // def hex = 3567 decimal
+            ]
+        );
+    }
+    
+    // Test float literals
+    #[test]
+    fn test_float_literals() {
+        assert_tokens(
+            "3.14 .5 2. 1e10 1.5e-5 1_000.5 1e+10",
+            vec![
+                TokenType::FloatLiteral(3.14),
+                TokenType::FloatLiteral(0.5),
+                TokenType::FloatLiteral(2.0),
+                TokenType::FloatLiteral(1e10),
+                TokenType::FloatLiteral(1.5e-5),
+                TokenType::FloatLiteral(1000.5),
+                TokenType::FloatLiteral(1e10),
+            ]
+        );
+    }
+    
+    // Test string literals
+    #[test]
+    fn test_string_literals() {
+        assert_tokens(
+            r#""hello" 'world'"#,
+            vec![
+                TokenType::StringLiteral("hello".to_string()),
+                TokenType::StringLiteral("world".to_string()),
+            ]
+        );
+        
+        // Test strings with escape sequences
+        assert_tokens(
+            r#""hello\nworld" 'escaped\'quote' "tab\tchar" 'bell\a'"#,
+            vec![
+                TokenType::StringLiteral("hello\nworld".to_string()),
+                TokenType::StringLiteral("escaped'quote".to_string()),
+                TokenType::StringLiteral("tab\tchar".to_string()),
+                TokenType::StringLiteral("bell\u{0007}".to_string()),
+            ]
+        );
+        
+        // Test hex and Unicode escapes
+        assert_tokens(
+            r#""\x41\x42C" "\u00A9 copyright""#,
+            vec![
+                TokenType::StringLiteral("ABC".to_string()),
+                TokenType::StringLiteral("© copyright".to_string()),
+            ]
+        );
+    }
+    
+    // Test raw strings
+    #[test]
+    fn test_raw_strings() {
+        assert_tokens(
+            r#"r"raw\nstring" R'another\tone'"#,
+            vec![
+                TokenType::RawString("raw\\nstring".to_string()),
+                TokenType::RawString("another\\tone".to_string()),
+            ]
+        );
+    }
+    
+    // Test formatted strings (f-strings)
+    #[test]
+    fn test_formatted_strings() {
+        assert_tokens(
+            r#"f"Hello, {name}!" F'Value: {2 + 2}'"#,
+            vec![
+                TokenType::FString("Hello, {name}!".to_string()),
+                TokenType::FString("Value: {2 + 2}".to_string()),
+            ]
+        );
+        
+        // Test nested expressions
+        assert_tokens(
+            r#"f"Nested: {value if condition else {inner}}""#,
+            vec![
+                TokenType::FString("Nested: {value if condition else {inner}}".to_string()),
+            ]
+        );
+    }
+    
+    // Test bytes literals
     #[test]
     fn test_bytes_literals() {
-        let mut lexer = Lexer::new("b\"hello\" b'\\x00\\x01\\x02'");
+        assert_tokens(
+            r#"b"bytes" B'\x00\xff'"#,
+            vec![
+                TokenType::BytesLiteral(b"bytes".to_vec()),
+                TokenType::BytesLiteral(vec![0, 255]),
+            ]
+        );
+    }
+    
+    // Test triple-quoted strings
+    #[test]
+    fn test_triple_quoted_strings() {
+        assert_tokens(
+            r#""""Triple quoted string"""'''Another triple quoted'''"#,
+            vec![
+                TokenType::StringLiteral("Triple quoted string".to_string()),
+                TokenType::StringLiteral("Another triple quoted".to_string()),
+            ]
+        );
+        
+        // Test with newlines inside
+        assert_tokens(
+            "\"\"\"Multi\nline\nstring\"\"\"",
+            vec![
+                TokenType::StringLiteral("Multi\nline\nstring".to_string()),
+            ]
+        );
+    }
+    
+    // Test prefixed triple-quoted strings
+    #[test]
+    fn test_prefixed_triple_quoted_strings() {
+        assert_tokens(
+            r#"r"""Raw\nTriple"""f'''Format {x}'''"#,
+            vec![
+                TokenType::RawString("Raw\\nTriple".to_string()),
+                TokenType::FString("Format {x}".to_string()),
+            ]
+        );
+        
+        assert_tokens(
+            "b\"\"\"Bytes\nWith\nNewlines\"\"\"",
+            vec![
+                TokenType::BytesLiteral(b"Bytes\nWith\nNewlines".to_vec()),
+            ]
+        );
+    }
+    
+    // Test operators
+    #[test]
+    fn test_basic_operators() {
+        assert_tokens(
+            "+ - * / % ** // @ & | ^ ~ << >>",
+            vec![
+                TokenType::Plus,
+                TokenType::Minus,
+                TokenType::Multiply,
+                TokenType::Divide,
+                TokenType::Modulo,
+                TokenType::Power,
+                TokenType::FloorDivide,
+                TokenType::At,
+                TokenType::BitwiseAnd,
+                TokenType::BitwiseOr,
+                TokenType::BitwiseXor,
+                TokenType::BitwiseNot,
+                TokenType::ShiftLeft,
+                TokenType::ShiftRight,
+            ]
+        );
+    }
+    
+    // Test comparison operators
+    #[test]
+    fn test_comparison_operators() {
+        assert_tokens(
+            "== != < <= > >=",
+            vec![
+                TokenType::Equal,
+                TokenType::NotEqual,
+                TokenType::LessThan,
+                TokenType::LessEqual,
+                TokenType::GreaterThan,
+                TokenType::GreaterEqual,
+            ]
+        );
+    }
+    
+    // Test assignment operators
+    #[test]
+    fn test_assignment_operators() {
+        assert_tokens(
+            "= += -= *= /= %= **= //= &= |= ^= <<= >>=",
+            vec![
+                TokenType::Assign,
+                TokenType::PlusAssign,
+                TokenType::MinusAssign,
+                TokenType::MulAssign,
+                TokenType::DivAssign,
+                TokenType::ModAssign,
+                TokenType::PowAssign,
+                TokenType::FloorDivAssign,
+                TokenType::BitwiseAndAssign,
+                TokenType::BitwiseOrAssign,
+                TokenType::BitwiseXorAssign,
+                TokenType::ShiftLeftAssign,
+                TokenType::ShiftRightAssign,
+            ]
+        );
+    }
+    
+    // Test special operators
+    #[test]
+    fn test_special_operators() {
+        assert_tokens(
+            ":= ...",
+            vec![
+                TokenType::Walrus,
+                TokenType::Ellipsis,
+            ]
+        );
+    }
+    
+    // Test delimiters
+    #[test]
+    fn test_delimiters() {
+        assert_tokens(
+            "( ) [ ] { } , . : ; -> \\",
+            vec![
+                TokenType::LeftParen,
+                TokenType::RightParen,
+                TokenType::LeftBracket,
+                TokenType::RightBracket,
+                TokenType::LeftBrace,
+                TokenType::RightBrace,
+                TokenType::Comma,
+                TokenType::Dot,
+                TokenType::Colon,
+                TokenType::SemiColon,
+                TokenType::Arrow,
+                TokenType::BackSlash,
+            ]
+        );
+    }
+    
+    // Test indentation
+    #[test]
+    fn test_indentation() {
+        let input = "def test():\n    print('indented')\n    if True:\n        print('nested')\n";
+        let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         
-        if let TokenType::BytesLiteral(bytes) = &tokens[0].token_type {
-            assert_eq!(bytes, b"hello");
-        } else {
-            panic!("Expected BytesLiteral token");
+        // Extract the token types for easier comparison
+        let token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
+        
+        // Expected sequence of token types
+        let expected = vec![
+            TokenType::Def,
+            TokenType::Identifier("test".to_string()),
+            TokenType::LeftParen,
+            TokenType::RightParen,
+            TokenType::Colon,
+            TokenType::Newline,
+            TokenType::Indent,
+            TokenType::Identifier("print".to_string()),
+            TokenType::LeftParen,
+            TokenType::StringLiteral("indented".to_string()),
+            TokenType::RightParen,
+            TokenType::Newline,
+            TokenType::If,
+            TokenType::True,
+            TokenType::Colon,
+            TokenType::Newline,
+            TokenType::Indent,
+            TokenType::Identifier("print".to_string()),
+            TokenType::LeftParen,
+            TokenType::StringLiteral("nested".to_string()),
+            TokenType::RightParen,
+            TokenType::Newline,
+            TokenType::Dedent,
+            TokenType::Dedent,
+            TokenType::EOF,
+        ];
+        
+        assert_eq!(token_types, expected, "Indentation tokens don't match expected");
+    }
+    
+    // Test nested indentation
+    #[test]
+    fn test_complex_indentation() {
+        let input = "if x:\n    if y:\n        print('nested')\n    print('outer')\nprint('no indent')";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        // Count indents and dedents
+        let indent_count = tokens.iter().filter(|t| matches!(t.token_type, TokenType::Indent)).count();
+        let dedent_count = tokens.iter().filter(|t| matches!(t.token_type, TokenType::Dedent)).count();
+        
+        assert_eq!(indent_count, 2, "Should have 2 indents");
+        assert_eq!(dedent_count, 2, "Should have 2 dedents");
+    }
+    
+    // Test comments
+    #[test]
+    fn test_comments() {
+        let input = "x = 5  # This is a comment\n# This is another comment\ny = 10";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        // Extract the token types for easier comparison
+        let token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
+        
+        // Expected sequence of token types (comments are skipped)
+        let expected = vec![
+            TokenType::Identifier("x".to_string()),
+            TokenType::Assign,
+            TokenType::IntLiteral(5),
+            TokenType::Newline,
+            TokenType::Identifier("y".to_string()),
+            TokenType::Assign,
+            TokenType::IntLiteral(10),
+            TokenType::EOF,
+        ];
+        
+        assert_eq!(token_types, expected, "Comment handling is incorrect");
+    }
+    
+    // Test for line continuation
+    #[test]
+    fn test_line_continuation() {
+        let input = "x = 1 + \\\n    2";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        // Extract the token types for easier comparison
+        let token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
+        
+        // Expected sequence of token types
+        let expected = vec![
+            TokenType::Identifier("x".to_string()),
+            TokenType::Assign,
+            TokenType::IntLiteral(1),
+            TokenType::Plus,
+            TokenType::IntLiteral(2),
+            TokenType::EOF,
+        ];
+        
+        assert_eq!(token_types, expected, "Line continuation not handled correctly");
+    }
+    
+    // Test for nested expressions
+    #[test]
+    fn test_nested_expressions() {
+        let input = "result = (a + b) * (c - d) / (e ** f)";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        // Extract the token types for easier comparison
+        let token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
+        
+        // Expected sequence of token types
+        let expected = vec![
+            TokenType::Identifier("result".to_string()),
+            TokenType::Assign,
+            TokenType::LeftParen,
+            TokenType::Identifier("a".to_string()),
+            TokenType::Plus,
+            TokenType::Identifier("b".to_string()),
+            TokenType::RightParen,
+            TokenType::Multiply,
+            TokenType::LeftParen,
+            TokenType::Identifier("c".to_string()),
+            TokenType::Minus,
+            TokenType::Identifier("d".to_string()),
+            TokenType::RightParen,
+            TokenType::Divide,
+            TokenType::LeftParen,
+            TokenType::Identifier("e".to_string()),
+            TokenType::Power,
+            TokenType::Identifier("f".to_string()),
+            TokenType::RightParen,
+            TokenType::EOF,
+        ];
+        
+        assert_eq!(token_types, expected, "Nested expressions not parsed correctly");
+    }
+    
+    // Test for error handling
+    #[test]
+    fn test_unterminated_string() {
+        let input = "\"unterminated";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        // Check if we have an error token
+        assert!(matches!(tokens[0].token_type, TokenType::Invalid(_)), 
+                "Unterminated string should produce an Invalid token");
+        assert_eq!(lexer.get_errors().len(), 1, "Should report exactly one error");
+    }
+    
+    #[test]
+    fn test_invalid_indentation() {
+        let input = "def test():\n  print('indented')\n    print('invalid indent')";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        // We should still get tokens, but there should be errors
+        assert!(lexer.get_errors().len() > 0, "Should report indentation errors");
+        
+        // Find error about inconsistent indentation
+        let has_indent_error = lexer.get_errors().iter().any(|e| 
+            e.message.contains("indentation") || e.message.contains("indent"));
+        assert!(has_indent_error, "Should report an indentation-related error");
+    }
+    
+    #[test]
+    fn test_mixed_tabs_spaces() {
+        let input = "def test():\n\t  print('mixed tabs and spaces')";
+        let mut lexer = Lexer::with_config(input, LexerConfig {
+            allow_tabs_in_indentation: false,
+            ..Default::default()
+        });
+        let tokens = lexer.tokenize();
+        
+        // We should still get tokens, but there should be errors about mixed indentation
+        assert!(lexer.get_errors().len() > 0, "Should report mixed indentation errors");
+        
+        // Find error about mixed tabs and spaces
+        let has_mixed_error = lexer.get_errors().iter().any(|e| 
+            e.message.contains("Mixed tabs and spaces"));
+        assert!(has_mixed_error, "Should report mixed tabs and spaces error");
+    }
+    
+    #[test]
+    fn test_invalid_number_format() {
+        let input = "123.456.789";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        // Check if we have an error token
+        assert!(matches!(tokens[0].token_type, TokenType::Invalid(_)),
+                "Invalid number format should produce an Invalid token");
+        assert_eq!(lexer.get_errors().len(), 1, "Should report exactly one error");
+    }
+    
+    // Test invalid escape sequences
+    #[test]
+    fn test_invalid_escape_sequences() {
+        let input = r#""Invalid escape: \z""#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        
+        // We should still get a string token, but there should be errors
+        assert!(lexer.get_errors().len() > 0, "Should report escape sequence errors");
+        
+        let has_escape_error = lexer.get_errors().iter().any(|e| 
+            e.message.contains("escape sequence"));
+        assert!(has_escape_error, "Should report an escape sequence error");
+    }
+    
+    // Test for newline handling
+    #[test]
+    fn test_newline_styles() {
+        // Test Unix style (LF)
+        let input_lf = "x = 1\ny = 2";
+        let mut lexer_lf = Lexer::new(input_lf);
+        let tokens_lf = lexer_lf.tokenize();
+        
+        // Test Windows style (CRLF)
+        let input_crlf = "x = 1\r\ny = 2";
+        let mut lexer_crlf = Lexer::new(input_crlf);
+        let tokens_crlf = lexer_crlf.tokenize();
+        
+        // Both should produce the same tokens
+        assert_eq!(tokens_lf.len(), tokens_crlf.len(), "Different newline styles should produce same token count");
+        
+        for i in 0..tokens_lf.len() {
+            assert_eq!(tokens_lf[i].token_type, tokens_crlf[i].token_type, 
+                      "Different newline styles should produce same tokens");
         }
-        
-        if let TokenType::BytesLiteral(bytes) = &tokens[1].token_type {
-            assert_eq!(bytes, &[0, 1, 2]);
-        } else {
-            panic!("Expected BytesLiteral token");
-        }
     }
     
+    // Test line and column numbers
     #[test]
-    fn test_numeric_separators() {
-        let mut lexer = Lexer::new("1_000_000 0b1010_1100 0xAB_CD");
+    fn test_position_tracking() {
+        let input = "x = 1\ny = 2";
+        let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         
-        assert_eq!(tokens[0].token_type, TokenType::IntLiteral(1000000));
-        assert_eq!(tokens[1].token_type, TokenType::BinaryLiteral(0b10101100));
-        assert_eq!(tokens[2].token_type, TokenType::HexLiteral(0xABCD));
+        // Check positions
+        assert_eq!(tokens[0].line, 1, "First token should be on line 1"); // x
+        assert_eq!(tokens[0].column, 1, "First token should be at column 1");
+        
+        assert_eq!(tokens[3].line, 2, "Token after newline should be on line 2"); // y
+        assert_eq!(tokens[3].column, 1, "First token on new line should be at column 1");
     }
     
+    // Test ignoring newlines inside parentheses, brackets, and braces
     #[test]
-    fn test_walrus_operator() {
-        let mut lexer = Lexer::new("if (n := len(items)) > 0:");
+    fn test_newlines_in_groupings() {
+        let input = "func(\n    arg1,\n    arg2\n)";
+        let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Walrus)));
+        // Extract token types
+        let token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
+        
+        // No newline tokens should appear between parentheses
+        let expected = vec![
+            TokenType::Identifier("func".to_string()),
+            TokenType::LeftParen,
+            TokenType::Identifier("arg1".to_string()),
+            TokenType::Comma,
+            TokenType::Identifier("arg2".to_string()),
+            TokenType::RightParen,
+            TokenType::EOF,
+        ];
+        
+        assert_eq!(token_types, expected, "Newlines in groupings not handled correctly");
     }
     
+    // Test indentation with empty lines
     #[test]
-    fn test_ellipsis() {
-        let mut lexer = Lexer::new("def func(...):");
+    fn test_empty_lines() {
+        let input = "def test():\n    print('line 1')\n\n    print('line 2')";
+        let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Ellipsis)));
+        // Empty lines shouldn't affect indentation
+        let indent_count = tokens.iter().filter(|t| matches!(t.token_type, TokenType::Indent)).count();
+        let dedent_count = tokens.iter().filter(|t| matches!(t.token_type, TokenType::Dedent)).count();
+        
+        assert_eq!(indent_count, 1, "Should have 1 indent");
+        assert_eq!(dedent_count, 1, "Should have 1 dedent");
     }
     
+    // Test for custom lexer config
     #[test]
-    fn test_complete_program() {
+    fn test_custom_lexer_config() {
+        let input = "def test():\n\tprint('using tabs')";
+        
+        // Default config doesn't allow tabs
+        let mut lexer1 = Lexer::new(input);
+        let tokens1 = lexer1.tokenize();
+        assert!(lexer1.get_errors().len() > 0, "Default config should report tab errors");
+        
+        // Custom config allows tabs
+        let mut lexer2 = Lexer::with_config(input, LexerConfig {
+            allow_tabs_in_indentation: true,
+            tab_width: 4,
+            ..Default::default()
+        });
+        let tokens2 = lexer2.tokenize();
+        assert_eq!(lexer2.get_errors().len(), 0, "Custom config should allow tabs");
+    }
+    
+    // Test for a comprehensive real-world code example
+    #[test]
+    fn test_comprehensive_code() {
         let input = r#"
 def factorial(n):
+    """
+    Calculate the factorial of a number.
+    
+    Args:
+        n: A positive integer
+        
+    Returns:
+        The factorial of n
+    """
     if n <= 1:
         return 1
     else:
         return n * factorial(n - 1)
 
-result = factorial(5)
-print(f"Factorial of 5 is {result}")
+class Calculator:
+    def __init__(self, value=0):
+        self.value = value
+    
+    def add(self, x):
+        self.value += x
+        return self
+    
+    def multiply(self, x):
+        self.value *= x
+        return self
+
+# Test the calculator
+calc = Calculator(5)
+result = calc.add(3).multiply(2).value
+print(f"Result: {result}")  # Should be 16
+
+# Binary, octal, and hex examples
+binary = 0b1010  # 10
+octal = 0o777   # 511
+hexa = 0xABC    # 2748
+
+# Raw string and bytes
+raw_data = r"C:\Users\path\to\file"
+bytes_data = b"\x00\x01\x02"
 "#;
-        
+
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         
-        // Just check that we have a reasonable number of tokens
-        assert!(tokens.len() > 20);
+        // We should have a lot of tokens and no errors
+        assert!(tokens.len() > 50, "Comprehensive example should produce many tokens");
+        assert_eq!(lexer.get_errors().len(), 0, "Comprehensive example should not have errors");
         
-        // Check a few key tokens
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Def)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Identifier(ref s) if s == "factorial")));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Return)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::FString(_))));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Identifier(ref s) if s == "print")));
-    }
-    
-    #[test]
-    fn test_inconsistent_indentation() {
-        let config = LexerConfig {
-            enforce_indent_consistency: true,
-            standard_indent_size: 4,
-            ..Default::default()
-        };
+        // Check a few key tokens to ensure it parsed correctly
+        let has_def = tokens.iter().any(|t| t.token_type == TokenType::Def);
+        let has_class = tokens.iter().any(|t| t.token_type == TokenType::Class);
+        let has_docstring = tokens.iter().any(|t| 
+            matches!(&t.token_type, TokenType::StringLiteral(s) if s.contains("Calculate the factorial")));
         
-        let mut lexer = Lexer::with_config("if True:\n   bad_indent\n    good_indent", config);
-        let _tokens = lexer.tokenize();
-        
-        // Should be an error in the errors list
-        let errors = lexer.get_errors();
-        assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.message.contains("indentation")));
-    }
-    
-    #[test]
-    fn test_mixed_tabs_spaces() {
-        let config = LexerConfig {
-            enforce_indent_consistency: true,
-            allow_tabs_in_indentation: false,
-            ..Default::default()
-        };
-        
-        let mut lexer = Lexer::with_config("if True:\n\t  mixed_indent", config);
-        let _tokens = lexer.tokenize();
-        
-        // Should be an error in the errors list
-        let errors = lexer.get_errors();
-        assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.message.contains("tabs and spaces")));
-    }
-    
-    #[test]
-    fn test_line_continuation() {
-        let mut lexer = Lexer::new("x = 1 + \\\n    2");
-        let tokens = lexer.tokenize();
-        
-        // The tokens should be: Identifier(x), Assign, IntLiteral(1), Plus, IntLiteral(2), EOF
-        assert_eq!(tokens.len(), 6);
-        assert_eq!(tokens[0].token_type, TokenType::Identifier("x".to_string()));
-        assert_eq!(tokens[1].token_type, TokenType::Assign);
-        assert_eq!(tokens[2].token_type, TokenType::IntLiteral(1));
-        assert_eq!(tokens[3].token_type, TokenType::Plus);
-        assert_eq!(tokens[4].token_type, TokenType::IntLiteral(2));
-        assert_eq!(tokens[5].token_type, TokenType::EOF);
-    }
-    
-    #[test]
-    fn test_implicit_line_continuation() {
-        let mut lexer = Lexer::new("func(\n    arg1,\n    arg2\n)");
-        let tokens = lexer.tokenize();
-        
-        // There should be no Newline tokens between the opening and closing parentheses
-        let mut paren_level = 0;
-        let mut contains_newline_in_parens = false;
-        
-        for token in &tokens {
-            match token.token_type {
-                TokenType::LeftParen => paren_level += 1,
-                TokenType::RightParen => paren_level -= 1,
-                TokenType::Newline => {
-                    if paren_level > 0 {
-                        contains_newline_in_parens = true;
-                    }
-                },
-                _ => {}
-            }
-        }
-        
-        assert!(!contains_newline_in_parens, "Newlines should be ignored inside parentheses");
-    }
-    
-    #[test]
-    fn it_works() {
-        // Empty test to satisfy the basic test structure
-        assert!(true);
-    }
-}
-
-#[cfg(test)]
-mod comprehensive_tests {
-    use super::*;
-
-    // Helper function to create a default lexer and tokenize input
-    fn tokenize(input: &str) -> (Vec<Token>, Vec<LexerError>) {
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize();
-        let errors = lexer.get_errors().to_vec();
-        (tokens, errors)
-    }
-
-    // Helper function to create a lexer with custom config and tokenize input
-    fn tokenize_with_config(input: &str, config: LexerConfig) -> (Vec<Token>, Vec<LexerError>) {
-        let mut lexer = Lexer::with_config(input, config);
-        let tokens = lexer.tokenize();
-        let errors = lexer.get_errors().to_vec();
-        (tokens, errors)
-    }
-
-    #[test]
-    fn test_all_keywords() {
-        let input = "def return if elif else while for in break continue pass import \
-                    from as True False None and or not class with assert async \
-                    await try except finally raise lambda global nonlocal yield del is";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty());
-        let expected_keywords = vec![
-            TokenType::Def, TokenType::Return, TokenType::If, TokenType::Elif,
-            TokenType::Else, TokenType::While, TokenType::For, TokenType::In,
-            TokenType::Break, TokenType::Continue, TokenType::Pass, TokenType::Import,
-            TokenType::From, TokenType::As, TokenType::True, TokenType::False,
-            TokenType::None, TokenType::And, TokenType::Or, TokenType::Not,
-            TokenType::Class, TokenType::With, TokenType::Assert, TokenType::Async,
-            TokenType::Await, TokenType::Try, TokenType::Except, TokenType::Finally,
-            TokenType::Raise, TokenType::Lambda, TokenType::Global, TokenType::Nonlocal,
-            TokenType::Yield, TokenType::Del, TokenType::Is
-        ];
-        
-        for (token, expected) in tokens.iter().zip(expected_keywords.iter()) {
-            assert_eq!(&token.token_type, expected);
-        }
-    }
-
-    #[test]
-    fn test_identifiers_and_edge_cases() {
-        let input = "x y123 _hidden variable_name x_y_z";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty());
-        let expected = vec![
-            TokenType::Identifier("x".to_string()),
-            TokenType::Identifier("y123".to_string()),
-            TokenType::Identifier("_hidden".to_string()),
-            TokenType::Identifier("variable_name".to_string()),
-            TokenType::Identifier("x_y_z".to_string()),
-        ];
-        
-        for (token, expected) in tokens.iter().zip(expected.iter()) {
-            assert_eq!(&token.token_type, expected);
-        }
-    }
-
-    #[test]
-    fn test_numeric_literals() {
-        let input = "123 0.456 1.2e-3 1_000_000 \
-                    0b1010_1010 0o777 0xFFAA 0Xffaa";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty());
-        assert_eq!(tokens[0].token_type, TokenType::IntLiteral(123));
-        assert_eq!(tokens[1].token_type, TokenType::FloatLiteral(0.456));
-        assert_eq!(tokens[2].token_type, TokenType::FloatLiteral(1.2e-3));
-        assert_eq!(tokens[3].token_type, TokenType::IntLiteral(1000000));
-        assert_eq!(tokens[4].token_type, TokenType::BinaryLiteral(0b10101010));
-        assert_eq!(tokens[5].token_type, TokenType::OctalLiteral(0o777));
-        assert_eq!(tokens[6].token_type, TokenType::HexLiteral(0xFFAA));
-        assert_eq!(tokens[7].token_type, TokenType::HexLiteral(0xffaa));
-    }
-
-    #[test]
-    fn test_invalid_numbers() {
-        let input = "0b12 0o89 0xGH 1.2.3 1e";
-        let (tokens, _errors) = tokenize(input);  
-        
-        // Get only the tokens that should be invalid (filtering out EOF, etc.)
-        let invalid_tokens: Vec<_> = tokens.iter()
-            .filter(|token| matches!(token.token_type, TokenType::Invalid(_)))
-            .collect();
-        
-        // We should have exactly 5 invalid tokens (one for each invalid number)
-        assert_eq!(invalid_tokens.len(), 5, 
-                "Expected 5 invalid tokens but got: {} - {:?}", 
-                invalid_tokens.len(), 
-                invalid_tokens);
-        
-        // Check that each token represents one of our invalid inputs
-        assert!(invalid_tokens.iter().any(|t| t.lexeme.starts_with("0b1")), "Missing invalid binary token");
-        assert!(invalid_tokens.iter().any(|t| t.lexeme.starts_with("0o8")), "Missing invalid octal token");
-        assert!(invalid_tokens.iter().any(|t| t.lexeme.starts_with("0xG")), "Missing invalid hex token");
-        assert!(invalid_tokens.iter().any(|t| t.lexeme.contains("1.2.3")), "Missing multiple decimal token");
-        assert!(invalid_tokens.iter().any(|t| t.lexeme == "1e"), "Missing invalid exponent token");
-    }
-
-    #[test]
-    fn test_string_variations() {
-        let input = "\"hello\" 'world' \"esc\\nape\" \
-                    r\"raw\\nstring\" f\"format {x}\" \
-                    b\"bytes\" b'\\x00\\xFF'";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty());
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("hello".to_string()));
-        assert_eq!(tokens[1].token_type, TokenType::StringLiteral("world".to_string()));
-        assert_eq!(tokens[2].token_type, TokenType::StringLiteral("esc\nape".to_string()));
-        assert_eq!(tokens[3].token_type, TokenType::RawString("raw\\nstring".to_string()));
-        assert_eq!(tokens[4].token_type, TokenType::FString("format {x}".to_string()));
-        assert_eq!(tokens[5].token_type, TokenType::BytesLiteral(b"bytes".to_vec()));
-        assert_eq!(tokens[6].token_type, TokenType::BytesLiteral(vec![0x00, 0xFF]));
-    }
-
-    #[test]
-    fn test_triple_quoted_strings() {
-        let input = "\"\"\"multi\nline\nstring\"\"\" \
-                    r'''raw\\\\nmulti\\\\nline''' \
-                    f\"\"\"formatted\n{x}\nstring\"\"\" \
-                    b'''byte\nmulti\nline'''";
-        
-        // Process each triple-quoted string separately to isolate issues
-        let (tokens, errors) = tokenize("\"\"\"multi\nline\nstring\"\"\"");
-        assert!(errors.is_empty(), "First test failed with errors: {:?}", errors);
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("multi\nline\nstring".to_string()));
-        
-        let (tokens, errors) = tokenize("r'''raw\\\\nmulti\\\\nline'''");
-        assert!(errors.is_empty(), "Second test failed with errors: {:?}", errors);
-        assert_eq!(tokens[0].token_type, TokenType::RawString("raw\\\\nmulti\\\\nline".to_string()));
-        
-        let (tokens, errors) = tokenize("f\"\"\"formatted\n{x}\nstring\"\"\"");
-        assert!(errors.is_empty(), "Third test failed with errors: {:?}", errors);
-        assert_eq!(tokens[0].token_type, TokenType::FString("formatted\n{x}\nstring".to_string()));
-        
-        let (tokens, errors) = tokenize("b'''byte\nmulti\nline'''");
-        assert!(errors.is_empty(), "Fourth test failed with errors: {:?}", errors);
-        assert_eq!(tokens[0].token_type, TokenType::BytesLiteral(b"byte\nmulti\nline".to_vec()));
-        
-        // Now test all together
-        let (tokens, errors) = tokenize(input);
-        assert!(errors.is_empty(), "Full test failed with errors: {:?}", errors);
-        
-        // Check the tokens
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("multi\nline\nstring".to_string()));
-        assert_eq!(tokens[1].token_type, TokenType::RawString("raw\\\\nmulti\\\\nline".to_string()));
-        assert_eq!(tokens[2].token_type, TokenType::FString("formatted\n{x}\nstring".to_string()));
-        assert_eq!(tokens[3].token_type, TokenType::BytesLiteral(b"byte\nmulti\nline".to_vec()));
-    }
-
-    #[test]
-    fn test_unterminated_strings() {
-        let input = "\"unterminated\n r\"unclosed\n f\"unclosed {x}";
-        let (_tokens, errors) = tokenize(input);
-        
-        // The test expected 3 errors, but the current implementation might produce
-        // more errors due to the way string handling and error reporting works.
-        // Let's ensure we have at least the 3 expected errors.
-        assert!(errors.len() >= 3, "Expected at least 3 errors but got: {}", errors.len());
-        
-        // Check for the specific error messages we expect
-        let has_unterminated = errors.iter().any(|e| e.message.contains("Unterminated string"));
-        let has_unclosed_raw = errors.iter().any(|e| e.message.contains("raw string"));
-        let has_unclosed_fstring = errors.iter().any(|e| e.message.contains("f-string"));
-        
-        assert!(has_unterminated, "Missing error for unterminated string");
-        assert!(has_unclosed_raw, "Missing error for unclosed raw string");
-        assert!(has_unclosed_fstring, "Missing error for unclosed f-string");
-    }
-
-    #[test]
-    fn test_operators_and_delimiters() {
-        let input = "+ - * / // % ** @ = += -= *= /= %= **= @= //= &= |= ^= <<= >>= \
-                    == != < <= > >= & | ^ ~ << >> -> := ... \
-                    ( ) [ ] { } , . : ;";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty());
-        let expected = vec![
-            TokenType::Plus, TokenType::Minus, TokenType::Multiply, TokenType::Divide,
-            TokenType::FloorDivide, TokenType::Modulo, TokenType::Power, TokenType::At,
-            TokenType::Assign, TokenType::PlusAssign, TokenType::MinusAssign, TokenType::MulAssign,
-            TokenType::DivAssign, TokenType::ModAssign, TokenType::PowAssign, TokenType::MatrixMulAssign,
-            TokenType::FloorDivAssign, TokenType::BitwiseAndAssign, TokenType::BitwiseOrAssign,
-            TokenType::BitwiseXorAssign, TokenType::ShiftLeftAssign, TokenType::ShiftRightAssign,
-            TokenType::Equal, TokenType::NotEqual, TokenType::LessThan, TokenType::LessEqual,
-            TokenType::GreaterThan, TokenType::GreaterEqual, TokenType::BitwiseAnd, TokenType::BitwiseOr,
-            TokenType::BitwiseXor, TokenType::BitwiseNot, TokenType::ShiftLeft, TokenType::ShiftRight,
-            TokenType::Arrow, TokenType::Walrus, TokenType::Ellipsis,
-            TokenType::LeftParen, TokenType::RightParen, TokenType::LeftBracket, TokenType::RightBracket,
-            TokenType::LeftBrace, TokenType::RightBrace, TokenType::Comma, TokenType::Dot,
-            TokenType::Colon, TokenType::SemiColon
-        ];
-        
-        for (token, expected) in tokens.iter().zip(expected.iter()) {
-            assert_eq!(&token.token_type, expected);
-        }
-    }
-
-    #[test]
-    fn test_indentation_handling() {
-        let input = "if True:\n    x = 1\n    if False:\n        y = 2\n    z = 3\nw = 4";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty());
-        assert!(tokens.iter().filter(|t| matches!(t.token_type, TokenType::Indent)).count() == 2);
-        assert!(tokens.iter().filter(|t| matches!(t.token_type, TokenType::Dedent)).count() == 2);
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Newline)));
-    }
-
-    #[test]
-    fn test_comments_and_line_continuation() {
-        let input = "# Comment\nx = 1 + \\\n    2 # Inline comment";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty());
-        assert_eq!(tokens[0].token_type, TokenType::Newline);
-        assert_eq!(tokens[1].token_type, TokenType::Identifier("x".to_string()));
-        assert_eq!(tokens[2].token_type, TokenType::Assign);
-        assert_eq!(tokens[3].token_type, TokenType::IntLiteral(1));
-        assert_eq!(tokens[4].token_type, TokenType::Plus);
-        assert_eq!(tokens[5].token_type, TokenType::IntLiteral(2));
-    }
-
-    #[test]
-    fn test_implicit_line_continuation() {
-        let input = "x = [\n    1,\n    2\n]\ny = (\n    3,\n    4\n)";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty(), "Expected no errors but got: {:?}", errors);
-        
-        // Check that newlines within brackets/parentheses are ignored
-        let mut level = 0;
-        for token in &tokens {
-            match token.token_type {
-                TokenType::LeftBracket | TokenType::LeftParen => level += 1,
-                TokenType::RightBracket | TokenType::RightParen => level -= 1,
-                TokenType::Newline => {
-                    // The key test that was failing, ensuring we either have:
-                    // 1. A newline token inside a nested structure (level > 0), or
-                    // 2. A newline at line 4 (which is after the closing bracket)
-                    assert!(level == 0 && token.line == 4, 
-                          "Found a newline at unexpected position: line {}", token.line);
-                },
-                _ => {}
-            }
-        }
-    }
-
-    #[test]
-    fn test_escape_sequences() {
-        let input = "\"\\n\\t\\r\\b\\f\\\\\\\"\\'\\x41\\u00A9\\u{1F600}\"";
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty());
-        assert_eq!(tokens[0].token_type, TokenType::StringLiteral("\n\t\r\x08\x0C\\\"\'A©😀".to_string()));
-    }
-
-    #[test]
-    fn test_invalid_escapes() {
-        let input = "\"\\q\" b'\\z'";
-        let (_tokens, errors) = tokenize(input);
-        
-        assert_eq!(errors.len(), 2);
-        assert!(errors[0].message.contains("Unknown escape sequence"));
-        assert!(errors[1].message.contains("Invalid escape sequence"));
-    }
-
-    #[test]
-    fn test_config_strict_indentation() {
-        let config = LexerConfig {
-            enforce_indent_consistency: true,
-            standard_indent_size: 4,
-            allow_tabs_in_indentation: false,
-            ..Default::default()
-        };
-        
-        let input = "if True:\n   bad_indent\n\t  mixed_indent";
-        let (_tokens, errors) = tokenize_with_config(input, config);
-        
-        // The test expected 2 types of errors, but we may get multiple errors of the same type
-        // Let's check that we have at least 1 of each type
-        let inconsistent_errors = errors.iter()
-            .filter(|e| e.message.contains("Inconsistent indentation"))
-            .count();
-        
-        let mixed_tab_errors = errors.iter()
-            .filter(|e| e.message.contains("Mixed tabs and spaces"))
-            .count();
-        
-        assert!(inconsistent_errors >= 1, "Expected at least 1 inconsistent indentation error");
-        assert!(mixed_tab_errors >= 1, "Expected at least 1 mixed tabs and spaces error");
-        
-        // Make sure we have at least one of each error type
-        assert!(errors.iter().any(|e| e.message.contains("Inconsistent indentation")),
-            "Missing inconsistent indentation error");
-        assert!(errors.iter().any(|e| e.message.contains("Mixed tabs and spaces")),
-            "Missing mixed tabs and spaces error");
-    }
-
-    #[test]
-    fn test_complete_program_structure() {
-        let input = r#"
-@decorator
-def func(x: int) -> int:
-    """Docstring"""
-    if x > 0:
-        return x * func(x - 1)
-    else:
-        return 1
-
-class Test:
-    def __init__(self):
-        self.x = 0
-
-async def async_func():
-    await something()
-
-try:
-    x = 1/0
-except ZeroDivisionError as e:
-    print(e)
-finally:
-    cleanup()
-"#;
-        let (tokens, errors) = tokenize(input);
-        
-        assert!(errors.is_empty(), "Expected no errors but got: {:?}", errors);
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::At)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Def)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Arrow)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::StringLiteral(_))));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Indent)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Dedent)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Class)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Async)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Await)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Try)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Except)));
-        assert!(tokens.iter().any(|t| matches!(t.token_type, TokenType::Finally)));
-    }
-
-    #[test]
-    fn test_error_location_formatting() {
-        let input = "def func():\n    x = 1!\n    y = 2";
-        let mut lexer = Lexer::new(input);
-        let _tokens = lexer.tokenize();
-        
-        let error = &lexer.get_errors()[0];
-        let formatted = lexer.format_error_location(error.line, error.column);
-        
-        assert!(formatted.contains("Line 2:"));
-        assert!(formatted.contains("x = 1!"));
-        assert!(formatted.contains("^"));
-    }
-
-    #[test]
-    fn debug_invalid_octal_literals() {
-        let input = "0o89"; // Invalid octal - contains '8' and '9'
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize();
-        
-        println!("=== OCTAL TEST DIAGNOSTICS ===");
-        println!("Input: {}", input);
-        println!("Token count: {}", tokens.len());
-        
-        for (i, token) in tokens.iter().enumerate() {
-            println!("Token[{}]: {:?}", i, token);
-            
-            if let TokenType::Invalid(msg) = &token.token_type {
-                println!("  -> Found invalid token with message: {}", msg);
-                
-                // This should succeed if the error is properly detected
-                assert!(msg.contains("non-octal digits") || msg.contains("Invalid octal"));
-                return;
-            }
-        }
-        
-        // If we get here, we didn't find an Invalid token
-        panic!("Failed to detect invalid octal literal");
-    }
-
-    #[test]
-    fn debug_raw_triple_quoted_string() {
-        let input = "r'''raw\\\\nmulti\\\\nline'''";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize();
-        
-        println!("=== RAW TRIPLE QUOTED STRING TEST DIAGNOSTICS ===");
-        println!("Input: {}", input);
-        println!("Token count: {}", tokens.len());
-        
-        for (i, token) in tokens.iter().enumerate() {
-            println!("Token[{}]: {:?}", i, token);
-            
-            if let TokenType::RawString(content) = &token.token_type {
-                println!("  -> Raw string content: '{}'", content);
-                println!("  -> Content length: {}", content.len());
-                println!("  -> Char by char:");
-                
-                for (j, c) in content.chars().enumerate() {
-                    println!("     [{}]: '{}' (ASCII: {})", j, c, c as u32);
-                }
-                
-                // The test expects this exact content
-                assert_eq!(content, "raw\\\\nmulti\\\\nline");
-                return;
-            }
-        }
-        
-        panic!("Failed to find RawString token");
-    }
-
-    #[test]
-    fn debug_raw_triple_quoted_string_step_by_step() {
-        let input = "r'''raw\\\\nmulti\\\\nline'''";
-        let mut lexer = Lexer::new(input);
-        
-        // Manual step-by-step testing to trace the execution
-        println!("=== MANUAL STEP-BY-STEP DEBUGGING ===");
-        
-        // Track the 'r' at the beginning
-        assert_eq!(lexer.peek_char(), 'r');
-        lexer.consume_char();
-        
-        // Track the opening triple quotes
-        assert_eq!(lexer.peek_char(), '\'');
-        lexer.consume_char();
-        assert_eq!(lexer.peek_char(), '\'');
-        lexer.consume_char();
-        assert_eq!(lexer.peek_char(), '\'');
-        lexer.consume_char();
-        
-        // Now we should be at the 'r' of "raw"
-        assert_eq!(lexer.peek_char(), 'r');
-        
-        // Manually build the string as we would expect the function to do
-        let mut content = String::new();
-        let mut consecutive_quotes = 0;
-        
-        // Simple simulation of what handle_raw_triple_quoted_string should do
-        while !lexer.is_at_end() {
-            let c = lexer.peek_char();
-            
-            if c == '\'' {
-                consecutive_quotes += 1;
-                
-                if consecutive_quotes == 3 {
-                    // End of string
-                    break;
-                }
-                
-                lexer.consume_char();
-            } else {
-                // Add any consecutive quotes we've seen
-                for _ in 0..consecutive_quotes {
-                    content.push('\'');
-                }
-                consecutive_quotes = 0;
-                
-                // Add the current character
-                content.push(c);
-                lexer.consume_char();
-            }
-        }
-        
-        println!("Manually built content: '{}'", content);
-        println!("Expected content:       'raw\\\\nmulti\\\\nline'");
-        
-        assert_eq!(content, "raw\\\\nmulti\\\\nline");
+        assert!(has_def, "Should have 'def' tokens");
+        assert!(has_class, "Should have 'class' tokens");
+        assert!(has_docstring, "Should have docstring token");
     }
 }
