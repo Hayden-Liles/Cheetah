@@ -536,20 +536,11 @@ impl<'a> Lexer<'a> {
         
         // Check for comments
         if current_char == '#' {
-            // Skip the comment
             while !self.is_at_end() && self.peek_char() != '\n' {
                 self.consume_char();
             }
-            
-            // If we're at the end of the file after a comment, return EOF
-            if self.is_at_end() {
-                return Some(Token::new(TokenType::EOF, self.line, self.column, "".to_string()));
-            }
-            
-            // Otherwise, if we reached a newline, handle it
-            if !self.is_at_end() && self.peek_char() == '\n' {
-                return self.handle_newline();
-            }
+
+            return self.next_token();
         }
         
         // Check for ellipsis
@@ -620,7 +611,7 @@ impl<'a> Lexer<'a> {
     fn count_indentation(&mut self) -> usize {
         let mut count = 0;
         let mut has_tabs = false;
-        let mut has_spaces = false;
+        let mut _has_spaces = false;
         
         // Store the current line for error reporting
         let indentation_line = self.line;
@@ -628,7 +619,7 @@ impl<'a> Lexer<'a> {
         while !self.is_at_end() {
             let c = self.peek_char();
             if c == ' ' {
-                has_spaces = true;
+                _has_spaces = true;
                 count += 1;
                 self.consume_char();
             } else if c == '\t' {
@@ -642,8 +633,8 @@ impl<'a> Lexer<'a> {
         }
         
         // Only report tab/space mixing if both are present AND tabs are not allowed
-        if has_tabs && has_spaces && !self.config.allow_tabs_in_indentation {
-            let msg = "Mixed tabs and spaces in indentation";
+        if has_tabs && !self.config.allow_tabs_in_indentation {
+            let msg = "Tabs are not allowed in indentation";
             if !self.has_error_for_line(indentation_line, msg) {
                 self.add_error_with_position(
                     msg,
@@ -970,6 +961,7 @@ impl<'a> Lexer<'a> {
                     'r' => '\r',
                     'b' => '\u{0008}', // Backspace
                     'f' => '\u{000C}', // Form feed
+                    'a' => '\u{0007}',
                     '\\' => '\\',
                     '\'' => '\'',
                     '"' => '"',
@@ -2658,7 +2650,7 @@ mod tests {
     fn test_invalid_indentation() {
         let input = "def test():\n  print('indented')\n    print('invalid indent')";
         let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize();
+        let _tokens = lexer.tokenize();
         
         // We should still get tokens, but there should be errors
         assert!(lexer.get_errors().len() > 0, "Should report indentation errors");
@@ -2676,7 +2668,7 @@ mod tests {
             allow_tabs_in_indentation: false,
             ..Default::default()
         });
-        let tokens = lexer.tokenize();
+        let _tokens = lexer.tokenize();
         
         // We should still get tokens, but there should be errors about mixed indentation
         assert!(lexer.get_errors().len() > 0, "Should report mixed indentation errors");
@@ -2704,7 +2696,7 @@ mod tests {
     fn test_invalid_escape_sequences() {
         let input = r#""Invalid escape: \z""#;
         let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize();
+        let _tokens = lexer.tokenize();
         
         // We should still get a string token, but there should be errors
         assert!(lexer.get_errors().len() > 0, "Should report escape sequence errors");
@@ -2797,7 +2789,7 @@ mod tests {
         
         // Default config doesn't allow tabs
         let mut lexer1 = Lexer::new(input);
-        let tokens1 = lexer1.tokenize();
+        let _tokens1 = lexer1.tokenize();
         assert!(lexer1.get_errors().len() > 0, "Default config should report tab errors");
         
         // Custom config allows tabs
@@ -2806,7 +2798,7 @@ mod tests {
             tab_width: 4,
             ..Default::default()
         });
-        let tokens2 = lexer2.tokenize();
+        let _tokens2 = lexer2.tokenize();
         assert_eq!(lexer2.get_errors().len(), 0, "Custom config should allow tabs");
     }
     
