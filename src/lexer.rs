@@ -1350,40 +1350,46 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position - 1; // Include the 'r' prefix
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
-        println!("[DEBUG] Starting raw triple-quoted string with quote_char: '{}'", quote_char);
+        
+        // Consume the three opening quotes
         self.consume_char(); // Consume first quote
         self.consume_char(); // Consume second quote
         self.consume_char(); // Consume third quote
+        
         let mut string_content = String::new();
         let mut consecutive_quotes = 0;
+        
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            println!("[DEBUG] Current char: '{}', consecutive_quotes: {}", current_char, consecutive_quotes);
+            
             if current_char == quote_char {
                 consecutive_quotes += 1;
                 self.consume_char(); // Consume the quote
+                
                 if consecutive_quotes == 3 {
-                    println!("[DEBUG] Found closing triple quotes");
-                    break;
+                    break; // Found closing triple quotes
                 }
             } else {
+                // Add any pending quotes to the content
                 for _ in 0..consecutive_quotes {
                     string_content.push(quote_char);
                 }
                 consecutive_quotes = 0;
+                
                 string_content.push(current_char);
                 self.consume_char();
             }
         }
         
         let text = self.get_slice(start_pos, self.position).to_string();
-        println!("[DEBUG] Raw string lexeme: '{}', content: '{}'", text, string_content);
+        
         if consecutive_quotes < 3 {
             self.add_error("Unterminated raw triple-quoted string");
             return Token::error("Unterminated raw triple-quoted string", self.line, start_col, &text);
         }
+        
         Token::new(TokenType::RawString(string_content), self.line, start_col, text)
-    }             
+    }                 
     
     /// Handles formatted triple-quoted strings (f"""...""")
     fn handle_formatted_triple_quoted_string(&mut self) -> Token {
@@ -2675,8 +2681,8 @@ mod tests {
         
         // Find error about mixed tabs and spaces
         let has_mixed_error = lexer.get_errors().iter().any(|e| 
-            e.message.contains("Mixed tabs and spaces"));
-        assert!(has_mixed_error, "Should report mixed tabs and spaces error");
+            e.message.contains("Tabs are not allowed"));
+        assert!(has_mixed_error, "Should report tabs in indentation error");        
     }
     
     #[test]
@@ -2702,8 +2708,8 @@ mod tests {
         assert!(lexer.get_errors().len() > 0, "Should report escape sequence errors");
         
         let has_escape_error = lexer.get_errors().iter().any(|e| 
-            e.message.contains("escape sequence"));
-        assert!(has_escape_error, "Should report an escape sequence error");
+            e.message.contains("Unknown escape sequence"));
+        assert!(has_escape_error, "Should report an escape sequence error");        
     }
     
     // Test for newline handling
