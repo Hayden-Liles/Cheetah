@@ -9,15 +9,23 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn peek_char_n(&self, n: usize) -> char {
+    pub fn peek_char_n(&mut self, n: usize) -> char {
+        self.ensure_lookahead_buffer(n + 1);
+        
         if n < self.lookahead_buffer.len() {
             self.lookahead_buffer[n]
         } else {
-            let mut chars_iter = self.chars.clone();
-            for _ in 0..n {
-                if chars_iter.next().is_none() { return '\0'; }
+            '\0'
+        }
+    }
+
+    fn ensure_lookahead_buffer(&mut self, n: usize) {
+        while self.lookahead_buffer.len() < n {
+            if let Some(c) = self.chars.next() {
+                self.lookahead_buffer.push(c);
+            } else {
+                break;
             }
-            chars_iter.next().unwrap_or('\0')
         }
     }
 
@@ -34,13 +42,17 @@ impl<'a> Lexer<'a> {
             let current_char = if !self.lookahead_buffer.is_empty() {
                 self.lookahead_buffer.remove(0)
             } else {
-                self.chars.next().unwrap_or('\0')
+                self.chars.next().expect("Character expected")
             };
+            
             self.position += current_char.len_utf8();
+            
             if current_char == '\r' {
-                if !self.is_at_end() && self.peek_char() == '\n' {
-                    self.position += 1;
-                    self.chars.next();
+                if let Some(next_char) = self.chars.clone().next() {
+                    if next_char == '\n' {
+                        self.position += 1;
+                        self.chars.next();
+                    }
                 }
                 self.line += 1;
                 self.column = 1;
@@ -59,22 +71,53 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    // Specialized fast-path methods for common patterns
+    pub fn consume_whitespace(&mut self) {
+        self.consume_while(|c| c == ' ' || c == '\t');
+    }
+
     pub fn get_slice(&self, start: usize, end: usize) -> &str {
-        let mut valid_start = start;
-        let mut valid_end = end;
-        while valid_start > 0 && !self.input.is_char_boundary(valid_start) {
-            valid_start -= 1;
-        }
-        while valid_end < self.input.len() && !self.input.is_char_boundary(valid_end) {
-            valid_end += 1;
-        }
-        &self.input[valid_start..valid_end]
+        debug_assert!(self.input.is_char_boundary(start), "start must be at a character boundary");
+        debug_assert!(self.input.is_char_boundary(end), "end must be at a character boundary");
+        &self.input[start..end]
     }
 
     pub fn skip_whitespace(&mut self) {
-        self.consume_while(|c| c == ' ' || c == '\t');
-        if !self.is_at_end() && self.peek_char() == '#' {
-            self.consume_while(|c| c != '\n' && c != '\r');
+        loop {
+            // Skip spaces and tabs
+            self.consume_whitespace();
+            
+            // Handle comments if present
+            if !self.is_at_end() && self.peek_char() == '#' {
+                self.skip_comment();
+                continue;
+            }
+            
+            break;
         }
     }
+
+    pub fn skip_comment(&mut self) {
+        if self.peek_char() == '#' {
+            // Fast path for comments using string search
+            let remaining = &self.input[self.position..];
+            if let Some(comment_end) = remaining.find(|c| c == '\n' || c == '\r') {
+                // Skip directly to newline
+                let old_position = self.position;
+                self.position += comment_end;
+                
+                // Adjust column count for skipped characters
+                let skipped_text = &self.input[old_position..self.position];
+                self.column += skipped_text.chars().count();
+                
+                // Clear lookahead buffer since we've moved position
+                self.lookahead_buffer.clear();
+                self.chars = self.input[self.position..].chars();
+            } else {
+                // No newline found, consume to end
+                self.consume_while(|c| c != '\n' && c != '\r');
+            }
+        }
+    }
+    
 }

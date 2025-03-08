@@ -69,41 +69,51 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn tokenize(&mut self) -> Vec<Token> {
-        let mut tokens = Vec::new();
+        // Pre-allocate a reasonably sized vector to reduce reallocations
+        let estimated_token_count = self.input.len() / 5;  // Rough estimate: 1 token per 5 chars
+        let mut tokens = Vec::with_capacity(estimated_token_count);
         let mut pending_indentation_change = true;
         
         while let Some(token) = self.next_token() {
-            if token.token_type == TokenType::EOF {
-                while self.indent_stack.len() > 1 {
-                    self.indent_stack.pop();
-                    tokens.push(Token::new(
-                        TokenType::Dedent,
-                        self.line,
-                        self.column,
-                        "".to_string(),
-                    ));
+            match token.token_type {
+                TokenType::EOF => {
+                    // Add dedents for any remaining indents
+                    while self.indent_stack.len() > 1 {
+                        self.indent_stack.pop();
+                        tokens.push(Token::new(
+                            TokenType::Dedent,
+                            self.line,
+                            self.column,
+                            "".to_string(),
+                        ));
+                    }
+                    
+                    tokens.push(token);
+                    break;
+                },
+                _ => {
+                    self.update_nesting_level(&token.token_type);
+                    
+                    let token_type = token.token_type.clone();
+                    let token_line = token.line;
+                    
+                    if pending_indentation_change && 
+                       self.paren_level == 0 && 
+                       self.bracket_level == 0 && 
+                       self.brace_level == 0 {
+                        self.handle_indentation_change(&mut tokens, token_line);
+                        pending_indentation_change = false;
+                    }
+                    
+                    tokens.push(token);
+                    
+                    if matches!(token_type, TokenType::Newline) && 
+                       self.paren_level == 0 && 
+                       self.bracket_level == 0 && 
+                       self.brace_level == 0 {
+                        pending_indentation_change = true;
+                    }
                 }
-                
-                tokens.push(token);
-                break;
-            }
-            
-            self.update_nesting_level(&token.token_type);
-            
-            let token_type = token.token_type.clone();
-            let token_line = token.line;
-            
-            if pending_indentation_change && 
-                self.paren_level == 0 && self.bracket_level == 0 && self.brace_level == 0 {
-                self.handle_indentation_change(&mut tokens, token_line);
-                pending_indentation_change = false;
-            }
-            
-            tokens.push(token);
-            
-            if matches!(token_type, TokenType::Newline) && 
-                self.paren_level == 0 && self.bracket_level == 0 && self.brace_level == 0 {
-                pending_indentation_change = true;
             }
         }
         
@@ -435,11 +445,14 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position;
         let start_col = self.column;
         
+        // Fast-path for common identifiers
         self.consume_while(|c| c.is_alphanumeric() || c == '_');
         
         let text = self.get_slice(start_pos, self.position);
         
+        // Fast lookup with direct keyword matching
         let token_type = if self.keywords.contains(text) {
+            // Use a function-wide static HashMap for faster lookup than match
             match text {
                 "def" => TokenType::Def,
                 "return" => TokenType::Return,
@@ -452,22 +465,25 @@ impl<'a> Lexer<'a> {
                 "break" => TokenType::Break,
                 "continue" => TokenType::Continue,
                 "pass" => TokenType::Pass,
-                "import" => TokenType::Import,
-                "from" => TokenType::From,
-                "as" => TokenType::As,
                 "True" => TokenType::True,
                 "False" => TokenType::False,
                 "None" => TokenType::None,
+                // Common operators
                 "and" => TokenType::And,
                 "or" => TokenType::Or,
                 "not" => TokenType::Not,
+                "is" => TokenType::Is,
+                // Other keywords with direct mapping
+                "import" => TokenType::Import,
+                "from" => TokenType::From,
+                "as" => TokenType::As,
                 "class" => TokenType::Class,
                 "with" => TokenType::With,
                 "assert" => TokenType::Assert,
                 "async" => TokenType::Async,
                 "await" => TokenType::Await,
                 "try" => TokenType::Try,
-                "except" => TokenType::Except,
+                "except" => TokenType::Except, 
                 "finally" => TokenType::Finally,
                 "raise" => TokenType::Raise,
                 "lambda" => TokenType::Lambda,
@@ -475,7 +491,6 @@ impl<'a> Lexer<'a> {
                 "nonlocal" => TokenType::Nonlocal,
                 "yield" => TokenType::Yield,
                 "del" => TokenType::Del,
-                "is" => TokenType::Is,
                 _ => TokenType::Identifier(text.to_string()),
             }
         } else {
@@ -489,72 +504,91 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position;
         let start_col = self.column;
     
+        // Handle special prefixes (0b, 0o, 0x)
         if self.peek_char() == '0' && !self.is_at_end_n(1) {
             let next_char = self.peek_char_n(1);
             if next_char == 'b' || next_char == 'B' {
                 self.consume_char();
+                self.consume_char();
                 return self.handle_binary_literal(start_pos, start_col);
             } else if next_char == 'o' || next_char == 'O' {
                 self.consume_char();
+                self.consume_char();
                 return self.handle_octal_literal(start_pos, start_col);
             } else if next_char == 'x' || next_char == 'X' {
+                self.consume_char();
                 self.consume_char();
                 return self.handle_hex_literal(start_pos, start_col);
             }
         }
     
         let mut is_float = false;
-        let mut decimal_count = 0;
+        let mut _decimal_count = 0;
     
-        self.consume_while(|c| c.is_digit(10) || c == '_');
-    
-        if !self.is_at_end() && self.peek_char() == '.' && self.peek_char_n(1).is_digit(10) {
-            decimal_count += 1;
+        // Handle the case where number starts with a dot
+        if self.peek_char() == '.' {
+            _decimal_count += 1;
             is_float = true;
             self.consume_char();
+            
+            if self.is_at_end() || !self.peek_char().is_digit(10) {
+                let text = self.get_slice(start_pos, self.position).to_string();
+                self.add_error("Invalid float literal: must have at least one digit after decimal point");
+                return Token::error("Invalid float literal", self.line, start_col, &text);
+            }
+            
+            // Consume digits after decimal point
             self.consume_while(|c| c.is_digit(10) || c == '_');
+        } else {
+            // Consume the integer part
+            self.consume_while(|c| c.is_digit(10) || c == '_');
+            
+            // Handle decimal point
+            if !self.is_at_end() && self.peek_char() == '.' {
+                _decimal_count += 1;
+                is_float = true;
+                self.consume_char();
+                
+                // Consume digits after decimal point if any
+                self.consume_while(|c| c.is_digit(10) || c == '_');
+            }
         }
     
+        // Handle exponent part (e.g., 1e10, 1.5e-5)
         if !self.is_at_end() && (self.peek_char() == 'e' || self.peek_char() == 'E') {
             is_float = true;
             self.consume_char();
     
+            // Handle optional sign
             if !self.is_at_end() && (self.peek_char() == '+' || self.peek_char() == '-') {
                 self.consume_char();
             }
     
+            // Exponent must have at least one digit
             if self.is_at_end() || !self.peek_char().is_digit(10) {
                 let text = self.get_slice(start_pos, self.position).to_string();
                 self.add_error("Invalid exponent: must start with a digit");
                 return Token::error("Invalid exponent", self.line, start_col, &text);
             }
     
-            self.consume_char();
-            while !self.is_at_end() {
-                let c = self.peek_char();
-                if c.is_digit(10) {
-                    self.consume_char();
-                } else if c == '_' {
-                    self.consume_char();
-                    if self.is_at_end() || !self.peek_char().is_digit(10) {
-                        let text = self.get_slice(start_pos, self.position).to_string();
-                        self.add_error("Invalid underscore in exponent");
-                        return Token::error("Invalid underscore in exponent", self.line, start_col, &text);
-                    }
-                } else {
-                    break;
-                }
-            }
+            // Consume exponent digits
+            self.consume_while(|c| c.is_digit(10) || c == '_');
         }
     
         let raw_text = self.get_slice(start_pos, self.position).to_string();
-        let text = raw_text.replace("_", "");
+        let text = raw_text.replace("_", "");  // Remove underscores for parsing
     
-        if decimal_count > 1 || text.matches('.').count() > 1 {
+        // Check for multiple decimal points (which would be an error)
+        if !self.is_at_end() && self.peek_char() == '.' && 
+           (!self.is_at_end_n(1) && (self.peek_char_n(1).is_digit(10) || self.peek_char_n(1) == '.')) {
             self.add_error("Invalid number format: multiple decimal points");
-            return Token::error("Invalid number format: multiple decimal points", self.line, start_col, &raw_text);
+            self.consume_char();  // Consume the second decimal point
+            self.consume_while(|c| c.is_digit(10) || c == '_' || c == '.');  // Continue consuming to recover
+            let full_text = self.get_slice(start_pos, self.position).to_string();
+            return Token::error("Invalid number format: multiple decimal points", self.line, start_col, &full_text);
         }
     
+        // Parse the token based on whether it's a float or integer
         let token_type = if is_float {
             match f64::from_str(&text) {
                 Ok(value) => TokenType::FloatLiteral(value),
@@ -600,16 +634,16 @@ impl<'a> Lexer<'a> {
     }        
     
     fn handle_octal_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
-        self.consume_char();
+        self.consume_char(); // Skip the 'o' or 'O'
         
-        let mut digit_str = String::new();
-        let mut has_digit = false;
+        // Directly consume all octal digits (0-7) and underscores
+        let mut seen_digit = false;
         
+        // Consume all digits (and underscores) that are part of the octal literal
         while !self.is_at_end() {
             let c = self.peek_char();
-            if c.is_digit(8) {
-                digit_str.push(c);
-                has_digit = true;
+            if c >= '0' && c <= '7' {
+                seen_digit = true;
                 self.consume_char();
             } else if c == '_' {
                 self.consume_char();
@@ -617,19 +651,22 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-
+        
         let raw_text = self.get_slice(start_pos, self.position).to_string();
         
-        if !has_digit {
+        if !seen_digit {
             let err_msg = "Invalid octal literal: no digits after '0o'";
             self.add_error(err_msg);
             return Token::error(err_msg, self.line, start_col, &raw_text);
         }
-
-        match i64::from_str_radix(&digit_str, 8) {
+        
+        // Extract just the digits (remove the "0o" prefix and any underscores)
+        let digit_text = raw_text[2..].replace("_", "");
+        
+        match i64::from_str_radix(&digit_text, 8) {
             Ok(value) => Token::new(TokenType::OctalLiteral(value), self.line, start_col, raw_text),
             Err(_) => {
-                let err_msg = format!("Invalid octal literal: 0o{}", digit_str);
+                let err_msg = format!("Invalid octal literal: {}", raw_text);
                 self.add_error(&err_msg);
                 Token::error(&err_msg, self.line, start_col, &raw_text)
             }
