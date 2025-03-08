@@ -91,11 +91,9 @@ fn run_file(filename: &str) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
     
-    // Create a lexer with default configuration
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
     
-    // Check for lexical errors
     let errors = lexer.get_errors();
     if !errors.is_empty() {
         eprintln!("Lexical errors found in '{}':", filename);
@@ -105,7 +103,6 @@ fn run_file(filename: &str) -> Result<()> {
         return Ok(());
     }
     
-    // TODO: Add parsing and interpretation steps
     println!("Successfully lexed file: {}", filename);
     println!("Found {} tokens", tokens.len());
     
@@ -116,7 +113,6 @@ fn run_repl() -> Result<()> {
     println!("{}", "Cheetah Programming Language REPL".bright_green());
     println!("Type 'exit' or press Ctrl+D to exit");
     
-    // Keep track of input state for multi-line input support
     let mut input_buffer = String::new();
     let mut paren_level = 0;
     let mut bracket_level = 0;
@@ -124,7 +120,6 @@ fn run_repl() -> Result<()> {
     let mut in_multiline_block = false;
     
     loop {
-        // Show appropriate prompt
         let prompt = if !input_buffer.is_empty() {
             "... ".bright_yellow().to_string()
         } else {
@@ -136,43 +131,36 @@ fn run_repl() -> Result<()> {
         
         let mut input = String::new();
         if io::stdin().read_line(&mut input)? == 0 {
-            // EOF (Ctrl+D)
             break;
         }
         
-        let input = input.trim_end(); // Preserve leading whitespace but remove trailing
+        let input = input.trim_end();
         
         if input_buffer.is_empty() && input == "exit" {
             break;
         }
         
-        // Add the input to our buffer
         input_buffer.push_str(input);
         input_buffer.push('\n');
         
-        // Check if we should continue collecting input (unclosed parentheses, indentation, etc.)
         update_repl_state(&input, &mut paren_level, &mut bracket_level, &mut brace_level, &mut in_multiline_block);
         
         let should_execute = !in_multiline_block && paren_level == 0 && bracket_level == 0 && brace_level == 0 && 
-                              (input.trim().is_empty() || !input.trim().ends_with(':'));
+                                    (input.trim().is_empty() || !input.trim().ends_with(':'));
         
         if should_execute {
-            // Process the complete input
             let complete_input = input_buffer.trim();
             
             if !complete_input.is_empty() {
-                // Tokenize the input
                 let mut lexer = Lexer::new(complete_input);
                 let tokens = lexer.tokenize();
                 
-                // Check for errors
                 let errors = lexer.get_errors();
                 if !errors.is_empty() {
                     for error in errors {
                         eprintln!("{}", error.to_string().bright_red());
                     }
                 } else {
-                    // Display tokens if no errors
                     for token in &tokens {
                         match &token.token_type {
                             TokenType::Invalid(_) => println!("{}", format!("{}", token).bright_red()),
@@ -180,11 +168,9 @@ fn run_repl() -> Result<()> {
                         }
                     }
                     
-                    // TODO: Add parsing and interpretation
                 }
             }
             
-            // Reset the buffer and state for the next input
             input_buffer.clear();
             paren_level = 0;
             bracket_level = 0;
@@ -199,7 +185,6 @@ fn run_repl() -> Result<()> {
 
 /// Updates the REPL state based on the current line of input
 fn update_repl_state(input: &str, paren_level: &mut usize, bracket_level: &mut usize, brace_level: &mut usize, in_multiline_block: &mut bool) {
-    // Count parentheses, brackets, and braces
     for c in input.chars() {
         match c {
             '(' => *paren_level += 1,
@@ -212,11 +197,9 @@ fn update_repl_state(input: &str, paren_level: &mut usize, bracket_level: &mut u
         }
     }
     
-    // Check for multiline block
     if input.trim().ends_with(':') {
         *in_multiline_block = true;
     } else if input.trim().is_empty() && *in_multiline_block {
-        // Empty line ends a multiline block
         *in_multiline_block = false;
     }
 }
@@ -225,11 +208,9 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
     
-    // Create lexer with default config
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
     
-    // Check for lexical errors
     let errors = lexer.get_errors();
     if !errors.is_empty() {
         eprintln!("Lexical errors found in '{}':", filename);
@@ -245,7 +226,6 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
     println!("Tokens from file '{}':", filename);
     
     if verbose {
-        // Display detailed token information including position
         for (i, token) in tokens.iter().enumerate() {
             let mut token_str = String::new();
             
@@ -276,7 +256,6 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
             }
         }
     } else {
-        // Display simplified token information
         for token in &tokens {
             if use_color {
                 match &token.token_type {
@@ -296,20 +275,17 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
     
-    // Create a lexer with more strict configuration for checking
     let config = LexerConfig {
         enforce_indent_consistency: true,
         standard_indent_size: 4,
         tab_width: 4,
         allow_tabs_in_indentation: false,
-        strict_line_joining: true,
         allow_trailing_semicolon: false,
     };
     
     let mut lexer = Lexer::with_config(&source, config);
-    let _tokens = lexer.tokenize(); // Prefix with underscore to show intentional non-use
+    let _tokens = lexer.tokenize();
     
-    // Check for lexical errors
     let errors = lexer.get_errors();
     if errors.is_empty() {
         println!("✓ No lexical errors found in '{}'", filename);
@@ -317,7 +293,6 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
         eprintln!("✗ Lexical errors found in '{}':", filename);
         for error in errors {
             if verbose {
-                // Detailed error reporting with line context and suggestion
                 eprintln!("  Line {}, Col {}: {}", error.line, error.column, error.message);
                 eprintln!("  {}", error.snippet);
                 eprintln!("  {}^", " ".repeat(error.column + 1));
@@ -326,13 +301,10 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
                 }
                 eprintln!();
             } else {
-                // Simplified error reporting
                 eprintln!("  {}", error);
             }
         }
     }
-    
-    // TODO: Add parsing and semantic analysis steps
     
     Ok(())
 }
@@ -341,11 +313,9 @@ fn format_file(filename: &str, write: bool) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
     
-    // Create a lexer with standard configuration
     let mut lexer = Lexer::new(&source);
-    let _tokens = lexer.tokenize(); // Use _tokens to indicate it's intentionally unused
+    let _tokens = lexer.tokenize();
     
-    // Check for lexical errors
     let errors = lexer.get_errors();
     if !errors.is_empty() {
         eprintln!("Cannot format file with lexical errors:");
@@ -355,9 +325,6 @@ fn format_file(filename: &str, write: bool) -> Result<()> {
         return Ok(());
     }
     
-    // TODO: Implement code formatting logic here
-    
-    // For now, just echo the original source
     let formatted_source = source.clone();
     
     if write {
@@ -365,14 +332,13 @@ fn format_file(filename: &str, write: bool) -> Result<()> {
             .with_context(|| format!("Failed to write to file: {}", filename))?;
         println!("Formatted and wrote changes to '{}'", filename);
     } else {
-        // Print to stdout
         print!("{}", formatted_source);
     }
     
     Ok(())
 }
 
-/// Format the token output based on token type for better readability
+/// Format the token output based on token type
 fn format_token(token: &Token, use_color: bool) -> String {
     if !use_color {
         return format!("{}", token);
@@ -401,7 +367,6 @@ fn format_token_for_repl(token: &Token, use_color: bool) -> String {
         return format!("{}", token);
     }
     
-    // For REPL, we use a more compact format than the general token format
     let token_desc = match &token.token_type {
         TokenType::Invalid(msg) => format!("Invalid: {}", msg).bright_red().to_string(),
         TokenType::Identifier(name) => format!("Identifier: {}", name).bright_yellow().to_string(),
