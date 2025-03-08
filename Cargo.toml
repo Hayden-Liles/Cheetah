@@ -6,6 +6,7 @@ authors = ["Hayden Liles <lileshaydenreal@gmail.com>"]
 description = "Cheetah programming language with Python-like syntax"
 
 [dependencies]
+nom = "8.0.0"
 # Command line argument parsing
 clap = { version = "4.5.31", features = ["derive"] }
 # Error handling
