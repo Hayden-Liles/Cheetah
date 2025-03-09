@@ -285,7 +285,6 @@ impl Parser {
         
         Ok(Stmt::If { test, body, orelse, line, column })
     }
-
     fn parse_for(&mut self) -> Result<Stmt, ParseError> {
         let token = self.current.clone().unwrap();
         let line = token.line;
@@ -294,8 +293,9 @@ impl Parser {
         // Consume 'for'
         self.advance();
         
-        // Parse target
-        let target = Box::new(self.parse_expression()?);
+        // Parse target - use parse_atom_expr instead of parse_expression
+        // This prevents "in" from being treated as a comparison operator
+        let target = Box::new(self.parse_atom_expr()?);
         
         // Consume 'in'
         self.consume(TokenType::In, "in")?;
@@ -1504,7 +1504,8 @@ impl Parser {
                     
                     if self.match_token(TokenType::For) {
                         // List comprehension
-                        let target = Box::new(self.parse_expression()?);
+                        // Use parse_atom_expr for the target to avoid consuming 'in'
+                        let target = Box::new(self.parse_atom_expr()?);
                         self.consume(TokenType::In, "in")?;
                         let iter = Box::new(self.parse_expression()?);
                         
@@ -1517,7 +1518,8 @@ impl Parser {
                         
                         // Additional for loops in the comprehension
                         while self.match_token(TokenType::For) {
-                            let target = Box::new(self.parse_expression()?);
+                            // Also use parse_atom_expr for additional comprehension targets
+                            let target = Box::new(self.parse_atom_expr()?);
                             self.consume(TokenType::In, "in")?;
                             let iter = Box::new(self.parse_expression()?);
                             
@@ -1571,7 +1573,8 @@ impl Parser {
                         
                         if self.match_token(TokenType::For) {
                             // Dict comprehension
-                            let target = Box::new(self.parse_expression()?);
+                            // Use parse_atom_expr for target
+                            let target = Box::new(self.parse_atom_expr()?);
                             self.consume(TokenType::In, "in")?;
                             let iter = Box::new(self.parse_expression()?);
                             
@@ -1584,7 +1587,8 @@ impl Parser {
                             
                             // Additional for loops in the comprehension
                             while self.match_token(TokenType::For) {
-                                let target = Box::new(self.parse_expression()?);
+                                // Use parse_atom_expr for additional targets
+                                let target = Box::new(self.parse_atom_expr()?);
                                 self.consume(TokenType::In, "in")?;
                                 let iter = Box::new(self.parse_expression()?);
                                 
@@ -1627,7 +1631,8 @@ impl Parser {
                         }
                     } else if self.match_token(TokenType::For) {
                         // Set comprehension
-                        let target = Box::new(self.parse_expression()?);
+                        // Use parse_atom_expr for target
+                        let target = Box::new(self.parse_atom_expr()?);
                         self.consume(TokenType::In, "in")?;
                         let iter = Box::new(self.parse_expression()?);
                         
@@ -1640,7 +1645,8 @@ impl Parser {
                         
                         // Additional for loops in the comprehension
                         while self.match_token(TokenType::For) {
-                            let target = Box::new(self.parse_expression()?);
+                            // Use parse_atom_expr for additional targets
+                            let target = Box::new(self.parse_atom_expr()?);
                             self.consume(TokenType::In, "in")?;
                             let iter = Box::new(self.parse_expression()?);
                             
