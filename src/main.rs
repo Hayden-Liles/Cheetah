@@ -1,14 +1,17 @@
-mod lexer;
-
 use std::fs;
 use std::io::{self, Write};
-use clap::{Parser, Subcommand};
+use clap::{Parser as ClapParser, Subcommand};
 use anyhow::{Result, Context};
 use colored::Colorize;
 
-use crate::lexer::{Lexer, Token, TokenType, LexerConfig};
+// Import modules from lib.rs instead of just the lexer module
+use cheetah::lexer::{Lexer, Token, TokenType, LexerConfig};
+use cheetah::parser::{Parser, ParseError};
+use cheetah::formatter::CodeFormatter;
+use cheetah::visitor::Visitor;
 
-#[derive(Parser)]
+
+#[derive(ClapParser)]
 #[command(name = "cheetah")]
 #[command(version = "0.1.0")]
 #[command(about = "Cheetah programming language interpreter", long_about = None)]
@@ -43,6 +46,15 @@ enum Commands {
         #[arg(short = 'n', long)]
         line_numbers: bool,
     },
+    /// Parse a file and print the AST (for debugging)
+    Parse {
+        /// The source file to parse
+        file: String,
+        
+        /// Show detailed AST information
+        #[arg(short, long)]
+        verbose: bool,
+    },
     /// Check a file for syntax errors
     Check {
         /// The source file to check
@@ -60,6 +72,10 @@ enum Commands {
         /// Write changes to file instead of stdout
         #[arg(short, long)]
         write: bool,
+        
+        /// Indentation size (number of spaces)
+        #[arg(short, long, default_value = "4")]
+        indent: usize,
     },
 }
 
@@ -76,11 +92,14 @@ fn main() -> Result<()> {
         Commands::Lex { file, verbose, color, line_numbers } => {
             lex_file(&file, verbose, color, line_numbers)?;
         }
+        Commands::Parse { file, verbose } => {
+            parse_file(&file, verbose)?;
+        }
         Commands::Check { file, verbose } => {
             check_file(&file, verbose)?;
         }
-        Commands::Format { file, write } => {
-            format_file(&file, write)?;
+        Commands::Format { file, write, indent } => {
+            format_file(&file, write, indent)?;
         }
     }
 
@@ -91,20 +110,34 @@ fn run_file(filename: &str) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
     
+    // First, lex the file
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
     
-    let errors = lexer.get_errors();
-    if !errors.is_empty() {
+    let lexer_errors = lexer.get_errors();
+    if !lexer_errors.is_empty() {
         eprintln!("Lexical errors found in '{}':", filename);
-        for error in errors {
+        for error in lexer_errors {
             eprintln!("{}", error);
         }
         return Ok(());
     }
     
-    println!("Successfully lexed file: {}", filename);
-    println!("Found {} tokens", tokens.len());
+    // Then, parse the tokens
+    let mut parser = Parser::new(tokens);
+    match parser.parse() {
+        Ok(module) => {
+            println!("Successfully parsed file: {}", filename);
+            println!("AST contains {} top-level statements", module.body.len());
+            // Here you would execute the parsed code in a future interpreter
+        },
+        Err(errors) => {
+            eprintln!("Syntax errors found in '{}':", filename);
+            for error in errors {
+                eprintln!("  {}", format_parse_error(&error));
+            }
+        }
+    }
     
     Ok(())
 }
@@ -152,22 +185,39 @@ fn run_repl() -> Result<()> {
             let complete_input = input_buffer.trim();
             
             if !complete_input.is_empty() {
+                // First lexical analysis
                 let mut lexer = Lexer::new(complete_input);
                 let tokens = lexer.tokenize();
                 
-                let errors = lexer.get_errors();
-                if !errors.is_empty() {
-                    for error in errors {
+                let lexer_errors = lexer.get_errors();
+                if !lexer_errors.is_empty() {
+                    for error in lexer_errors {
                         eprintln!("{}", error.to_string().bright_red());
                     }
                 } else {
-                    for token in &tokens {
-                        match &token.token_type {
-                            TokenType::Invalid(_) => println!("{}", format!("{}", token).bright_red()),
-                            _ => println!("{}", format_token_for_repl(token, true)),
+                    // Then try parsing
+                    let mut parser = Parser::new(tokens.clone());
+                    match parser.parse() {
+                        Ok(_module) => {
+                            println!("{}", "✓ Parsed successfully".bright_green());
+                            // Here you would execute the parsed code in a future interpreter
+                            
+                            // For now, just print the tokens
+                            if input.starts_with("tokens") || input.starts_with("lexer") {
+                                for token in &tokens {
+                                    match &token.token_type {
+                                        TokenType::Invalid(_) => println!("{}", format!("{}", token).bright_red()),
+                                        _ => println!("{}", format_token_for_repl(token, true)),
+                                    }
+                                }
+                            }
+                        },
+                        Err(errors) => {
+                            for error in errors {
+                                eprintln!("{}", format_parse_error(&error).bright_red());
+                            }
                         }
                     }
-                    
                 }
             }
             
@@ -271,10 +321,73 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
     Ok(())
 }
 
+/// New function to parse a file and print the AST
+fn parse_file(filename: &str, verbose: bool) -> Result<()> {
+    let source = fs::read_to_string(filename)
+        .with_context(|| format!("Failed to read file: {}", filename))?;
+    
+    // First, lex the file
+    let mut lexer = Lexer::new(&source);
+    let tokens = lexer.tokenize();
+    
+    let lexer_errors = lexer.get_errors();
+    if !lexer_errors.is_empty() {
+        eprintln!("Lexical errors found in '{}':", filename);
+        for error in lexer_errors {
+            eprintln!("{}", error);
+        }
+        return Ok(());
+    }
+    
+    // Then, parse the tokens
+    let mut parser = Parser::new(tokens);
+    match parser.parse() {
+        Ok(module) => {
+            println!("Successfully parsed file: {}", filename);
+            
+            if verbose {
+                // Use the AstPrinter to display the AST structure
+                use cheetah::visitor::AstPrinter;
+                let mut printer = AstPrinter::new();
+                let output = printer.visit_module(&module);
+                println!("AST Structure:");
+                println!("{}", output);
+            } else {
+                // Just print summary info
+                println!("AST contains {} top-level statements", module.body.len());
+                
+                // Print the first few statements as a preview
+                let max_preview = 5;
+                let preview_count = std::cmp::min(max_preview, module.body.len());
+                
+                if preview_count > 0 {
+                    println!("Top-level statements:");
+                    for (i, stmt) in module.body.iter().take(preview_count).enumerate() {
+                        println!("  {}: {}", i + 1, stmt);
+                    }
+                    
+                    if module.body.len() > max_preview {
+                        println!("  ... and {} more", module.body.len() - max_preview);
+                    }
+                }
+            }
+        },
+        Err(errors) => {
+            eprintln!("Syntax errors found in '{}':", filename);
+            for error in errors {
+                eprintln!("  {}", format_parse_error(&error));
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 fn check_file(filename: &str, verbose: bool) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
     
+    // Check for lexical errors first
     let config = LexerConfig {
         enforce_indent_consistency: true,
         standard_indent_size: 4,
@@ -284,14 +397,12 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
     };
     
     let mut lexer = Lexer::with_config(&source, config);
-    let _tokens = lexer.tokenize();
+    let tokens = lexer.tokenize();
     
-    let errors = lexer.get_errors();
-    if errors.is_empty() {
-        println!("✓ No lexical errors found in '{}'", filename);
-    } else {
+    let lexer_errors = lexer.get_errors();
+    if !lexer_errors.is_empty() {
         eprintln!("✗ Lexical errors found in '{}':", filename);
-        for error in errors {
+        for error in lexer_errors {
             if verbose {
                 eprintln!("  Line {}, Col {}: {}", error.line, error.column, error.message);
                 eprintln!("  {}", error.snippet);
@@ -304,38 +415,127 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
                 eprintln!("  {}", error);
             }
         }
+        return Ok(());
+    }
+    
+    // Then check for syntax errors
+    let mut parser = Parser::new(tokens);
+    match parser.parse() {
+        Ok(_) => {
+            println!("✓ No syntax errors found in '{}'", filename);
+        },
+        Err(errors) => {
+            eprintln!("✗ Syntax errors found in '{}':", filename);
+            for error in errors {
+                if verbose {
+                    match &error {
+                        ParseError::UnexpectedToken { expected, found, line, column } => {
+                            eprintln!("  Line {}, Col {}: Expected {}, found {:?}", line, column, expected, found);
+                            
+                            // Trying to extract line from source for context
+                            if let Some(context) = get_line_context(&source, *line) {
+                                eprintln!("  {}", context);
+                                eprintln!("  {}^", " ".repeat(*column + 1));
+                            }
+                            eprintln!();
+                        },
+                        ParseError::InvalidSyntax { message, line, column } => {
+                            eprintln!("  Line {}, Col {}: {}", line, column, message);
+                            
+                            // Trying to extract line from source for context
+                            if let Some(context) = get_line_context(&source, *line) {
+                                eprintln!("  {}", context);
+                                eprintln!("  {}^", " ".repeat(*column + 1));
+                            }
+                            eprintln!();
+                        },
+                        ParseError::EOF { expected, line, column } => {
+                            eprintln!("  Line {}, Col {}: Unexpected end of file, expected {}", line, column, expected);
+                            eprintln!();
+                        },
+                    }
+                } else {
+                    eprintln!("  {}", format_parse_error(&error));
+                }
+            }
+        }
     }
     
     Ok(())
 }
 
-fn format_file(filename: &str, write: bool) -> Result<()> {
+// Helper function to get a line of context from source code
+fn get_line_context(source: &str, line_num: usize) -> Option<String> {
+    if line_num == 0 {
+        return None;
+    }
+    
+    let lines: Vec<&str> = source.lines().collect();
+    if line_num <= lines.len() {
+        Some(lines[line_num - 1].to_string())
+    } else {
+        None
+    }
+}
+
+fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
     
+    // First, check for lexical errors
     let mut lexer = Lexer::new(&source);
-    let _tokens = lexer.tokenize();
+    let tokens = lexer.tokenize();
     
-    let errors = lexer.get_errors();
-    if !errors.is_empty() {
+    let lexer_errors = lexer.get_errors();
+    if !lexer_errors.is_empty() {
         eprintln!("Cannot format file with lexical errors:");
-        for error in errors {
+        for error in lexer_errors {
             eprintln!("  {}", error);
         }
         return Ok(());
     }
     
-    let formatted_source = source.clone();
-    
-    if write {
-        fs::write(filename, formatted_source)
-            .with_context(|| format!("Failed to write to file: {}", filename))?;
-        println!("Formatted and wrote changes to '{}'", filename);
-    } else {
-        print!("{}", formatted_source);
+    // Then parse into AST
+    let mut parser = Parser::new(tokens);
+    match parser.parse() {
+        Ok(module) => {
+            // Format the AST
+            let mut formatter = CodeFormatter::new(indent_size);
+            formatter.visit_module(&module);
+            let formatted_source = formatter.get_output().to_string();
+            
+            if write {
+                fs::write(filename, &formatted_source)
+                    .with_context(|| format!("Failed to write to file: {}", filename))?;
+                println!("Formatted and wrote changes to '{}'", filename);
+            } else {
+                print!("{}", formatted_source);
+            }
+        },
+        Err(errors) => {
+            eprintln!("Cannot format file with syntax errors:");
+            for error in errors {
+                eprintln!("  {}", format_parse_error(&error));
+            }
+        }
     }
     
     Ok(())
+}
+
+// Helper function to format ParseError into a readable string
+fn format_parse_error(error: &ParseError) -> String {
+    match error {
+        ParseError::UnexpectedToken { expected, found, line, column } => {
+            format!("Line {}, Col {}: Expected {}, found {:?}", line, column, expected, found)
+        },
+        ParseError::InvalidSyntax { message, line, column } => {
+            format!("Line {}, Col {}: {}", line, column, message)
+        },
+        ParseError::EOF { expected, line, column } => {
+            format!("Line {}, Col {}: Unexpected end of file, expected {}", line, column, expected)
+        },
+    }
 }
 
 /// Format the token output based on token type
