@@ -293,7 +293,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
 
     fn visit_stmt(&mut self, stmt: &'ast Stmt) -> () {
         match stmt {
-            Stmt::FunctionDef { name, params, body, decorator_list, returns, line, column } => {
+            Stmt::FunctionDef { name, params, body, decorator_list, returns, line, column, is_async: _is_async } => {
                 // Define function in current scope
                 self.define_symbol(name, SymbolType::Function, *line, *column);
                 

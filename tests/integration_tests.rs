@@ -17,12 +17,15 @@ mod integration_tests {
         let mut parser = Parser::new(tokens);
         match parser.parse() {
             Ok(module) => {
-                println!("AST: {:?}", module.body); // Add this line
+                println!("AST: {:?}", module.body);
                 let mut formatter = CodeFormatter::new(indent_size);
                 formatter.visit_module(&module);
                 Ok(formatter.get_output().to_string())
             },
-            Err(errors) => Err(format!("Parser errors: {:?}", errors)),
+            Err(errors) => {
+                println!("Parse errors: {:?}", errors);
+                Err(format!("Parser errors: {:?}", errors))
+            },
         }
     }
 
@@ -125,15 +128,19 @@ dict = {\"key\": \"value\"}
     }
 
     #[test]
-    fn test_complex_expressions() {
-        let source = "
-result = (1 + 2) * 3 ** 2 // 4 % 3
-condition = not (a > b and c <= d or e != f)
-values = [x*y for x in range(5) for y in range(5) if (x + y) % 2 == 0]
-";
+    fn test_complex_expressions_breakdown() {
+        // Test each expression individually for better debugging
+        let source1 = "result = (1 + 2) * 3 ** 2 // 4 % 3";
+        println!("Testing arithmetic expression...");
+        assert!(parse_and_format(source1, 4).is_ok());
         
-        // Should parse without errors
-        assert!(parse_and_format(source, 4).is_ok());
+        let source2 = "condition = not (a > b and c <= d or e != f)";
+        println!("Testing boolean expression...");
+        assert!(parse_and_format(source2, 4).is_ok());
+        
+        let source3 = "values = [x*y for x in range(5) for y in range(5) if (x + y) % 2 == 0]";
+        println!("Testing list comprehension...");
+        assert!(parse_and_format(source3, 4).is_ok());
     }
 
     #[test]

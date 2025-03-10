@@ -132,7 +132,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
 
     fn visit_stmt(&mut self, stmt: &'ast Stmt) -> () {
         match stmt {
-            Stmt::FunctionDef { name, params, body, decorator_list, returns, line: _line, column: _column } => {
+            Stmt::FunctionDef { name, params, body, decorator_list, returns, line: _line, column: _column, is_async: _is_async } => {
                 // Write decorators
                 for decorator in decorator_list {
                     self.write_indented("@");
@@ -300,7 +300,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 
                 self.write("\n");
             },
-            Stmt::For { target, iter, body, orelse, line: _, column: _ } => {
+            Stmt::For { target, iter, body, orelse, line: _, column: _, is_async: _is_async } => {
                 self.write_indented("for ");
                 self.visit_expr(&**target);
                 self.write(" in ");
@@ -396,7 +396,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                     self.decrease_indent();
                 }
             },
-            Stmt::With { items, body, line: _, column: _ } => {
+            Stmt::With { items, body, line: _, column: _, is_async: _ } => {
                 self.write_indented("with ");
                 
                 for (i, (item, target)) in items.iter().enumerate() {
