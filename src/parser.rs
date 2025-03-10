@@ -727,9 +727,35 @@ impl Parser {
         let line = expr.get_line();
         let column = expr.get_column();
         
-        // Check if it's an assignment
         if self.match_token(TokenType::Assign) {
-            // Simple assignment
+            // Validate that expr is a valid assignment target
+            match &expr {
+                Expr::Name { .. } | Expr::Attribute { .. } | Expr::Subscript { .. } => {
+                    // Valid targets
+                },
+                Expr::List { elts, .. } | Expr::Tuple { elts, .. } => {
+                    // Check each element recursively
+                    for elt in elts {
+                        match &**elt {
+                            Expr::Name { .. } | Expr::Attribute { .. } | Expr::Subscript { .. } => {},
+                            Expr::List { .. } | Expr::Tuple { .. } => {
+                                // Nested lists/tuples are okay, but we won't check deeper for simplicity
+                            },
+                            _ => return Err(ParseError::InvalidSyntax {
+                                message: "Invalid assignment target".to_string(),
+                                line,
+                                column,
+                            }),
+                        }
+                    }
+                },
+                _ => return Err(ParseError::InvalidSyntax {
+                    message: "Invalid assignment target".to_string(),
+                    line,
+                    column,
+                }),
+            }
+            
             let value = Box::new(self.parse_expression()?);
             self.consume_newline()?;
             
@@ -740,7 +766,16 @@ impl Parser {
                 column,
             })
         } else if self.is_augmented_assign() {
-            // Augmented assignment like +=, -=, etc.
+            // Similar validation could be added for AugAssign
+            match &expr {
+                Expr::Name { .. } | Expr::Attribute { .. } | Expr::Subscript { .. } => {},
+                _ => return Err(ParseError::InvalidSyntax {
+                    message: "Invalid augmented assignment target".to_string(),
+                    line,
+                    column,
+                }),
+            }
+            
             let op = self.parse_augmented_assign_op();
             self.advance(); // Consume the operator
             let value = Box::new(self.parse_expression()?);
@@ -754,7 +789,16 @@ impl Parser {
                 column,
             })
         } else if self.match_token(TokenType::Colon) {
-            // Annotated assignment: x: int = 5
+            // Annotated assignment validation
+            match &expr {
+                Expr::Name { .. } | Expr::Attribute { .. } | Expr::Subscript { .. } => {},
+                _ => return Err(ParseError::InvalidSyntax {
+                    message: "Invalid annotated assignment target".to_string(),
+                    line,
+                    column,
+                }),
+            }
+            
             let annotation = Box::new(self.parse_expression()?);
             
             let value = if self.match_token(TokenType::Assign) {
@@ -773,7 +817,6 @@ impl Parser {
                 column,
             })
         } else {
-            // Expression statement
             self.consume_newline()?;
             
             Ok(Stmt::Expr {
