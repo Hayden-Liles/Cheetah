@@ -362,10 +362,10 @@ impl<'a> Lexer<'a> {
         
         self.consume_char();
         
-        let mut is_empty_line = false;
+        let mut _is_empty_line = false;
         
         while !self.is_at_end() && self.peek_char() == '\n' {
-            is_empty_line = true;
+            _is_empty_line = true;
             self.consume_char();
         }
         
@@ -378,9 +378,8 @@ impl<'a> Lexer<'a> {
             "\n".to_string(),
         );
         
-        if !is_empty_line {
-            self.current_indent = indent_size;
-        }
+        // Always update current_indent, even for blank lines
+        self.current_indent = indent_size;
         
         Some(newline_token)
     }

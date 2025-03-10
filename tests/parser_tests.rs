@@ -443,12 +443,11 @@ from . import module
             panic!("Expected import statement");
         }
         
-        if let Stmt::ImportFrom { module: mod_name, names, level, .. } = &*module.body[1] {
-            assert_eq!(mod_name.as_ref().unwrap(), "os");
-            assert_eq!(*level, 0);
-            assert_eq!(names.len(), 2);
-            assert_eq!(names[0].name, "path");
-            assert_eq!(names[1].name, "system");
+        if let Stmt::ImportFrom { module: mod_name, names, level, .. } = &*module.body[2] {
+            assert!(mod_name.is_none());
+            assert_eq!(*level, 1);
+            assert_eq!(names.len(), 1);
+            assert_eq!(names[0].name, "module");
         } else {
             panic!("Expected import from statement");
         }

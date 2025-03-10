@@ -1,7 +1,40 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
+    #[test]
+    fn test_indentation() {
+        // Input code with a function definition and one level of indentation
+        let input = "def foo():\n    pass\n";
+
+        // Initialize the lexer with the input
+        let mut lexer = Lexer::new(input);
+        
+        // Tokenize the input
+        let tokens = lexer.tokenize();
+
+        // Define the expected token types in order
+        let expected_types = vec![
+            TokenType::Def,
+            TokenType::Identifier("foo".to_string()),
+            TokenType::LeftParen,
+            TokenType::RightParen,
+            TokenType::Colon,
+            TokenType::Newline,
+            TokenType::Indent,
+            TokenType::Pass,
+            TokenType::Newline,
+            TokenType::Dedent,
+            TokenType::EOF,
+        ];
+
+        // Extract token types from the lexer's output
+        let token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
+
+        // Assert that the emitted tokens match the expected sequence
+        assert_eq!(token_types, expected_types, "Token sequence does not match expected output");
+    }
+
     // Helper function to simplify token comparison
     #[allow(dead_code)]
     fn assert_tokens(input: &str, expected_tokens: Vec<TokenType>) {
@@ -467,7 +500,7 @@ mod tests {
     
     // Test indentation
     #[test]
-    fn test_indentation() {
+    fn test_indentation2() {
         let input = "def test():\n    print('indented')\n    if True:\n        print('nested')\n";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
@@ -507,7 +540,6 @@ mod tests {
         assert_eq!(token_types, expected, "Indentation tokens don't match expected");
     }
     
-    // Test nested indentation
     #[test]
     fn test_complex_indentation2() {
         let input = "if x:\n    if y:\n        print('nested')\n    print('outer')\nprint('no indent')";
@@ -1486,5 +1518,4 @@ bytes_data = b"\x00\x01\x02"
         assert!(lexer.get_errors().len() >= 2, "Expected 2+ errors, got: {:?}", lexer.get_errors());
         assert!(tokens.iter().any(|t| matches!(&t.token_type, TokenType::Identifier(s) if s == "x")));
     }
-
 }

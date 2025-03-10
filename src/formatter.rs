@@ -118,6 +118,12 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                     (Stmt::Assign { .. }, Stmt::Assign { .. }) => {},
                     (Stmt::AugAssign { .. }, Stmt::AugAssign { .. }) => {},
                     
+                    // Add TWO newlines after function or class definitions
+                    (Stmt::FunctionDef { .. }, _) | (Stmt::ClassDef { .. }, _) => {
+                        self.write("\n\n");
+                    },
+                    
+                    // Default case - add one newline
                     _ => self.write("\n"),
                 }
             }

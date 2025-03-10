@@ -10,13 +10,14 @@ mod integration_tests {
     fn parse_and_format(source: &str, indent_size: usize) -> Result<String, String> {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize();
-        println!("Tokens: {:?}", tokens); // Debug output
+        println!("Tokens: {:?}", tokens);
         if !lexer.get_errors().is_empty() {
             return Err(format!("Lexer errors: {:?}", lexer.get_errors()));
         }
         let mut parser = Parser::new(tokens);
         match parser.parse() {
             Ok(module) => {
+                println!("AST: {:?}", module.body); // Add this line
                 let mut formatter = CodeFormatter::new(indent_size);
                 formatter.visit_module(&module);
                 Ok(formatter.get_output().to_string())

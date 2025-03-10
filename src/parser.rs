@@ -293,8 +293,7 @@ impl Parser {
         // Consume 'for'
         self.advance();
         
-        // Parse target - use parse_atom_expr instead of parse_expression
-        // This prevents "in" from being treated as a comparison operator
+        // Parse target - use parse_atom_expr to prevent "in" from being treated as a comparison operator
         let target = Box::new(self.parse_atom_expr()?);
         
         // Consume 'in'
@@ -305,6 +304,8 @@ impl Parser {
         
         // Parse body
         self.consume(TokenType::Colon, ":")?;
+        
+        // Handle both indented blocks and single-line suites
         let body = self.parse_suite()?;
         
         // Parse optional else clause
@@ -828,34 +829,36 @@ impl Parser {
     }
 
     fn parse_suite(&mut self) -> Result<Vec<Box<Stmt>>, ParseError> {
-        // Parse either a simple statement or an indented block
         if self.match_token(TokenType::Newline) {
-            // This is an indented block
-            if let Err(_e) = self.consume(TokenType::Indent, "expected indented block") {
-                // If we can't find an indent token, return a more helpful error
-                return Err(ParseError::InvalidSyntax {
-                    message: "Expected an indented block".to_string(),
-                    line: self.current.as_ref().map_or(0, |t| t.line),
-                    column: self.current.as_ref().map_or(0, |t| t.column),
-                });
-            }
-            
-            let mut statements = Vec::new();
-            
-            while !self.check(TokenType::Dedent) && !self.check(TokenType::EOF) {
-                // Skip empty lines within a block
-                if self.match_token(TokenType::Newline) {
-                    continue;
+            if self.check(TokenType::Indent) {
+                self.advance(); // Consume Indent
+                let mut statements = Vec::new();
+                while !self.check(TokenType::Dedent) && !self.check(TokenType::EOF) {
+                    if self.match_token(TokenType::Newline) {
+                        continue;
+                    }
+                    let stmt = self.parse_statement()?;
+                    statements.push(Box::new(stmt));
+                    // Ensure we don’t parse beyond the current block
+                    if self.current.is_none() || self.check(TokenType::Dedent) {
+                        break;
+                    }
                 }
-                
-                statements.push(Box::new(self.parse_statement()?));
+                self.consume(TokenType::Dedent, "expected dedent at end of block")?;
+                Ok(statements)
+            } else {
+                if !self.check_newline() && !self.check(TokenType::EOF) {
+                    let stmt = Box::new(self.parse_statement()?);
+                    Ok(vec![stmt])
+                } else {
+                    Err(ParseError::InvalidSyntax {
+                        message: "Expected an indented block".to_string(),
+                        line: self.current.as_ref().map_or(0, |t| t.line),
+                        column: self.current.as_ref().map_or(0, |t| t.column),
+                    })
+                }
             }
-            
-            self.consume(TokenType::Dedent, "expected dedent at end of block")?;
-            
-            Ok(statements)
         } else {
-            // Simple one-line suite
             let stmt = Box::new(self.parse_statement()?);
             Ok(vec![stmt])
         }

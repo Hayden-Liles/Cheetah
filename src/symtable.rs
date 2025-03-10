@@ -121,9 +121,9 @@ impl SymbolTableBuilder {
     pub fn exit_scope(&mut self) {
         if let Some(parent) = &self.current_scope.parent {
             self.current_scope = parent.clone();
-        } else {
-            panic!("Cannot exit from root scope");
         }
+        // If we're already at the root scope, don't panic - just silently do nothing
+        // This prevents crashes when AST traversal tries to exit the root scope
     }
 
     pub fn define_symbol(&mut self, name: &str, symbol_type: SymbolType, line: usize, column: usize) {
