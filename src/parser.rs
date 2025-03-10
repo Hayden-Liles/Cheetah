@@ -2629,6 +2629,30 @@ impl Parser {
                     column,
                 })
             },
+            TokenType::FString(value) => {
+                self.advance();
+                Ok(Expr::Str {
+                    value: value.clone(),
+                    line,
+                    column,
+                })
+            },
+            TokenType::RawString(value) => {
+                self.advance();
+                Ok(Expr::Str {
+                    value: value.clone(),
+                    line,
+                    column,
+                })
+            },
+            TokenType::BytesLiteral(bytes) => {
+                self.advance();
+                Ok(Expr::Bytes {
+                    value: bytes.clone(),
+                    line,
+                    column,
+                })
+            },
             // Handle other literals 
             TokenType::StringLiteral(value) => {
                 self.advance();
