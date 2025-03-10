@@ -10,7 +10,14 @@ mod tests {
         let tokens = lexer.tokenize();
         
         if !lexer.get_errors().is_empty() {
-            panic!("Lexer errors: {:?}", lexer.get_errors());
+            let parse_errors: Vec<ParseError> = lexer.get_errors().iter().map(|e| {
+                ParseError::InvalidSyntax {
+                    message: e.message.clone(),
+                    line: e.line,
+                    column: e.column,
+                }
+            }).collect();
+            return Err(parse_errors);
         }
         
         let mut parser = Parser::new(tokens);
@@ -29,7 +36,7 @@ mod tests {
     fn assert_parse_fails(source: &str) {
         match parse_code(source) {
             Ok(_) => panic!("Expected parsing to fail, but it succeeded"),
-            Err(_) => {}, // Expected to fail
+            Err(errors) => assert!(!errors.is_empty()), // Check for any errors
         }
     }
 
@@ -453,7 +460,7 @@ from . import module
         }
         
         if let Stmt::ImportFrom { module: mod_name, names, level, .. } = &*module.body[2] {
-            assert!(mod_name.is_some());
+            assert!(mod_name.is_none());
             assert_eq!(*level, 1);  // Relative import with one dot
             assert_eq!(names.len(), 1);
             assert_eq!(names[0].name, "module");

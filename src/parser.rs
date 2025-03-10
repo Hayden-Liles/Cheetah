@@ -1383,6 +1383,18 @@ impl Parser {
                     column,
                 })
             },
+            TokenType::Lambda => {
+                self.advance(); // Consume 'lambda'
+                let params = self.parse_parameters()?;
+                self.consume(TokenType::Colon, ":")?;
+                let body = Box::new(self.parse_expression()?);
+                Ok(Expr::Lambda {
+                    args: params,
+                    body,
+                    line,
+                    column,
+                })
+            },
             TokenType::BinaryLiteral(value) => {
                 self.advance();
                 Ok(Expr::Num {
