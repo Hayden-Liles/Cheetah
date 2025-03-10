@@ -104,6 +104,10 @@ impl Parser {
         }
     }
 
+    fn check_identifier(&self) -> bool {
+        matches!(self.current.as_ref().map(|t| &t.token_type), Some(TokenType::Identifier(_)))
+    }
+
     fn with_comprehension_context<F, T>(&mut self, f: F) -> T
         where
             F: FnOnce(&mut Self) -> T,
@@ -1051,22 +1055,35 @@ impl Parser {
             self.validate_assignment_target(&expr)?;
     
             // Handle chained assignments (e.g., a = b = c)
-            let value = if self.check(TokenType::Assign) {
-                // Create a full statement first for the right side
-                let stmt = self.parse_expr_statement()?;
+            let value = if self.check_identifier() || self.check(TokenType::LeftParen) ||
+                           self.check(TokenType::LeftBracket) || self.check(TokenType::LeftBrace) ||
+                           self.check(TokenType::Yield) {
                 
-                match stmt {
-                    Stmt::Assign { value, .. } => value,
-                    _ => {
-                        return Err(ParseError::InvalidSyntax {
-                            message: "Expected assignment in chained assignment".to_string(),
-                            line: self.current.as_ref().map_or(0, |t| t.line),
-                            column: self.current.as_ref().map_or(0, |t| t.column),
-                        });
+                // Parse the next expression (which could be the target of another assignment)
+                let target_expr = self.parse_expression()?;
+                
+                // If we see another equals sign, this is a chained assignment
+                if self.match_token(TokenType::Assign) {
+                    // Get the rest of the assignment chain recursively by creating another statement
+                    let stmt = self.parse_expr_statement()?;
+                    
+                    // Extract the value from the nested assignment
+                    match stmt {
+                        Stmt::Assign { value, .. } => value,
+                        _ => {
+                            return Err(ParseError::InvalidSyntax {
+                                message: "Expected assignment in chained assignment".to_string(),
+                                line: self.current.as_ref().map_or(0, |t| t.line),
+                                column: self.current.as_ref().map_or(0, |t| t.column),
+                            });
+                        }
                     }
+                } else {
+                    // Not a chained assignment, just use the expression as the value
+                    Box::new(target_expr)
                 }
             } else {
-                // This is a simple assignment, parse the value
+                // Simple assignment
                 Box::new(self.parse_expression()?)
             };
     
@@ -1789,7 +1806,7 @@ impl Parser {
             let token = self.previous_token();
             let line = token.line;
             let column = token.column;
-
+    
             if self.match_token(TokenType::From) {
                 let value = Box::new(self.parse_expression()?);
                 return Ok(Expr::YieldFrom { value, line, column });
@@ -1808,7 +1825,11 @@ impl Parser {
             
             Ok(Expr::Yield { value, line, column })
         } else {
-            self.parse_conditional_expr()
+            Err(ParseError::InvalidSyntax {
+                message: "Expected 'yield' keyword".to_string(),
+                line: self.current.as_ref().map_or(0, |t| t.line),
+                column: self.current.as_ref().map_or(0, |t| t.column),
+            })
         }
     }
 
@@ -2181,7 +2202,10 @@ impl Parser {
                     line,
                     column,
                 })
-            }
+            },
+            TokenType::Yield => {
+                return self.parse_yield_expr();
+            },
             TokenType::LeftParen => {
                 self.advance(); // Consume '('
         
