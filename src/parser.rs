@@ -548,22 +548,12 @@ impl Parser {
                 }
             } else {
                 if !self.check(TokenType::RightParen) {
-                    let token = self.current.clone().unwrap_or_else(|| {
-                        Token {
-                            token_type: TokenType::EOF,
-                            line: 0,
-                            column: 0,
-                            lexeme: String::new(),
-                        }
-                    });
-                    
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected comma or closing parenthesis".to_string(),
-                        line: token.line,
-                        column: token.column,
+                        line: self.current.as_ref().map_or(0, |t| t.line),
+                        column: self.current.as_ref().map_or(0, |t| t.column),
                     });
                 }
-                
                 break;
             }
         }
