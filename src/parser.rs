@@ -58,7 +58,6 @@ impl Parser {
                 break;
             }
     
-            // Skip newlines before statements
             while matches!(
                 self.current.as_ref().map(|t| &t.token_type),
                 Some(&TokenType::Newline)
@@ -66,7 +65,6 @@ impl Parser {
                 self.advance();
             }
     
-            // Check if we've reached EOF after skipping newlines
             if self.current.is_none() {
                 break;
             }
@@ -75,7 +73,6 @@ impl Parser {
                 Ok(stmt) => body.push(Box::new(stmt)),
                 Err(e) => {
                     self.errors.push(e.clone());
-                    // Return immediately on first error instead of trying to synchronize
                     return Err(vec![e]);
                 }
             }
@@ -96,16 +93,12 @@ impl Parser {
         where
             F: FnOnce(&mut Self) -> T,
         {
-            // Save current state
             let old_context = self.is_in_comprehension_context;
             
-            // Set comprehension context
             self.is_in_comprehension_context = true;
             
-            // Execute the provided function
             let result = f(self);
             
-            // Restore previous context
             self.is_in_comprehension_context = old_context;
             
             result
@@ -115,11 +108,9 @@ impl Parser {
         let mut decorators = Vec::new();
 
         while self.match_token(TokenType::At) {
-            // Parse decorator expression
             let decorator = Box::new(self.parse_expression()?);
             decorators.push(decorator);
 
-            // Each decorator should be followed by a newline
             self.consume_newline()?;
         }
 
@@ -127,7 +118,6 @@ impl Parser {
     }
 
     fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
-        // Clone token and line/column info before any mutable operations
         let token_type;
         let line;
         let column;
@@ -149,7 +139,6 @@ impl Parser {
 
         if matches!(token_type, TokenType::Plus | TokenType::Minus | TokenType::Multiply | 
             TokenType::Divide | TokenType::Modulo | TokenType::Power) {
-            // If we're at the end of input or have a newline right after an operator, that's an error
             if self.peek_matches(TokenType::EOF) || self.peek_matches(TokenType::Newline) {
             return Err(ParseError::InvalidSyntax {
                 message: "Incomplete expression".to_string(),
@@ -159,7 +148,6 @@ impl Parser {
             }
             }
 
-            // Check for literal assignments (which are invalid in Python)
             if matches!(token_type, TokenType::IntLiteral(_) | TokenType::FloatLiteral(_) | 
                 TokenType::StringLiteral(_) | TokenType::True | TokenType::False | TokenType::None) {
             let expr = self.parse_expression()?;
@@ -182,7 +170,6 @@ impl Parser {
             });
             }
     
-        // Check for yield statements
         if matches!(token_type, TokenType::Yield) {
             let yield_expr = self.parse_yield_expr()?;
             let line = yield_expr.get_line();
@@ -197,12 +184,9 @@ impl Parser {
             });
         }
     
-        // First, check for decorators
         if matches!(token_type, TokenType::At) {
-            // Parse decorators for function or class
             let decorators = self.parse_decorators()?;
     
-            // Next, we should have either a function or class definition
             let decorated_token_type = self.current.as_ref().map(|t| t.token_type.clone());
             
             match decorated_token_type {
@@ -239,20 +223,15 @@ impl Parser {
             }
         }
     
-        // Check for async keyword
         if matches!(token_type, TokenType::Async) {
-            self.advance(); // Consume 'async'
+            self.advance();
     
-            // Get the next token type after advancing
             let async_next_token_type = self.current.as_ref().map(|t| t.token_type.clone());
             
-            // Next token should be a function definition or a with/for statement
             match async_next_token_type {
                 Some(TokenType::Def) => {
-                    // Parse as an async function
                     let mut func_def = self.parse_function_def()?;
     
-                    // Set the async flag
                     if let Stmt::FunctionDef {
                         ref mut is_async, ..
                     } = func_def
@@ -263,10 +242,8 @@ impl Parser {
                     return Ok(func_def);
                 }
                 Some(TokenType::For) => {
-                    // Parse as an async for loop
                     let mut for_stmt = self.parse_for()?;
     
-                    // Set the async flag
                     if let Stmt::For {
                         ref mut is_async, ..
                     } = for_stmt
@@ -277,10 +254,8 @@ impl Parser {
                     return Ok(for_stmt);
                 }
                 Some(TokenType::With) => {
-                    // Parse as an async with statement
                     let mut with_stmt = self.parse_with()?;
     
-                    // Set the async flag
                     if let Stmt::With {
                         ref mut is_async, ..
                     } = with_stmt
@@ -300,18 +275,15 @@ impl Parser {
             }
         }
     
-        // Original statement parsing for non-decorated, non-async statements
         match token_type {
             TokenType::Def => self.parse_function_def(),
             TokenType::Class => self.parse_class_def(),
             TokenType::Return => self.parse_return(),
             TokenType::Del => self.parse_delete(),
             TokenType::If => {
-                // Check if there's a missing colon (for test_parse_error_cases)
-                self.advance(); // Consume 'if'
+                self.advance();
                 let test = Box::new(self.parse_expression()?);
                 
-                // Explicitly check for colon
                 if !self.check(TokenType::Colon) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected ':' after if condition".to_string(),
@@ -320,19 +292,15 @@ impl Parser {
                     });
                 }
                 
-                // Continue normal parsing
                 self.consume(TokenType::Colon, ":")?;
                 let body = self.parse_suite()?;
                 
-                // Parse elif/else clauses
                 let mut orelse = Vec::new();
                 
                 if self.check(TokenType::Elif) {
-                    // Handle elif
                     let elif_stmt = self.parse_if()?;
                     orelse.push(Box::new(elif_stmt));
                 } else if self.match_token(TokenType::Else) {
-                    // Handle else
                     self.consume(TokenType::Colon, ":")?;
                     orelse = self.parse_suite()?;
                 }
@@ -372,7 +340,6 @@ impl Parser {
                 })
             }
             _ => {
-                // Add a special case for checking literal assignments
                 if matches!(token_type, TokenType::IntLiteral(_) | TokenType::FloatLiteral(_)
                     | TokenType::StringLiteral(_) | TokenType::True | TokenType::False | TokenType::None) {
                     let expr = self.parse_expression()?;
@@ -405,25 +372,20 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'def'
         self.advance();
 
-        // Parse function name
         let name = self.consume_identifier("function name")?;
 
-        // Parse parameters
         self.consume(TokenType::LeftParen, "(")?;
         let params = self.parse_parameters()?;
         self.consume(TokenType::RightParen, ")")?;
 
-        // Parse optional return type annotation
         let returns = if self.match_token(TokenType::Arrow) {
             Some(Box::new(self.parse_expression()?))
         } else {
             None
         };
 
-        // Parse function body
         self.consume(TokenType::Colon, ":")?;
         let body = self.parse_suite()?;
 
@@ -441,17 +403,14 @@ impl Parser {
 
     fn parse_parameters(&mut self) -> Result<Vec<Parameter>, ParseError> {
         let mut params = Vec::new();
-        let mut has_kwarg = false; // Track if we've seen **kwargs
-        let mut has_seen_default = false; // Track if we've seen a parameter with default value
+        let mut has_kwarg = false;
+        let mut has_seen_default = false;
         
-        // Handle empty parameter list
         if self.check(TokenType::RightParen) {
             return Ok(params);
         }
         
-        // Parse parameters one by one
         loop {
-            // Error if we've already seen **kwargs and there's another parameter
             if has_kwarg {
                 return Err(ParseError::InvalidSyntax {
                     message: "Parameter after **kwargs is not allowed".to_string(),
@@ -460,25 +419,19 @@ impl Parser {
                 });
             }
             
-            // Handle *args
             if self.match_token(TokenType::Multiply) {
-                // Check for bare * (keyword-only parameters marker)
                 if self.check(TokenType::Comma) || self.check(TokenType::RightParen) {
-                    // This is a bare * for keyword-only parameters
-                    // No need to store a parameter, just continue
                     continue;
                 }
                 
                 let name = self.consume_identifier("parameter name after *")?;
                 
-                // Type annotation
                 let typ = if self.match_token(TokenType::Colon) {
                     Some(Box::new(self.parse_type_annotation(false)?))
                 } else {
                     None
                 };
                 
-                // No default value allowed for *args
                 if self.check(TokenType::Assign) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Variadic argument cannot have default value".to_string(),
@@ -495,18 +448,15 @@ impl Parser {
                     is_kwarg: false,
                 });
             }
-            // Handle **kwargs
             else if self.match_token(TokenType::Power) {
                 let name = self.consume_identifier("parameter name after **")?;
                 
-                // Type annotation
                 let typ = if self.match_token(TokenType::Colon) {
                     Some(Box::new(self.parse_type_annotation(false)?))
                 } else {
                     None
                 };
                 
-                // No default value allowed for **kwargs
                 if self.check(TokenType::Assign) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Keyword argument cannot have default value".to_string(),
@@ -515,7 +465,7 @@ impl Parser {
                     });
                 }
                 
-                has_kwarg = true; // Mark that we've seen **kwargs
+                has_kwarg = true;
                 
                 params.push(Parameter { 
                     name, 
@@ -525,7 +475,6 @@ impl Parser {
                     is_kwarg: true,
                 });
             }
-            // Regular parameter
             else if self.check_identifier() {
                 let param_pos = (
                     self.current.as_ref().map_or(0, |t| t.line),
@@ -533,7 +482,6 @@ impl Parser {
                 );
                 let param_name = self.consume_identifier("parameter name")?;
                 
-                // Detect missing comma between params
                 if self.check_identifier() {
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected comma between parameters".to_string(),
@@ -542,23 +490,22 @@ impl Parser {
                     });
                 }
                 
-                // Type annotation
                 let typ = if self.match_token(TokenType::Colon) {
                     Some(Box::new(self.parse_type_annotation(false)?))
                 } else {
                     None
                 };
                 
-                // Default value
                 let default = if self.match_token(TokenType::Assign) {
                     has_seen_default = true;
-                    Some(Box::new(self.parse_expression()?))
+                    
+                    // Parse default value expression including string literals
+                    let default_expr = self.parse_expression()?;
+                    Some(Box::new(default_expr))
                 } else {
-                    // Non-default parameter after a default parameter is a semantic error in Python
-                    // (It's not a syntax error though, so we only warn about it)
                     if has_seen_default && !has_kwarg {
                         println!("Warning: non-default parameter after default parameter at line {}, column {}",
-                                 param_pos.0, param_pos.1);
+                                param_pos.0, param_pos.1);
                     }
                     None
                 };
@@ -572,9 +519,7 @@ impl Parser {
                 });
             }
             else {
-                // Invalid parameter
                 let token = self.current.clone().unwrap_or_else(|| {
-                    // Create a default token if none is available
                     Token {
                         token_type: TokenType::EOF,
                         line: 0,
@@ -583,22 +528,18 @@ impl Parser {
                     }
                 });
                 
-                return Err(ParseError::UnexpectedToken {
-                    expected: "parameter name, * or **".to_string(),
-                    found: token.token_type,
+                return Err(ParseError::InvalidSyntax {
+                    message: "Expected parameter name, * or **".to_string(),
                     line: token.line,
                     column: token.column,
                 });
             }
             
-            // Check for comma to continue or end parameter list
             if self.match_token(TokenType::Comma) {
-                // Check for trailing comma
                 if self.check(TokenType::RightParen) {
                     break;
                 }
                 
-                // Check for consecutive commas
                 if self.check(TokenType::Comma) {
                     let token = self.current.clone().unwrap_or_else(|| {
                         Token {
@@ -615,10 +556,7 @@ impl Parser {
                         column: token.column,
                     });
                 }
-                
-                continue;
             } else {
-                // End of parameter list (no more commas)
                 if !self.check(TokenType::RightParen) {
                     let token = self.current.clone().unwrap_or_else(|| {
                         Token {
@@ -648,15 +586,11 @@ impl Parser {
         let line = token.line;
         let column = token.column;
     
-        // Consume 'class'
         self.advance();
     
-        // Parse class name
         let name = self.consume_identifier("class name")?;
     
-        // Parse optional bases
         let (bases, keywords_with_optional_names) = if self.match_token(TokenType::LeftParen) {
-            // Check specifically for the case of just a comma inside the parentheses
             if self.check(TokenType::Comma) {
                 let comma_token = self.current.clone().unwrap();
                 return Err(ParseError::InvalidSyntax {
@@ -673,13 +607,11 @@ impl Parser {
             (Vec::new(), Vec::new())
         };
     
-        // Fix type mismatch by filtering out None keys
         let keywords: Vec<(String, Box<Expr>)> = keywords_with_optional_names
             .into_iter()
             .filter_map(|(k, v)| k.map(|key| (key, v)))
             .collect();
     
-        // Parse class body
         self.consume(TokenType::Colon, ":")?;
         let body = self.parse_suite()?;
     
@@ -699,17 +631,14 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'return'
         self.advance();
 
-        // Parse optional return value
         let value = if self.check_newline() || self.check(TokenType::EOF) {
             None
         } else {
             Some(Box::new(self.parse_expression()?))
         };
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Return {
@@ -724,13 +653,10 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'del'
         self.advance();
 
-        // Parse targets
         let targets = self.parse_expr_list()?;
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Delete {
@@ -745,10 +671,8 @@ impl Parser {
         let line = token.line;
         let column = token.column;
     
-        // Consume 'if'
         self.advance();
         
-        // Check for missing condition
         if self.check(TokenType::Colon) {
             return Err(ParseError::InvalidSyntax {
                 message: "Expected condition after 'if'".to_string(),
@@ -757,10 +681,8 @@ impl Parser {
             });
         }
     
-        // Parse condition
         let test = Box::new(self.parse_expression()?);
     
-        // Strictly require a colon - generate error if not found
         if !self.check(TokenType::Colon) {
             return Err(ParseError::InvalidSyntax {
                 message: "Expected ':' after if condition".to_string(),
@@ -769,21 +691,16 @@ impl Parser {
             });
         }
     
-        // Now consume the colon
-        self.advance(); // This replaces self.consume(TokenType::Colon, ":")
+        self.advance();
     
-        // Parse the body
         let body = self.parse_suite()?;
     
-        // Parse elif/else clauses
         let mut orelse = Vec::new();
     
         if self.check(TokenType::Elif) {
-            // Handle elif
             let elif_stmt = self.parse_if()?;
             orelse.push(Box::new(elif_stmt));
         } else if self.match_token(TokenType::Else) {
-            // Handle else
             self.consume(TokenType::Colon, ":")?;
             orelse = self.parse_suite()?;
         }
@@ -802,10 +719,8 @@ impl Parser {
         let line = token.line;
         let column = token.column;
     
-        // Consume 'for'
         self.advance();
         
-        // Check for missing target
         if self.check(TokenType::In) {
             return Err(ParseError::InvalidSyntax {
                 message: "Expected target after 'for'".to_string(),
@@ -814,22 +729,16 @@ impl Parser {
             });
         }
     
-        // Parse target - use parse_atom_expr to prevent "in" from being treated as a comparison operator
         let target = Box::new(self.parse_atom_expr()?);
     
-        // Consume 'in'
         self.consume(TokenType::In, "in")?;
     
-        // Parse iterable
         let iter = Box::new(self.parse_expression()?);
     
-        // Parse body
         self.consume(TokenType::Colon, ":")?;
     
-        // Handle both indented blocks and single-line suites
         let body = self.parse_suite()?;
     
-        // Parse optional else clause
         let orelse = if self.match_token(TokenType::Else) {
             self.consume(TokenType::Colon, ":")?;
             self.parse_suite()?
@@ -853,17 +762,13 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'while'
         self.advance();
 
-        // Parse condition
         let test = Box::new(self.parse_expression()?);
 
-        // Parse body
         self.consume(TokenType::Colon, ":")?;
         let body = self.parse_suite()?;
 
-        // Parse optional else clause
         let orelse = if self.match_token(TokenType::Else) {
             self.consume(TokenType::Colon, ":")?;
             self.parse_suite()?
@@ -884,17 +789,43 @@ impl Parser {
         let token = self.current.clone().unwrap();
         let line = token.line;
         let column = token.column;
-
-        // Consume 'with'
-        self.advance();
-
-        // Parse with items
-        let items = self.parse_with_items()?;
-
-        // Parse body
+    
+        self.advance(); // Consume 'with'
+    
+        let mut items = Vec::new();
+        
+        // Parse the first context manager
+        let context_expr = Box::new(self.parse_expression()?);
+        
+        // Parse the 'as' clause if present
+        let optional_vars = if self.match_token(TokenType::As) {
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+        
+        items.push((context_expr, optional_vars));
+        
+        // Parse additional context managers if separated by commas
+        while self.match_token(TokenType::Comma) {
+            if self.check(TokenType::Colon) {
+                break;
+            }
+            
+            let context_expr = Box::new(self.parse_expression()?);
+            
+            let optional_vars = if self.match_token(TokenType::As) {
+                Some(Box::new(self.parse_expression()?))
+            } else {
+                None
+            };
+            
+            items.push((context_expr, optional_vars));
+        }
+    
         self.consume(TokenType::Colon, ":")?;
         let body = self.parse_suite()?;
-
+    
         Ok(Stmt::With {
             items,
             body,
@@ -904,46 +835,16 @@ impl Parser {
         })
     }
 
-    fn parse_with_items(&mut self) -> Result<Vec<(Box<Expr>, Option<Box<Expr>>)>, ParseError> {
-        let mut items = Vec::new();
-
-        loop {
-            let context_expr = Box::new(self.parse_expression()?);
-
-            let optional_vars = if self.match_token(TokenType::As) {
-                Some(Box::new(self.parse_expression()?))
-            } else {
-                None
-            };
-
-            items.push((context_expr, optional_vars));
-
-            if !self.match_token(TokenType::Comma) {
-                break;
-            }
-
-            // Handle trailing comma
-            if self.check(TokenType::Colon) {
-                break;
-            }
-        }
-
-        Ok(items)
-    }
-
     fn parse_try(&mut self) -> Result<Stmt, ParseError> {
         let token = self.current.clone().unwrap();
         let line = token.line;
         let column = token.column;
 
-        // Consume 'try'
         self.advance();
 
-        // Parse try body
         self.consume(TokenType::Colon, ":")?;
         let body = self.parse_suite()?;
 
-        // Parse except handlers
         let mut handlers = Vec::new();
 
         while self.match_token(TokenType::Except) {
@@ -974,7 +875,6 @@ impl Parser {
             });
         }
 
-        // Parse optional else clause
         let orelse = if self.match_token(TokenType::Else) {
             self.consume(TokenType::Colon, ":")?;
             self.parse_suite()?
@@ -982,7 +882,6 @@ impl Parser {
             Vec::new()
         };
 
-        // Parse optional finally clause
         let finalbody = if self.match_token(TokenType::Finally) {
             self.consume(TokenType::Colon, ":")?;
             self.parse_suite()?
@@ -1000,29 +899,92 @@ impl Parser {
         })
     }
 
+    fn parse_dict_literal(&mut self, line: usize, column: usize) -> Result<Expr, ParseError> {
+        // Empty dictionary
+        if self.match_token(TokenType::RightBrace) {
+            return Ok(Expr::Dict {
+                keys: Vec::new(),
+                values: Vec::new(),
+                line,
+                column,
+            });
+        }
+        
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        
+        // Process first key-value pair
+        let key = self.parse_expression()?;
+        
+        // Check if it's a dictionary or a set
+        if self.match_token(TokenType::Colon) {
+            // It's a dictionary
+            keys.push(Some(Box::new(key)));
+            values.push(Box::new(self.parse_expression()?));
+            
+            // Process additional key-value pairs
+            while self.match_token(TokenType::Comma) {
+                if self.check(TokenType::RightBrace) {
+                    break;
+                }
+                
+                let next_key = self.parse_expression()?;
+                self.consume(TokenType::Colon, ":")?;
+                let next_value = self.parse_expression()?;
+                
+                keys.push(Some(Box::new(next_key)));
+                values.push(Box::new(next_value));
+            }
+            
+            self.consume(TokenType::RightBrace, "}")?;
+            
+            return Ok(Expr::Dict {
+                keys,
+                values,
+                line,
+                column,
+            });
+        } else {
+            // It's a set
+            let mut elts = vec![Box::new(key)];
+            
+            while self.match_token(TokenType::Comma) {
+                if self.check(TokenType::RightBrace) {
+                    break;
+                }
+                
+                elts.push(Box::new(self.parse_expression()?));
+            }
+            
+            self.consume(TokenType::RightBrace, "}")?;
+            
+            return Ok(Expr::Set {
+                elts,
+                line,
+                column,
+            });
+        }
+    }
+
     fn parse_raise(&mut self) -> Result<Stmt, ParseError> {
         let token = self.current.clone().unwrap();
         let line = token.line;
         let column = token.column;
 
-        // Consume 'raise'
         self.advance();
 
-        // Parse optional exception
         let exc = if self.check_newline() || self.check(TokenType::EOF) {
             None
         } else {
             Some(Box::new(self.parse_expression()?))
         };
 
-        // Parse optional cause
         let cause = if self.match_token(TokenType::From) {
             Some(Box::new(self.parse_expression()?))
         } else {
             None
         };
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Raise {
@@ -1038,20 +1000,16 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'assert'
         self.advance();
 
-        // Parse test expression
         let test = Box::new(self.parse_expression()?);
 
-        // Parse optional message
         let msg = if self.match_token(TokenType::Comma) {
             Some(Box::new(self.parse_expression()?))
         } else {
             None
         };
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Assert {
@@ -1067,22 +1025,18 @@ impl Parser {
         let line = token.line;
         let column = token.column;
     
-        // Consume 'import'
         self.advance();
         
-        // Strictly check for empty import statement
         if self.check_newline() || self.check(TokenType::EOF) || self.check(TokenType::SemiColon) {
             return Err(ParseError::InvalidSyntax {
                 message: "Expected module name after 'import'".to_string(),
                 line,
-                column: column + 6, // Position after "import"
+                column: column + 6,
             });
         }
     
-        // Parse import names with error propagation
         let names = self.parse_import_names()?;
         
-        // Ensure we have at least one import name
         if names.is_empty() {
             return Err(ParseError::InvalidSyntax {
                 message: "Expected module name after 'import'".to_string(),
@@ -1091,7 +1045,6 @@ impl Parser {
             });
         }
     
-        // Consume newline
         self.consume_newline()?;
     
         Ok(Stmt::Import {
@@ -1119,7 +1072,6 @@ impl Parser {
                 break;
             }
 
-            // Handle trailing comma
             if self.check_newline() || self.check(TokenType::EOF) {
                 break;
             }
@@ -1133,16 +1085,13 @@ impl Parser {
         let line = token.line;
         let column = token.column;
     
-        // Consume 'from'
         self.advance();
     
-        // Count leading dots for relative imports
         let mut level = 0;
         while self.match_token(TokenType::Dot) {
             level += 1;
         }
     
-        // Parse optional module name - error if directly followed by 'import' with no module
         if self.check(TokenType::Import) && level == 0 {
             return Err(ParseError::InvalidSyntax {
                 message: "Expected module name after 'from'".to_string(),
@@ -1157,17 +1106,14 @@ impl Parser {
             Some(self.consume_dotted_name("module name")?)
         };
     
-        // Consume 'import'
         self.consume(TokenType::Import, "import")?;
     
-        // Parse import names or star
         let names = if self.match_token(TokenType::Multiply) {
             vec![Alias {
                 name: "*".to_string(),
                 asname: None,
             }]
         } else if self.check_newline() || self.check(TokenType::EOF) || self.check(TokenType::SemiColon) {
-            // This catches "from module import " with nothing after
             return Err(ParseError::InvalidSyntax {
                 message: "Expected import item after 'import'".to_string(),
                 line: self.current.as_ref().unwrap().line,
@@ -1177,7 +1123,6 @@ impl Parser {
             self.parse_import_as_names()?
         };
     
-        // Consume newline
         self.consume_newline()?;
     
         Ok(Stmt::ImportFrom {
@@ -1192,7 +1137,6 @@ impl Parser {
     fn parse_import_as_names(&mut self) -> Result<Vec<Alias>, ParseError> {
         let mut names = Vec::new();
 
-        // Check if we have parenthesized import names
         let has_parens = self.match_token(TokenType::LeftParen);
 
         loop {
@@ -1210,7 +1154,6 @@ impl Parser {
                 break;
             }
 
-            // Handle trailing comma
             if (has_parens && self.check(TokenType::RightParen))
                 || (!has_parens && (self.check_newline() || self.check(TokenType::EOF)))
             {
@@ -1230,13 +1173,10 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'global'
         self.advance();
 
-        // Parse name list
         let names = self.parse_name_list()?;
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Global {
@@ -1251,13 +1191,10 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'nonlocal'
         self.advance();
 
-        // Parse name list
         let names = self.parse_name_list()?;
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Nonlocal {
@@ -1277,7 +1214,6 @@ impl Parser {
                 break;
             }
 
-            // Handle trailing comma
             if self.check_newline() || self.check(TokenType::EOF) {
                 break;
             }
@@ -1291,10 +1227,8 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'pass'
         self.advance();
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Pass { line, column })
@@ -1305,10 +1239,8 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'break'
         self.advance();
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Break { line, column })
@@ -1319,147 +1251,33 @@ impl Parser {
         let line = token.line;
         let column = token.column;
 
-        // Consume 'continue'
         self.advance();
 
-        // Consume newline
         self.consume_newline()?;
 
         Ok(Stmt::Continue { line, column })
     }
 
     fn parse_expr_statement(&mut self) -> Result<Stmt, ParseError> {
-        // Support for a, *b, c = ... pattern
-        if matches!(
-            self.current.as_ref().map(|t| &t.token_type),
-            Some(TokenType::Identifier(_))
-        ) && self.peek_matches(TokenType::Comma) {
-            let expr = self.parse_expression()?;
-            let line = expr.get_line();
-            let column = expr.get_column();
+        // Check if we're starting with an identifier and comma, which indicates a potential tuple unpacking
+        if self.check_identifier() && self.peek_matches(TokenType::Comma) {
+            let line = self.current.as_ref().unwrap().line;
+            let column = self.current.as_ref().unwrap().column;
             
-            // We're handling a tuple unpacking like "a, *b, c = ..."
-            if self.match_token(TokenType::Comma) {
-                let mut elts = vec![Box::new(expr)];
-                
-                // Check for starred expression after the comma
-                while !self.check(TokenType::Assign) && !self.check_newline() && !self.check(TokenType::EOF) {
-                    // Prevent consecutive commas
-                    if self.check(TokenType::Comma) {
-                        return Err(ParseError::InvalidSyntax {
-                            message: "Expected expression after comma".to_string(),
-                            line: self.current.as_ref().map_or(line, |t| t.line),
-                            column: self.current.as_ref().map_or(column, |t| t.column),
-                        });
-                    }
-                    
-                    elts.push(Box::new(self.parse_expression()?));
-                    
-                    if !self.match_token(TokenType::Comma) {
-                        break;
-                    }
-                }
-                
-                let tuple_expr = Expr::Tuple {
-                    elts,
-                    ctx: ExprContext::Store,
-                    line,
-                    column,
-                };
-                
-                // Expect assignment
-                self.consume(TokenType::Assign, "=")?;
-                let value = Box::new(self.parse_expression()?);
-                self.consume_newline()?;
-                
-                return Ok(Stmt::Assign {
-                    targets: vec![Box::new(tuple_expr)],
-                    value,
-                    line,
-                    column,
-                });
-            }
-        }
-        
-        // Original handling for standalone expressions
-        let mut expr = self.parse_expression()?;
-        let line = expr.get_line();
-        let column = expr.get_column();
-        
-        // Handle cases starting with starred expression (*b, c = ...)
-        if self.check(TokenType::Multiply) {
-            let star_token = self.current.clone().unwrap();
-            self.advance(); // Consume *
-            
-            // Parse the variable name after the star
-            let var_expr = self.parse_atom_expr()?;
-            let starred_expr = Expr::Starred {
-                value: Box::new(var_expr),
+            // Parse the first identifier
+            let ident = self.consume_identifier("identifier")?;
+            let mut elts = vec![Box::new(Expr::Name {
+                id: ident,
                 ctx: ExprContext::Store,
-                line: star_token.line,
-                column: star_token.column,
-            };
-            
-            // Now handle as part of a tuple
-            let mut elts = vec![Box::new(starred_expr)];
-            
-            // Must have a comma after *b in a, *b, c = ...
-            if !self.match_token(TokenType::Comma) {
-                return Err(ParseError::InvalidSyntax {
-                    message: "Expected comma after starred expression in tuple unpacking".to_string(),
-                    line: self.current.as_ref().map_or(0, |t| t.line),
-                    column: self.current.as_ref().map_or(0, |t| t.column),
-                });
-            }
-            
-            // Parse remaining elements
-            while !self.check(TokenType::Assign) && !self.check_newline() && !self.check(TokenType::EOF) {
-                elts.push(Box::new(self.parse_expression()?));
-                
-                if !self.match_token(TokenType::Comma) {
-                    break;
-                }
-            }
-            
-            // Create tuple and process as assignment
-            let tuple_expr = Expr::Tuple {
-                elts,
-                ctx: ExprContext::Store,
-                line: star_token.line,
-                column: star_token.column,
-            };
-            
-            // Must be an assignment
-            if !self.match_token(TokenType::Assign) {
-                return Err(ParseError::InvalidSyntax {
-                    message: "Expected '=' in tuple unpacking".to_string(),
-                    line: self.current.as_ref().map_or(0, |t| t.line),
-                    column: self.current.as_ref().map_or(0, |t| t.column),
-                });
-            }
-            
-            // Parse the value
-            let value = Box::new(self.parse_expression()?);
-            self.consume_newline()?;
-            
-            return Ok(Stmt::Assign {
-                targets: vec![Box::new(tuple_expr)],
-                value,
-                line: star_token.line,
-                column: star_token.column,
-            });
-        }
-        
-        // Handle tuple unpacking (e.g., a, b = 1, 2)
-        if self.check(TokenType::Comma) {
-            let mut elts = vec![Box::new(expr)];
+                line,
+                column,
+            })];
             
             // Consume the comma
             self.advance();
             
-            // Continue parsing the rest of the tuple elements
+            // Parse additional identifiers or expressions
             while !self.check(TokenType::Assign) && !self.check_newline() && !self.check(TokenType::EOF) {
-                // Error on consecutive commas
                 if self.check(TokenType::Comma) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected expression after comma".to_string(),
@@ -1468,60 +1286,68 @@ impl Parser {
                     });
                 }
                 
-                elts.push(Box::new(self.parse_expression()?));
+                if self.check_identifier() {
+                    let item_line = self.current.as_ref().unwrap().line;
+                    let item_column = self.current.as_ref().unwrap().column;
+                    let item_ident = self.consume_identifier("identifier")?;
+                    
+                    elts.push(Box::new(Expr::Name {
+                        id: item_ident,
+                        ctx: ExprContext::Store,
+                        line: item_line,
+                        column: item_column,
+                    }));
+                } else {
+                    elts.push(Box::new(self.parse_atom_expr()?));
+                }
                 
                 if !self.match_token(TokenType::Comma) {
                     break;
                 }
             }
             
-            expr = Expr::Tuple {
+            // Create the tuple target
+            let tuple_expr = Expr::Tuple {
                 elts,
                 ctx: ExprContext::Store,
                 line,
                 column,
             };
-        }
-    
-        // Handle different types of statements
-        if self.match_token(TokenType::Assign) {
-            // Validate assignment target
-            self.validate_assignment_target(&expr)?;
-    
-            // Handle chained assignments (e.g., a = b = c)
-            let value = if self.check_identifier() || self.check(TokenType::LeftParen) ||
-                            self.check(TokenType::LeftBracket) || self.check(TokenType::LeftBrace) ||
-                            self.check(TokenType::Yield) {
-                
-                // Parse the next expression (which could be the target of another assignment)
-                let target_expr = self.parse_expression()?;
-                
-                // If we see another equals sign, this is a chained assignment
-                if self.match_token(TokenType::Assign) {
-                    // For chained assignment like a = b = c, directly parse the value
-                    Box::new(self.parse_expression()?)
-                } else {
-                    // Not a chained assignment, just use the expression as the value
-                    Box::new(target_expr)
-                }
-            } else {
-                // Simple assignment
-                Box::new(self.parse_expression()?)
-            };
-    
+            
+            // Now parse the assignment
+            self.consume(TokenType::Assign, "=")?;
+            let value = Box::new(self.parse_expression()?);
             self.consume_newline()?;
-    
-            // Create assignment statement
-            Ok(Stmt::Assign {
+            
+            return Ok(Stmt::Assign {
+                targets: vec![Box::new(tuple_expr)],
+                value,
+                line,
+                column,
+            });
+        }
+        
+        // For normal expressions, use the regular parsing logic
+        let expr = self.parse_expression()?;
+        let line = expr.get_line();
+        let column = expr.get_column();
+        
+        // Handle assignment
+        if self.match_token(TokenType::Assign) {
+            self.validate_assignment_target(&expr)?;
+            
+            let value = Box::new(self.parse_expression()?);
+            self.consume_newline()?;
+            
+            return Ok(Stmt::Assign {
                 targets: vec![Box::new(expr)],
                 value,
                 line,
                 column,
-            })
-        } else if self.is_augmented_assign() {
-            // Handle augmented assignment (e.g., x += 1)
-            
-            // Validate assignment target for augmented assignment
+            });
+        }
+        // Handle augmented assignment
+        else if self.is_augmented_assign() {
             match &expr {
                 Expr::Name { .. } | Expr::Attribute { .. } | Expr::Subscript { .. } => {}
                 _ => {
@@ -1532,28 +1358,23 @@ impl Parser {
                     });
                 }
             }
-    
-            // Get the operator and consume the token
+            
             let op = self.parse_augmented_assign_op();
-            self.advance(); 
+            self.advance();
             
-            // Parse the value
             let value = Box::new(self.parse_expression()?);
-            
             self.consume_newline()?;
-    
-            // Create augmented assignment statement
-            Ok(Stmt::AugAssign {
+            
+            return Ok(Stmt::AugAssign {
                 target: Box::new(expr),
                 op,
                 value,
                 line,
                 column,
-            })
-        } else if self.match_token(TokenType::Colon) {
-            // Handle annotated assignment (e.g., a: int = 5)
-            
-            // Validate annotated assignment target
+            });
+        }
+        // Handle type annotation
+        else if self.match_token(TokenType::Colon) {
             match &expr {
                 Expr::Name { .. } | Expr::Attribute { .. } | Expr::Subscript { .. } => {}
                 _ => {
@@ -1564,63 +1385,55 @@ impl Parser {
                     });
                 }
             }
-    
-            // Parse type annotation
+            
             let annotation = Box::new(self.parse_type_annotation(false)?);
-    
-            // Parse optional value
+            
             let value = if self.match_token(TokenType::Assign) {
                 Some(Box::new(self.parse_expression()?))
             } else {
                 None
             };
-    
+            
             self.consume_newline()?;
-    
-            // Create annotated assignment statement
-            Ok(Stmt::AnnAssign {
+            
+            return Ok(Stmt::AnnAssign {
                 target: Box::new(expr),
                 annotation,
                 value,
                 line,
                 column,
-            })
-        } else {
-            // Simple expression statement
+            });
+        }
+        // Expression statement
+        else {
             self.consume_newline()?;
-    
-            // Create expression statement
-            Ok(Stmt::Expr {
+            
+            return Ok(Stmt::Expr {
                 value: Box::new(expr),
                 line,
                 column,
-            })
+            });
         }
     }
 
     fn validate_assignment_target(&self, expr: &Expr) -> Result<(), ParseError> {
         match expr {
             Expr::Name { .. } | Expr::Attribute { .. } | Expr::Subscript { .. } => {
-                // These are valid targets
                 Ok(())
             }
             Expr::List { elts, .. } | Expr::Tuple { elts, .. } => {
-                // Nested lists/tuples are okay, check their elements
                 for elt in elts {
                     self.validate_assignment_target(elt)?;
                 }
                 Ok(())
             }
             Expr::Starred { value, .. } => {
-                // Check if the starred value is a valid target
                 self.validate_assignment_target(value)
             }
-            // For literals and other expressions that cannot be targets
             Expr::Num { line, column, .. } |
             Expr::Str { line, column, .. } |
             Expr::Bytes { line, column, .. } |
             Expr::NameConstant { line, column, .. } => {
-                // Explicitly reject literals as assignment targets
                 Err(ParseError::InvalidSyntax {
                     message: "Cannot assign to literal".to_string(),
                     line: *line,
@@ -1630,7 +1443,6 @@ impl Parser {
             Expr::BoolOp { line, column, .. } |
             Expr::BinOp { line, column, .. } |
             Expr::UnaryOp { line, column, .. } => {
-                // Explicitly reject operations as assignment targets
                 Err(ParseError::InvalidSyntax {
                     message: "Cannot assign to expression".to_string(),
                     line: *line,
@@ -1638,7 +1450,6 @@ impl Parser {
                 })
             }
             _ => {
-                // All other expressions are invalid targets
                 Err(ParseError::InvalidSyntax {
                     message: "Invalid assignment target".to_string(),
                     line: expr.get_line(),
@@ -1695,9 +1506,8 @@ impl Parser {
     fn parse_suite(&mut self) -> Result<Vec<Box<Stmt>>, ParseError> {
         if self.match_token(TokenType::Newline) {
             if self.check(TokenType::Indent) {
-                self.advance(); // Consume Indent
+                self.advance();
                 
-                // Track the expected indentation level
                 let indent_level = self.current_indent_level;
                 let mut statements = Vec::new();
                 
@@ -1706,7 +1516,6 @@ impl Parser {
                         continue;
                     }
                     
-                    // Verify indentation consistency
                     if self.current_indent_level != indent_level {
                         let current_token = self.current.as_ref().unwrap_or_else(|| {
                             panic!("Expected token at this position")
@@ -1728,7 +1537,6 @@ impl Parser {
                     }
                 }
                 
-                // Must have a Dedent token at the end of the block
                 if !self.check(TokenType::Dedent) && !self.check(TokenType::EOF) {
                     let current_token = self.current.as_ref().unwrap_or_else(|| {
                         panic!("Expected token at this position")
@@ -1747,7 +1555,6 @@ impl Parser {
                 
                 Ok(statements)
             } else {
-                // No indent after newline is an error in a suite context
                 let current_token = self.current.as_ref().unwrap_or_else(|| {
                     panic!("Expected token at this position")
                 });
@@ -1759,35 +1566,26 @@ impl Parser {
                 })
             }
         } else {
-            // Single-line suite
             let stmt = Box::new(self.parse_statement()?);
             Ok(vec![stmt])
         }
     }
 
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
-        // First check if we're parsing a comma-separated expression list
-        // which could be a tuple or just multiple expressions
         let mut expr = self.parse_or_test()?;
         
-        // Check for conditional expression (ternary operator)
         if self.check(TokenType::If) && !self.is_in_comprehension_context {
             let line = expr.get_line();
             let column = expr.get_column();
             
-            // Consume the 'if' token
             self.advance();
             
-            // Parse the condition
             let test = Box::new(self.parse_or_test()?);
             
-            // Expect 'else'
             self.consume(TokenType::Else, "else")?;
             
-            // Parse the alternative value
             let orelse = Box::new(self.parse_expression()?);
             
-            // Create the conditional expression
             expr = Expr::IfExp {
                 test,
                 body: Box::new(expr),
@@ -1796,22 +1594,18 @@ impl Parser {
                 column,
             };
         } 
-        // Check for comma-separated expressions
         else if self.check(TokenType::Comma) {
             let line = expr.get_line();
             let column = expr.get_column();
             
-            // Start with the first expression we've already parsed
             let mut elts = vec![Box::new(expr)];
             
-            // Consume the first comma
             self.advance();
             
-            // Parse any additional expressions
             while !self.check_newline() && !self.check(TokenType::EOF) && 
-                  !self.check(TokenType::RightParen) && !self.check(TokenType::RightBracket) {
+                    !self.check(TokenType::RightParen) && !self.check(TokenType::RightBracket) &&
+                    !self.check(TokenType::Assign) {  // Add check for assignment operator
                 
-                // Handle empty expressions like "x,,"
                 if self.check(TokenType::Comma) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected expression after comma".to_string(),
@@ -1827,7 +1621,6 @@ impl Parser {
                 }
             }
             
-            // Create a tuple expression
             expr = Expr::Tuple {
                 elts,
                 ctx: ExprContext::Load,
@@ -1842,20 +1635,16 @@ impl Parser {
     fn parse_or_test(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_and_test()?;
     
-        // Check if we have any 'or' operators
         if self.check(TokenType::Or) {
             let line = expr.get_line();
             let column = expr.get_column();
             
-            // Start with the first expression we already parsed
             let mut values = vec![Box::new(expr)];
             
-            // Parse all 'or' expressions into a flat list
             while self.match_token(TokenType::Or) {
                 values.push(Box::new(self.parse_and_test()?));
             }
             
-            // Create a single BoolOp with all values
             expr = Expr::BoolOp {
                 op: BoolOperator::Or,
                 values,
@@ -1870,20 +1659,16 @@ impl Parser {
     fn parse_and_test(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_not_test()?;
 
-        // Check if we have any 'and' operators
         if self.check(TokenType::And) {
             let line = expr.get_line();
             let column = expr.get_column();
             
-            // Start with the first expression we already parsed
             let mut values = vec![Box::new(expr)];
             
-            // Parse all 'and' expressions into a flat list
             while self.match_token(TokenType::And) {
                 values.push(Box::new(self.parse_not_test()?));
             }
             
-            // Create a single BoolOp with all values
             expr = Expr::BoolOp {
                 op: BoolOperator::And,
                 values,
@@ -1914,12 +1699,11 @@ impl Parser {
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_expr()?;
 
-        // Parse comparison chains like a < b < c
         let mut ops = Vec::new();
         let mut comparators = Vec::new();
 
         while self.is_comparison_operator() {
-            let op = self.parse_comparison_operator()?; // Note the ? to handle the Result
+            let op = self.parse_comparison_operator()?;
             let right = self.parse_expr()?;
 
             ops.push(op);
@@ -1963,55 +1747,52 @@ impl Parser {
     }
 
     fn parse_comparison_operator(&mut self) -> Result<CmpOperator, ParseError> {
-        // Clone token data before we mutate self
         let token_type = self.current.as_ref().unwrap().token_type.clone();
         let line = self.current.as_ref().unwrap().line;
         let column = self.current.as_ref().unwrap().column;
 
         match token_type {
             TokenType::Equal => {
-                self.advance(); // Consume '=='
+                self.advance();
                 Ok(CmpOperator::Eq)
             }
             TokenType::NotEqual => {
-                self.advance(); // Consume '!='
+                self.advance();
                 Ok(CmpOperator::NotEq)
             }
             TokenType::LessThan => {
-                self.advance(); // Consume '<'
+                self.advance();
                 Ok(CmpOperator::Lt)
             }
             TokenType::LessEqual => {
-                self.advance(); // Consume '<='
+                self.advance();
                 Ok(CmpOperator::LtE)
             }
             TokenType::GreaterThan => {
-                self.advance(); // Consume '>'
+                self.advance();
                 Ok(CmpOperator::Gt)
             }
             TokenType::GreaterEqual => {
-                self.advance(); // Consume '>='
+                self.advance();
                 Ok(CmpOperator::GtE)
             }
             TokenType::Is => {
-                self.advance(); // Consume 'is'
+                self.advance();
 
                 if self.match_token(TokenType::Not) {
-                    // Handle 'is not'
                     Ok(CmpOperator::IsNot)
                 } else {
                     Ok(CmpOperator::Is)
                 }
             }
             TokenType::In => {
-                self.advance(); // Consume 'in'
+                self.advance();
                 Ok(CmpOperator::In)
             }
             TokenType::Not => {
-                self.advance(); // Consume 'not'
+                self.advance();
 
                 if self.match_token(TokenType::In) {
-                    // Handle 'not in'
                     Ok(CmpOperator::NotIn)
                 } else {
                     Err(ParseError::InvalidSyntax {
@@ -2170,7 +1951,6 @@ impl Parser {
                 }
             };
     
-            // Check for EOF or newline right after an operator
             if self.check(TokenType::EOF) || self.check_newline() {
                 return Err(ParseError::InvalidSyntax {
                     message: "Incomplete expression".to_string(),
@@ -2198,7 +1978,6 @@ impl Parser {
             || self.match_token(TokenType::Minus)
             || self.match_token(TokenType::BitwiseNot)
         {
-            // Unary operations
             let token = self.previous_token();
             let op = match token.token_type {
                 TokenType::Plus => UnaryOperator::UAdd,
@@ -2216,20 +1995,16 @@ impl Parser {
                 column: token.column,
             })
         } else {
-            // Call parse_power instead of parse_await_expr
             self.parse_power()
         }
     }
 
     fn parse_power(&mut self) -> Result<Expr, ParseError> {
-        // First, try to parse await expression
         let mut expr = self.parse_await_expr()?;
         
-        // Then check for power operator
         if self.match_token(TokenType::Power) {
             let token = self.previous_token();
             
-            // For right associativity, recursively call parse_power
             let right = self.parse_power()?;
             
             expr = Expr::BinOp {
@@ -2250,7 +2025,6 @@ impl Parser {
             let line = token.line;
             let column = token.column;
 
-            // Parse the expression being awaited
             let value = Box::new(self.parse_atom_expr()?);
 
             Ok(Expr::Await {
@@ -2298,10 +2072,8 @@ impl Parser {
     fn parse_atom_expr(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_atom()?;
 
-        // Parse trailers (call, attribute, subscription)
         loop {
             if self.match_token(TokenType::LeftParen) {
-                // Function call
                 let line = expr.get_line();
                 let column = expr.get_column();
                 let (args, keywords) = self.parse_arguments()?;
@@ -2315,7 +2087,6 @@ impl Parser {
                     column,
                 };
             } else if self.match_token(TokenType::Dot) {
-                // Attribute access
                 let line = expr.get_line();
                 let column = expr.get_column();
                 let attr = self.consume_identifier("attribute name")?;
@@ -2328,7 +2099,6 @@ impl Parser {
                     column,
                 };
             } else if self.match_token(TokenType::LeftBracket) {
-                // Subscription
                 let line = expr.get_line();
                 let column = expr.get_column();
                 let slice = Box::new(self.parse_slice()?);
@@ -2354,14 +2124,11 @@ impl Parser {
         let mut keywords = Vec::new();
         let mut saw_keyword = false;
     
-        // Handle empty argument list
         if self.check(TokenType::RightParen) {
             return Ok((args, keywords));
         }
         
-        // Handle the specific case of a lone comma in class bases list
         if self.check(TokenType::Comma) {
-            // This is an error - an empty expression before comma
             let token = self.current.clone().unwrap();
             return Err(ParseError::InvalidSyntax {
                 message: "Expected expression before comma".to_string(),
@@ -2371,9 +2138,7 @@ impl Parser {
         }
     
         loop {
-            // Check for *args or **kwargs
             if self.match_token(TokenType::Multiply) {
-                // *args
                 let token = self.previous_token();
                 let value = Box::new(self.parse_expression()?);
                 
@@ -2383,13 +2148,12 @@ impl Parser {
                     line: token.line,
                     column: token.column,
                 }));
-                saw_keyword = true; // After *args, only keyword args allowed
+                saw_keyword = true;
             } else if self.match_token(TokenType::Power) {
-                // **kwargs
                 let arg = Box::new(self.parse_expression()?);
                 keywords.push((None, arg));
-            } else if !saw_keyword && self.check_identifier() && self.peek_matches(TokenType::Assign) {
-                // Keyword argument (make sure it's an identifier before =)
+            } else if self.check_identifier() && self.peek_token(1).map_or(false, |t| matches!(t.token_type, TokenType::Assign)) {
+                // Identify a keyword argument by looking ahead at the next token
                 let key = match self.current.as_ref().unwrap().token_type.clone() {
                     TokenType::Identifier(name) => name,
                     _ => {
@@ -2402,13 +2166,12 @@ impl Parser {
                 };
     
                 self.advance(); // Consume the identifier
-                self.advance(); // Consume the =
+                self.advance(); // Consume the equals sign
     
                 let value = Box::new(self.parse_expression()?);
                 keywords.push((Some(key), value));
                 saw_keyword = true;
             } else if !saw_keyword {
-                // Positional argument
                 args.push(Box::new(self.parse_expression()?));
             } else {
                 return Err(ParseError::InvalidSyntax {
@@ -2422,12 +2185,10 @@ impl Parser {
                 break;
             }
     
-            // Handle trailing comma
             if self.check(TokenType::RightParen) {
                 break;
             }
             
-            // Check for consecutive commas - this is an error
             if self.check(TokenType::Comma) {
                 let token = self.current.clone().unwrap();
                 return Err(ParseError::InvalidSyntax {
@@ -2441,25 +2202,28 @@ impl Parser {
         Ok((args, keywords))
     }
 
+    fn peek_token(&self, offset: usize) -> Option<&Token> {
+        if offset == 0 {
+            self.current.as_ref()
+        } else {
+            let mut iter = self.tokens.iter();
+            iter.nth(offset - 1)
+        }
+    }
+
     fn parse_slice(&mut self) -> Result<Expr, ParseError> {
         let line = self.current.as_ref().map_or(0, |t| t.line);
         let column = self.current.as_ref().map_or(0, |t| t.column);
 
-        // Check for ellipsis
         if self.match_token(TokenType::Ellipsis) {
-            // Create an ellipsis expression
             let ellipsis_expr = Expr::Ellipsis { line, column };
 
-            // Check for complex slice with comma
             if self.match_token(TokenType::Comma) {
-                // This is a multi-dimensional slice like [..., 0]
                 let mut indices = vec![Box::new(ellipsis_expr)];
 
-                // Parse the remaining indices
                 if !self.check(TokenType::RightBracket) {
                     indices.push(Box::new(self.parse_expression()?));
 
-                    // Parse any additional indices
                     while self.match_token(TokenType::Comma) {
                         if self.check(TokenType::RightBracket) {
                             break;
@@ -2468,7 +2232,6 @@ impl Parser {
                     }
                 }
 
-                // Create a tuple for multi-dimensional slicing
                 return Ok(Expr::Tuple {
                     elts: indices,
                     ctx: ExprContext::Load,
@@ -2477,11 +2240,9 @@ impl Parser {
                 });
             }
 
-            // Simple ellipsis
             return Ok(ellipsis_expr);
         }
 
-        // Original slice parsing - handle start:stop:step notation
         let start_expr = if !self.check(TokenType::Colon) {
             Some(self.parse_expression()?)
         } else {
@@ -2489,7 +2250,6 @@ impl Parser {
         };
 
         if self.match_token(TokenType::Colon) {
-            // This is a slice
             let stop_expr = if !self.check(TokenType::Colon)
                 && !self.check(TokenType::RightBracket)
                 && !self.check(TokenType::Comma)
@@ -2509,7 +2269,6 @@ impl Parser {
                 None
             };
 
-            // Create a slice expression
             let slice = Expr::Dict {
                 keys: vec![
                     Some(Box::new(Expr::Str {
@@ -2558,11 +2317,9 @@ impl Parser {
                 column,
             };
 
-            // Handle multi-dimensional slicing with comma
             if self.match_token(TokenType::Comma) {
                 let mut indices = vec![Box::new(slice)];
 
-                // Parse remaining indices
                 if !self.check(TokenType::RightBracket) {
                     indices.push(Box::new(self.parse_expression()?));
 
@@ -2584,7 +2341,6 @@ impl Parser {
 
             Ok(slice)
         } else if self.match_token(TokenType::Comma) {
-            // Multi-index access like a[1, 2, 3]
             let mut indices = vec![Box::new(start_expr.unwrap())];
 
             if !self.check(TokenType::RightBracket) {
@@ -2605,7 +2361,6 @@ impl Parser {
                 column,
             })
         } else {
-            // Simple index access
             start_expr.ok_or_else(|| ParseError::InvalidSyntax {
                 message: "Expected expression in subscription".to_string(),
                 line,
@@ -2615,22 +2370,17 @@ impl Parser {
     }
 
     fn parse_type_annotation(&mut self, _is_nested: bool) -> Result<Expr, ParseError> {
-        // Parse the base type
         let mut expr = self.parse_atom_expr()?;
 
-        // Check for generic parameters with brackets
         if self.match_token(TokenType::LeftBracket) {
             let line = expr.get_line();
             let column = expr.get_column();
 
-            // Parse the generic parameters
             let mut params = Vec::new();
 
             if !self.check(TokenType::RightBracket) {
-                // Parse first parameter (could be nested)
                 params.push(Box::new(self.parse_type_annotation(true)?));
 
-                // Parse additional parameters
                 while self.match_token(TokenType::Comma) {
                     if self.check(TokenType::RightBracket) {
                         break;
@@ -2641,7 +2391,6 @@ impl Parser {
 
             self.consume(TokenType::RightBracket, "]")?;
 
-            // Create subscript expression for generic type
             expr = Expr::Subscript {
                 value: Box::new(expr),
                 slice: Box::new(Expr::Tuple {
@@ -2674,7 +2423,6 @@ impl Parser {
         let column = token.column;
         
         match &token.token_type {
-            // Handle identifiers (variable names)
             TokenType::Identifier(name) => {
                 self.advance();
                 Ok(Expr::Name {
@@ -2688,19 +2436,16 @@ impl Parser {
                 return self.parse_yield_expr();
             },
             TokenType::LeftParen => {
-                self.advance(); // Consume '('
+                self.advance();
             
                 if self.match_token(TokenType::RightParen) {
-                    // Empty tuple case
                     if !self.is_in_comprehension_context {
-                        // Empty parentheses (should fail for expressions but is valid for tuples)
                         return Err(ParseError::InvalidSyntax {
                             message: "Empty parentheses not allowed in expressions".to_string(),
                             line,
                             column,
                         });
                     }
-                    // Otherwise valid for tuple
                     Ok(Expr::Tuple {
                         elts: Vec::new(),
                         ctx: ExprContext::Load,
@@ -2708,26 +2453,20 @@ impl Parser {
                         column,
                     })
                 } else {
-                    // Parse the first expression
                     let expr = self.parse_expression()?;
         
-                    // Check if this is a generator expression (has 'for' after the expression)
                     if self.match_token(TokenType::For) {
-                        // Store the initial expression as the element of the generator
                         let elt = expr;
                         
-                        // Use with_comprehension_context to ensure we don't expect 'else' after 'if'
                         return self.with_comprehension_context(|this| {
                             let mut generators = Vec::new();
                             
-                            // Parse first generator
                             let target = Box::new(this.parse_atom_expr()?);
                             this.consume(TokenType::In, "in")?;
                             let iter = Box::new(this.parse_expression()?);
                             
                             let mut ifs = Vec::new();
                             while this.match_token(TokenType::If) {
-                                // Use parse_or_test instead of parse_expression
                                 ifs.push(Box::new(this.parse_or_test()?));
                             }
                             
@@ -2738,7 +2477,6 @@ impl Parser {
                                 is_async: false,
                             });
                             
-                            // Handle additional 'for' clauses
                             while this.match_token(TokenType::For) {
                                 let target = Box::new(this.parse_atom_expr()?);
                                 this.consume(TokenType::In, "in")?;
@@ -2767,7 +2505,6 @@ impl Parser {
                             })
                         });
                     } else if self.match_token(TokenType::Comma) {
-                        // This is a tuple
                         let mut elts = vec![Box::new(expr)];
         
                         if !self.check(TokenType::RightParen) {
@@ -2783,16 +2520,14 @@ impl Parser {
                             column,
                         })
                     } else {
-                        // Simple parenthesized expression
                         self.consume(TokenType::RightParen, ")")?;
                         Ok(expr)
                     }
                 }
             },
             TokenType::LeftBracket => {
-                self.advance(); // Consume '['
+                self.advance();
                 
-                // Check for EOF or newline before proceeding
                 if self.check(TokenType::EOF) || self.check_newline() {
                     return Err(ParseError::InvalidSyntax {
                         message: "Unclosed bracket".to_string(),
@@ -2802,7 +2537,6 @@ impl Parser {
                 }
             
                 if self.match_token(TokenType::RightBracket) {
-                    // Empty list
                     Ok(Expr::List {
                         elts: Vec::new(),
                         ctx: ExprContext::Load,
@@ -2810,15 +2544,12 @@ impl Parser {
                         column,
                     })
                 } else {
-                    // Parse the first expression
                     let first_expr = self.parse_expression()?;
             
                     if self.match_token(TokenType::For) {
-                        // List comprehension
                         return self.with_comprehension_context(|this| {
                             let mut generators = Vec::new();
                             
-                            // Parse the first generator
                             let target = Box::new(this.parse_atom_expr()?);
                             this.consume(TokenType::In, "in")?;
                             let iter = Box::new(this.parse_expression()?);
@@ -2835,7 +2566,6 @@ impl Parser {
                                 is_async: false,
                             });
                             
-                            // Parse additional generators if any
                             while this.match_token(TokenType::For) {
                                 let target = Box::new(this.parse_atom_expr()?);
                                 this.consume(TokenType::In, "in")?;
@@ -2854,7 +2584,6 @@ impl Parser {
                                 });
                             }
                             
-                            // Consume the closing bracket
                             this.consume(TokenType::RightBracket, "]")?;
                             
                             Ok(Expr::ListComp {
@@ -2882,9 +2611,8 @@ impl Parser {
                 }
             },
             TokenType::LeftBrace => {
-                self.advance(); // Consume '{'
+                self.advance();
                 
-                // Check for EOF or newline before proceeding
                 if self.check(TokenType::EOF) || self.check_newline() {
                     return Err(ParseError::InvalidSyntax {
                         message: "Unclosed brace".to_string(),
@@ -2893,166 +2621,8 @@ impl Parser {
                     });
                 }
             
-                if self.match_token(TokenType::RightBrace) {
-                    // Empty dict
-                    Ok(Expr::Dict {
-                        keys: Vec::new(),
-                        values: Vec::new(),
-                        line,
-                        column,
-                    })
-                } else {
-                    let first_expr = self.parse_expression()?;
-                    
-                    if self.match_token(TokenType::Colon) {
-                        let value_expr = self.parse_expression()?;
-                        
-                        if self.match_token(TokenType::For) {
-                            let key = first_expr;
-                            let value = value_expr;
-                            
-                            return self.with_comprehension_context(|this| {
-                                let mut generators = Vec::new();
-                                let target_expr = this.parse_atom_expr()?;
-                                let target_line = target_expr.get_line();
-                                let target_column = target_expr.get_column();
-                                let target = if this.check(TokenType::Comma) {
-                                    let mut elts = vec![Box::new(target_expr)];
-                                    while this.match_token(TokenType::Comma) {
-                                        if this.check(TokenType::In) {
-                                            break;
-                                        }
-                                        elts.push(Box::new(this.parse_atom_expr()?));
-                                    }
-                                    Box::new(Expr::Tuple {
-                                        elts,
-                                        ctx: ExprContext::Store,
-                                        line: target_line,
-                                        column: target_column,
-                                    })
-                                } else {
-                                    Box::new(target_expr)
-                                };
-                                this.consume(TokenType::In, "in")?;
-                                let iter = Box::new(this.parse_expression()?);
-                                let mut ifs = Vec::new();
-                                while this.match_token(TokenType::If) {
-                                    ifs.push(Box::new(this.parse_or_test()?));
-                                }
-                                generators.push(Comprehension { 
-                                    target, 
-                                    iter, 
-                                    ifs, 
-                                    is_async: false 
-                                });
-                                while this.match_token(TokenType::For) {
-                                    let nested_target = Box::new(this.parse_atom_expr()?);
-                                    this.consume(TokenType::In, "in")?;
-                                    let nested_iter = Box::new(this.parse_expression()?);
-                                    let mut nested_ifs = Vec::new();
-                                    while this.match_token(TokenType::If) {
-                                        nested_ifs.push(Box::new(this.parse_or_test()?));
-                                    }
-                                    generators.push(Comprehension { 
-                                        target: nested_target, 
-                                        iter: nested_iter, 
-                                        ifs: nested_ifs, 
-                                        is_async: false 
-                                    });
-                                }
-                                this.consume(TokenType::RightBrace, "}")?;
-                                
-                                Ok(Expr::DictComp {
-                                    key: Box::new(key),
-                                    value: Box::new(value),
-                                    generators,
-                                    line,
-                                    column,
-                                })
-                            });
-                        } else {
-                            let mut keys = vec![Some(Box::new(first_expr))];
-                            let mut values = vec![Box::new(value_expr)];
-                            while self.match_token(TokenType::Comma) {
-                                if self.check(TokenType::RightBrace) {
-                                    break;
-                                }
-                                let key = Box::new(self.parse_expression()?);
-                                self.consume(TokenType::Colon, ":")?;
-                                let value = Box::new(self.parse_expression()?);
-                                keys.push(Some(key));
-                                values.push(value);
-                            }
-                            self.consume(TokenType::RightBrace, "}")?;
-                            Ok(Expr::Dict { 
-                                keys, 
-                                values, 
-                                line, 
-                                column 
-                            })
-                        }
-                    } else {
-                        if self.match_token(TokenType::For) {
-                            let elt = first_expr;
-                            
-                            return self.with_comprehension_context(|this| {
-                                let mut generators = Vec::new();
-                                let target = Box::new(this.parse_atom_expr()?);
-                                this.consume(TokenType::In, "in")?;
-                                let iter = Box::new(this.parse_expression()?);
-                                let mut ifs = Vec::new();
-                                while this.match_token(TokenType::If) {
-                                    ifs.push(Box::new(this.parse_or_test()?));
-                                }
-                                generators.push(Comprehension { 
-                                    target, 
-                                    iter, 
-                                    ifs, 
-                                    is_async: false 
-                                });
-                                while this.match_token(TokenType::For) {
-                                    let target = Box::new(this.parse_atom_expr()?);
-                                    this.consume(TokenType::In, "in")?;
-                                    let iter = Box::new(this.parse_expression()?);
-                                    let mut ifs = Vec::new();
-                                    while this.match_token(TokenType::If) {
-                                        ifs.push(Box::new(this.parse_or_test()?));
-                                    }
-                                    generators.push(Comprehension { 
-                                        target, 
-                                        iter, 
-                                        ifs, 
-                                        is_async: false 
-                                    });
-                                }
-                                this.consume(TokenType::RightBrace, "}")?;
-                                
-                                Ok(Expr::SetComp {
-                                    elt: Box::new(elt),
-                                    generators,
-                                    line,
-                                    column,
-                                })
-                            });
-                        } else {
-                            let mut elts = vec![Box::new(first_expr)];
-                            while self.match_token(TokenType::Comma) {
-                                if self.check(TokenType::RightBrace) {
-                                    break;
-                                }
-                                elts.push(Box::new(self.parse_expression()?));
-                            }
-                            self.consume(TokenType::RightBrace, "}")?;
-                            Ok(Expr::Set { 
-                                elts, 
-                                line, 
-                                column 
-                            })
-                        }
-                    }
-                }
+                self.parse_dict_literal(line, column)
             },
-            // Handle numeric literals
             TokenType::IntLiteral(value) => {
                 self.advance();
                 Ok(Expr::Num {
@@ -3069,11 +2639,51 @@ impl Parser {
                     column,
                 })
             },
-            // Handle other literals and special forms
             TokenType::Lambda => {
-                self.advance(); // Consume 'lambda'
+                self.advance();
                 
-                let params = self.parse_parameters()?;
+                let mut params = Vec::new();
+                
+                if self.check_identifier() {
+                    let param_name = self.consume_identifier("parameter name")?;
+                    
+                    let default = if self.match_token(TokenType::Assign) {
+                        Some(Box::new(self.parse_expression()?))
+                    } else {
+                        None
+                    };
+                    
+                    params.push(Parameter { 
+                        name: param_name, 
+                        typ: None, 
+                        default,
+                        is_vararg: false,
+                        is_kwarg: false,
+                    });
+                    
+                    while self.match_token(TokenType::Comma) {
+                        if self.check(TokenType::Colon) {
+                            break;
+                        }
+                        
+                        let param_name = self.consume_identifier("parameter name")?;
+                        
+                        let default = if self.match_token(TokenType::Assign) {
+                            Some(Box::new(self.parse_expression()?))
+                        } else {
+                            None
+                        };
+                        
+                        params.push(Parameter { 
+                            name: param_name, 
+                            typ: None, 
+                            default,
+                            is_vararg: false,
+                            is_kwarg: false,
+                        });
+                    }
+                }
+                
                 self.consume(TokenType::Colon, ":")?;
                 let body = Box::new(self.parse_expression()?);
                 
@@ -3083,7 +2693,7 @@ impl Parser {
                     line,
                     column,
                 })
-            },
+            }
             TokenType::FString(value) => {
                 self.advance();
                 Ok(Expr::Str {
@@ -3108,7 +2718,6 @@ impl Parser {
                     column,
                 })
             },
-            // Handle other literals 
             TokenType::StringLiteral(value) => {
                 self.advance();
                 Ok(Expr::Str {
@@ -3117,7 +2726,6 @@ impl Parser {
                     column,
                 })
             },
-            // Handle constants
             TokenType::True => {
                 self.advance();
                 Ok(Expr::NameConstant {
@@ -3142,12 +2750,10 @@ impl Parser {
                     column,
                 })
             },
-            // Handle ellipsis
             TokenType::Ellipsis => {
                 self.advance();
                 Ok(Expr::Ellipsis { line, column })
             },
-            // Default case for unexpected tokens
             _ => Err(ParseError::UnexpectedToken {
                 expected: "expression".to_string(),
                 found: token.token_type.clone(),
@@ -3160,14 +2766,12 @@ impl Parser {
     fn parse_expr_list(&mut self) -> Result<Vec<Box<Expr>>, ParseError> {
         let mut expressions = Vec::new();
     
-        // Handle empty lists or end of input cases
         if self.check(TokenType::RightParen) || self.check(TokenType::RightBracket) 
            || self.check(TokenType::RightBrace) || self.check(TokenType::Assign)
            || self.check_newline() || self.check(TokenType::EOF) {
             return Ok(expressions);
         }
     
-        // First expression (might be starred)
         if self.match_token(TokenType::Multiply) {
             let token = self.previous_token();
             let line = token.line;
@@ -3185,16 +2789,13 @@ impl Parser {
             expressions.push(Box::new(self.parse_expression()?));
         }
     
-        // Parse additional expressions if there are commas
         while self.match_token(TokenType::Comma) {
-            // Break on list terminating tokens
             if self.check(TokenType::RightParen) || self.check(TokenType::RightBracket) 
                 || self.check(TokenType::RightBrace) || self.check(TokenType::Assign)
                 || self.check_newline() || self.check(TokenType::EOF) {
                 break;
             }
             
-            // Error on consecutive commas
             if self.check(TokenType::Comma) {
                 return Err(ParseError::InvalidSyntax {
                     message: "Expected expression after comma".to_string(),
@@ -3203,7 +2804,6 @@ impl Parser {
                 });
             }
             
-            // Parse next element (might be starred)
             if self.match_token(TokenType::Multiply) {
                 let token = self.previous_token();
                 let line = token.line;
@@ -3267,7 +2867,6 @@ impl Parser {
                     self.advance();
                     Ok(result)
                 } else {
-                    // Create a more specific error message for unclosed delimiters
                     let message = match &expected_type {
                         TokenType::RightParen => "Unclosed parenthesis",
                         TokenType::RightBracket => "Unclosed bracket",
@@ -3276,7 +2875,7 @@ impl Parser {
                     };
                     
                     Err(ParseError::UnexpectedToken {
-                        expected: format!("Expected {} but found {:?}", message, token.token_type),
+                        expected: message.to_string(),
                         found: token.token_type.clone(),
                         line: token.line,
                         column: token.column,
@@ -3292,9 +2891,7 @@ impl Parser {
     }
 
     fn consume_newline(&mut self) -> Result<(), ParseError> {
-        // More flexible newline handling
         if self.match_token(TokenType::SemiColon) {
-            // Semicolons can substitute for newlines
             if self.check_newline() {
                 self.advance();
             }
@@ -3337,11 +2934,8 @@ impl Parser {
         }
     }
 
-    // Fixed to avoid borrowing conflicts
     fn peek_matches(&self, expected_type: TokenType) -> bool {
-        // Clone the first token from tokens queue if available
         if let Some(token) = self.tokens.front() {
-            // Clone the token type to avoid borrowing issues
             let token_type = token.token_type.clone();
             std::mem::discriminant(&token_type) == std::mem::discriminant(&expected_type)
         } else {
@@ -3365,7 +2959,6 @@ impl Parser {
     }
 }
 
-// Helper trait to get line and column from Expr
 trait GetLocation {
     fn get_line(&self) -> usize;
     fn get_column(&self) -> usize;
