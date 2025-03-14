@@ -425,7 +425,13 @@ impl Parser {
                 if self.check(TokenType::Comma) || self.check(TokenType::RightParen) {
                     has_vararg = true;
                     // No parameter name, this just indicates that subsequent parameters are keyword-only
-                    continue;
+                    if self.match_token(TokenType::Comma) {
+                        if self.check(TokenType::RightParen) {
+                            break;
+                        }
+                        continue;
+                    }
+                    break;
                 }
                 
                 // Regular *args parameter
@@ -542,16 +548,26 @@ impl Parser {
                 });
             }
             
+            // This is the key fix: proper handling of comma and right parenthesis
             if self.match_token(TokenType::Comma) {
                 if self.check(TokenType::RightParen) {
                     break;
                 }
             } else {
                 if !self.check(TokenType::RightParen) {
+                    let token = self.current.clone().unwrap_or_else(|| {
+                        Token {
+                            token_type: TokenType::EOF,
+                            line: 0,
+                            column: 0,
+                            lexeme: String::new(),
+                        }
+                    });
+                    
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected comma or closing parenthesis".to_string(),
-                        line: self.current.as_ref().map_or(0, |t| t.line),
-                        column: self.current.as_ref().map_or(0, |t| t.column),
+                        line: token.line,
+                        column: token.column,
                     });
                 }
                 break;
@@ -969,7 +985,10 @@ impl Parser {
                 
                 // Parse the next key
                 let key = self.parse_expression()?;
+                
+                // This is a critical part - consuming the colon for subsequent key-value pairs
                 self.consume(TokenType::Colon, ":")?;
+                
                 let value = self.parse_expression()?;
                 
                 keys.push(Some(Box::new(key)));
@@ -2267,8 +2286,7 @@ impl Parser {
                 self.advance(); // Consume the identifier
                 
                 // Look ahead to see if the next token is '='
-                if self.check(TokenType::Assign) {
-                    self.advance(); // Consume the '='
+                if self.match_token(TokenType::Assign) {
                     let value = Box::new(self.parse_expression()?);
                     keywords.push((Some(id_name), value));
                     saw_keyword = true;
@@ -2970,31 +2988,51 @@ impl Parser {
     fn consume(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError> {
         match &self.current {
             Some(token) => {
-                if std::mem::discriminant(&token.token_type) == std::mem::discriminant(&expected_type) {
+                // Improved token type comparison that doesn't consider associated data
+                let types_match = match (&token.token_type, &expected_type) {
+                    (TokenType::Identifier(_), TokenType::Identifier(_)) |
+                    (TokenType::IntLiteral(_), TokenType::IntLiteral(_)) |
+                    (TokenType::FloatLiteral(_), TokenType::FloatLiteral(_)) |
+                    (TokenType::StringLiteral(_), TokenType::StringLiteral(_)) => true,
+                    _ => std::mem::discriminant(&token.token_type) == std::mem::discriminant(&expected_type)
+                };
+                
+                if types_match {
                     let result = token.clone();
                     self.advance();
                     Ok(result)
                 } else {
-                    let message = match &expected_type {
-                        TokenType::RightParen => "Unclosed parenthesis",
-                        TokenType::RightBracket => "Unclosed bracket",
-                        TokenType::RightBrace => "Unclosed brace",
-                        _ => error_message,
+                    // Generate the appropriate error message based on the expected token type
+                    let error_msg = match &expected_type {
+                        TokenType::RightParen => "Unclosed parenthesis".to_string(),
+                        TokenType::RightBracket => "Unclosed bracket".to_string(),
+                        TokenType::RightBrace => "Unclosed brace".to_string(),
+                        _ => error_message.to_string(),
                     };
                     
                     Err(ParseError::UnexpectedToken {
-                        expected: message.to_string(),
+                        expected: error_msg,
                         found: token.token_type.clone(),
                         line: token.line,
                         column: token.column,
                     })
                 }
             }
-            None => Err(ParseError::EOF {
-                expected: error_message.to_string(),
-                line: self.last_token.as_ref().map_or(0, |t| t.line),
-                column: self.last_token.as_ref().map_or(0, |t| t.column),
-            }),
+            None => {
+                // For EOF errors, also use the same expected pattern
+                let error_msg = match &expected_type {
+                    TokenType::RightParen => "Unclosed parenthesis".to_string(),
+                    TokenType::RightBracket => "Unclosed bracket".to_string(),
+                    TokenType::RightBrace => "Unclosed brace".to_string(),
+                    _ => error_message.to_string(),
+                };
+                
+                Err(ParseError::EOF {
+                    expected: error_msg,
+                    line: self.last_token.as_ref().map_or(0, |t| t.line),
+                    column: self.last_token.as_ref().map_or(0, |t| t.column),
+                })
+            }
         }
     }
 
@@ -3036,7 +3074,17 @@ impl Parser {
     fn check(&self, expected_type: TokenType) -> bool {
         match &self.current {
             Some(token) => {
-                std::mem::discriminant(&token.token_type) == std::mem::discriminant(&expected_type)
+                match (&token.token_type, &expected_type) {
+                    // For token types with associated data, just check the variant, not the value
+                    (TokenType::Identifier(_), TokenType::Identifier(_)) => true,
+                    (TokenType::IntLiteral(_), TokenType::IntLiteral(_)) => true,
+                    (TokenType::FloatLiteral(_), TokenType::FloatLiteral(_)) => true,
+                    (TokenType::StringLiteral(_), TokenType::StringLiteral(_)) => true,
+                    (TokenType::FString(_), TokenType::FString(_)) => true,
+                    (TokenType::RawString(_), TokenType::RawString(_)) => true,
+                    (TokenType::BytesLiteral(_), TokenType::BytesLiteral(_)) => true,
+                    _ => std::mem::discriminant(&token.token_type) == std::mem::discriminant(&expected_type)
+                }
             }
             None => false,
         }
