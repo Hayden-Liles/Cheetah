@@ -512,17 +512,8 @@ impl Parser {
                 let default = if self.match_token(TokenType::Assign) {
                     has_seen_default = true;
                     
-                    // Parse the default value expression - with special handling for string literals
-                    let default_expr = self.parse_expression()?;
-                    
-                    // After parsing the default value, make sure we're at a comma or closing paren
-                    if !self.check(TokenType::Comma) && !self.check(TokenType::RightParen) {
-                        return Err(ParseError::InvalidSyntax {
-                            message: "Expected comma or closing parenthesis after default value".to_string(),
-                            line: self.current.as_ref().map_or(param_pos.0, |t| t.line),
-                            column: self.current.as_ref().map_or(param_pos.1, |t| t.column),
-                        });
-                    }
+                    // Fixed: Use parse_or_test instead of parse_expression
+                    let default_expr = self.parse_or_test()?;
                     
                     Some(Box::new(default_expr))
                 } else {
@@ -918,7 +909,7 @@ impl Parser {
         }
         
         // Parse the first item (could be key:value or just a value)
-        let first_expr = self.parse_expression()?;
+        let first_expr = self.parse_or_test()?;  // Use parse_or_test instead of parse_expression
         
         // Check if this is a dictionary or a set
         if self.match_token(TokenType::Colon) {
@@ -928,7 +919,7 @@ impl Parser {
             
             // Add the first key-value pair
             keys.push(Some(Box::new(first_expr)));
-            let first_value = Box::new(self.parse_expression()?);
+            let first_value = Box::new(self.parse_or_test()?);  // Use parse_or_test here too
             values.push(first_value);
             
             // Check if this is a dict comprehension
@@ -994,8 +985,8 @@ impl Parser {
                     break;
                 }
                 
-                // Parse the next key
-                let key = self.parse_expression()?;
+                // Parse the next key - use parse_or_test() instead of parse_expression()
+                let key = self.parse_or_test()?;
                 
                 // We need to explicitly check for the colon
                 if !self.match_token(TokenType::Colon) {
@@ -1006,8 +997,8 @@ impl Parser {
                     });
                 }
                 
-                // Now parse the value
-                let value = self.parse_expression()?;
+                // Now parse the value - use parse_or_test() here too
+                let value = self.parse_or_test()?;
                 
                 keys.push(Some(Box::new(key)));
                 values.push(Box::new(value));
@@ -1072,7 +1063,6 @@ impl Parser {
                 })
             });
         } else {
-            // Regular set
             let mut elts = vec![Box::new(first_expr)];
             
             while self.match_token(TokenType::Comma) {
@@ -2303,15 +2293,14 @@ impl Parser {
                 
                 self.advance(); // Consume the identifier
                 
-                // Explicitly check for the Assign token without consuming it yet
-                let is_keyword = self.current.as_ref()
-                    .map_or(false, |t| matches!(t.token_type, TokenType::Assign));
+                // Explicitly check for the Assign token (=) without consuming it yet
+                let is_keyword = self.check(TokenType::Assign);
                 
                 if is_keyword {
                     self.advance(); // Consume the equals sign
                     
-                    // Parse the value expression
-                    let value = Box::new(self.parse_expression()?);
+                    // Fixed: Use parse_or_test instead of parse_expression
+                    let value = Box::new(self.parse_or_test()?);
                     keywords.push((Some(id_name), value));
                     saw_keyword = true;
                 } else if !saw_keyword {
