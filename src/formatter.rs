@@ -607,6 +607,39 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
             Stmt::Continue { line: _, column: _ } => {
                 self.write_line("continue");
             },
+            Stmt::Match { subject, cases, line: _, column: _ } => {
+                self.write_indented("match ");
+                self.visit_expr(&**subject);
+                self.write(":\n");
+                
+                self.increase_indent();
+                
+                for (pattern, guard, body) in cases {
+                    self.write_indented("case ");
+                    self.visit_expr(&**pattern);
+                    
+                    if let Some(guard_expr) = guard {
+                        self.write(" if ");
+                        self.visit_expr(&**guard_expr);
+                    }
+                    
+                    self.write(":\n");
+                    
+                    self.increase_indent();
+                    
+                    if body.is_empty() {
+                        self.write_line("pass");
+                    } else {
+                        for stmt in body {
+                            self.visit_stmt(&**stmt);
+                        }
+                    }
+                    
+                    self.decrease_indent();
+                }
+                
+                self.decrease_indent();
+            }
         }
     }
 

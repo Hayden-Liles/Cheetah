@@ -35,7 +35,7 @@ impl<'a> Lexer<'a> {
             "continue", "pass", "import", "from", "as", "True", "False", "None", 
             "and", "or", "not", "class", "with", "assert", "async", "await", "try", 
             "except", "finally", "raise", "lambda", "global", "nonlocal", "yield", 
-            "del", "is"
+            "del", "is", "match", "case"
         ] {
             keywords.insert(*kw);
         }

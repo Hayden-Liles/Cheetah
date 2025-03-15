@@ -508,6 +508,23 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             Stmt::Pass { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => {
                 // These statements don't introduce symbols
             },
+            Stmt::Match { subject, cases, .. } => {
+                // Visit the subject expression
+                self.visit_expr(subject);
+                
+                // Visit each case's pattern, guard, and body
+                for (pattern, guard, body) in cases {
+                    self.visit_expr(pattern);
+                    
+                    if let Some(guard_expr) = guard {
+                        self.visit_expr(guard_expr);
+                    }
+                    
+                    for stmt in body {
+                        self.visit_stmt(stmt);
+                    }
+                }
+            },
         }
     }
 

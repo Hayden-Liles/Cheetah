@@ -140,6 +140,12 @@ pub enum Stmt {
         line: usize,
         column: usize,
     },
+    Match {
+        subject: Box<Expr>,
+        cases: Vec<(Box<Expr>, Option<Box<Expr>>, Vec<Box<Stmt>>)>,
+        line: usize,
+        column: usize,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -475,6 +481,7 @@ impl fmt::Display for Stmt {
             Stmt::Pass { .. } => write!(f, "Pass"),
             Stmt::Break { .. } => write!(f, "Break"),
             Stmt::Continue { .. } => write!(f, "Continue"),
+            Stmt::Match { .. } => write!(f, "Match"),
         }
     }
 }
