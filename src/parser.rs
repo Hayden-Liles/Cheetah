@@ -2220,73 +2220,10 @@ impl Parser {
         }
     }
 
-    fn parse_atom_expr(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.parse_atom()?;
-
-        loop {
-            if self.match_token(TokenType::LeftParen) {
-                let line = expr.get_line();
-                let column = expr.get_column();
-                let (args, keywords) = self.parse_arguments()?;
-                self.consume(TokenType::RightParen, ")")?;
-
-                expr = Expr::Call {
-                    func: Box::new(expr),
-                    args,
-                    keywords,
-                    line,
-                    column,
-                };
-            } else if self.match_token(TokenType::Dot) {
-                let line = expr.get_line();
-                let column = expr.get_column();
-                let attr = self.consume_identifier("attribute name")?;
-
-                expr = Expr::Attribute {
-                    value: Box::new(expr),
-                    attr,
-                    ctx: ExprContext::Load,
-                    line,
-                    column,
-                };
-            } else if self.match_token(TokenType::LeftBracket) {
-                let line = expr.get_line();
-                let column = expr.get_column();
-                let slice = Box::new(self.parse_slice()?);
-                self.consume(TokenType::RightBracket, "]")?;
-
-                expr = Expr::Subscript {
-                    value: Box::new(expr),
-                    slice,
-                    ctx: ExprContext::Load,
-                    line,
-                    column,
-                };
-            } else {
-                break;
-            }
-        }
-
-        Ok(expr)
-    }
-
-    fn parse_arguments(&mut self) -> Result<(Vec<Box<Expr>>, Vec<(Option<String>, Box<Expr>)>), ParseError> {
+    fn parse_more_arguments(&mut self) -> Result<(Vec<Box<Expr>>, Vec<(Option<String>, Box<Expr>)>), ParseError> {
         let mut args = Vec::new();
         let mut keywords = Vec::new();
         let mut saw_keyword = false;
-    
-        if self.check(TokenType::RightParen) {
-            return Ok((args, keywords));
-        }
-        
-        if self.check(TokenType::Comma) {
-            let token = self.current.clone().unwrap();
-            return Err(ParseError::InvalidSyntax {
-                message: "Expected expression before comma".to_string(),
-                line: token.line,
-                column: token.column,
-            });
-        }
     
         loop {
             if self.match_token(TokenType::Multiply) {
@@ -2318,14 +2255,14 @@ impl Parser {
                 
                 self.advance(); // Consume the identifier
                 
-                // Explicitly check for the Assign token (=) without consuming it yet
+                // Explicitly check for the Assign token without consuming it yet
                 let is_keyword = self.check(TokenType::Assign);
                 
                 if is_keyword {
                     self.advance(); // Consume the equals sign
                     
-                    // Fixed: Use parse_or_test instead of parse_expression
-                    let value = Box::new(self.parse_or_test()?);
+                    // Parse the value expression
+                    let value = Box::new(self.parse_expression()?);
                     keywords.push((Some(id_name), value));
                     saw_keyword = true;
                 } else if !saw_keyword {
@@ -2368,6 +2305,278 @@ impl Parser {
                     message: "Expected expression between commas".to_string(), 
                     line: token.line,
                     column: token.column,
+                });
+            }
+        }
+    
+        Ok((args, keywords))
+    }
+
+    fn parse_atom_expr(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_atom()?;
+
+        loop {
+            if self.match_token(TokenType::LeftParen) {
+                // Function call
+                let line = expr.get_line();
+                let column = expr.get_column();
+                
+                // Empty argument list
+                if self.match_token(TokenType::RightParen) {
+                    expr = Expr::Call {
+                        func: Box::new(expr),
+                        args: Vec::new(),
+                        keywords: Vec::new(),
+                        line,
+                        column,
+                    };
+                    continue;  // Continue the loop to handle chained calls like f()()
+                }
+                
+                // Parse the first argument
+                let first_arg = self.parse_expression()?;
+                
+                // Check if it might be a keyword argument before boxing it
+                if self.check(TokenType::Assign) && matches!(&first_arg, Expr::Name { .. }) {
+                    // It's a keyword argument
+                    if let Expr::Name { id, .. } = first_arg {
+                        self.advance(); // Consume the equals sign
+                        let value = Box::new(self.parse_expression()?);
+                        
+                        let mut args = Vec::new();
+                        let mut keywords = vec![(Some(id), value)];
+                        
+                        if self.match_token(TokenType::Comma) {
+                            if !self.check(TokenType::RightParen) {
+                                let (more_args, kw_args) = self.parse_more_arguments()?;
+                                args.extend(more_args);
+                                keywords.extend(kw_args);
+                            }
+                        }
+                        
+                        self.consume(TokenType::RightParen, ")")?;
+                        
+                        expr = Expr::Call {
+                            func: Box::new(expr),
+                            args,
+                            keywords,
+                            line,
+                            column,
+                        };
+                    } else {
+                        unreachable!("We already checked this is a Name expression");
+                    }
+                } else {
+                    // It's a regular positional argument
+                    let mut args = vec![Box::new(first_arg)];
+                    let mut keywords = Vec::new();
+                    
+                    if self.match_token(TokenType::Comma) {
+                        if !self.check(TokenType::RightParen) {
+                            let (more_args, kw_args) = self.parse_more_arguments()?;
+                            args.extend(more_args);
+                            keywords = kw_args;
+                        }
+                    }
+                    
+                    self.consume(TokenType::RightParen, ")")?;
+                    
+                    expr = Expr::Call {
+                        func: Box::new(expr),
+                        args,
+                        keywords,
+                        line,
+                        column,
+                    };
+                }
+            } else if self.match_token(TokenType::Dot) {
+                // Attribute access
+                let line = expr.get_line();
+                let column = expr.get_column();
+                let attr = self.consume_identifier("attribute name")?;
+
+                expr = Expr::Attribute {
+                    value: Box::new(expr),
+                    attr,
+                    ctx: ExprContext::Load,
+                    line,
+                    column,
+                };
+            } else if self.match_token(TokenType::LeftBracket) {
+                // Subscript
+                let line = expr.get_line();
+                let column = expr.get_column();
+                let slice = Box::new(self.parse_slice()?);
+                self.consume(TokenType::RightBracket, "]")?;
+
+                expr = Expr::Subscript {
+                    value: Box::new(expr),
+                    slice,
+                    ctx: ExprContext::Load,
+                    line,
+                    column,
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_arguments(&mut self) -> Result<(Vec<Box<Expr>>, Vec<(Option<String>, Box<Expr>)>), ParseError> {
+        let mut args = Vec::new();
+        let mut keywords = Vec::new();
+        let mut saw_keyword = false;
+    
+        if self.check(TokenType::RightParen) {
+            return Ok((args, keywords));
+        }
+        
+        if self.check(TokenType::Comma) {
+            let token = self.current.clone().unwrap();
+            return Err(ParseError::InvalidSyntax {
+                message: "Expected expression before comma".to_string(),
+                line: token.line,
+                column: token.column,
+            });
+        }
+    
+        // Parse first argument
+        if self.match_token(TokenType::Multiply) {
+            // *args
+            let token = self.previous_token();
+            let value = Box::new(self.parse_expression()?);
+            
+            args.push(Box::new(Expr::Starred {
+                value,
+                ctx: ExprContext::Load,
+                line: token.line,
+                column: token.column,
+            }));
+            saw_keyword = true;
+        } else if self.match_token(TokenType::Power) {
+            // **kwargs
+            let arg = Box::new(self.parse_expression()?);
+            keywords.push((None, arg));
+            saw_keyword = true;
+        } else if self.check_identifier() {
+            // This might be a keyword argument or a positional argument
+            let id_token = self.current.clone().unwrap();
+            let id_line = id_token.line;
+            let id_column = id_token.column;
+            let id_name = match &id_token.token_type {
+                TokenType::Identifier(name) => name.clone(),
+                _ => unreachable!(),
+            };
+            
+            self.advance(); // Consume the identifier
+            
+            // Check if this is a keyword argument
+            if self.check(TokenType::Assign) {
+                self.advance(); // Consume the equals sign
+                let value = Box::new(self.parse_expression()?);
+                keywords.push((Some(id_name), value));
+                saw_keyword = true;
+            } else if !saw_keyword {
+                // Regular positional argument
+                args.push(Box::new(Expr::Name {
+                    id: id_name,
+                    ctx: ExprContext::Load,
+                    line: id_line,
+                    column: id_column,
+                }));
+            } else {
+                return Err(ParseError::InvalidSyntax {
+                    message: "Positional argument after keyword argument".to_string(),
+                    line: id_line,
+                    column: id_column,
+                });
+            }
+        } else if !saw_keyword {
+            // Normal positional argument
+            args.push(Box::new(self.parse_expression()?));
+        } else {
+            return Err(ParseError::InvalidSyntax {
+                message: "Positional argument after keyword argument".to_string(),
+                line: self.current.as_ref().unwrap().line,
+                column: self.current.as_ref().unwrap().column,
+            });
+        }
+    
+        // Parse remaining arguments
+        while self.match_token(TokenType::Comma) {
+            if self.check(TokenType::RightParen) {
+                break;
+            }
+            
+            if self.check(TokenType::Comma) {
+                let token = self.current.clone().unwrap();
+                return Err(ParseError::InvalidSyntax {
+                    message: "Expected expression between commas".to_string(), 
+                    line: token.line,
+                    column: token.column,
+                });
+            }
+            
+            if self.match_token(TokenType::Multiply) {
+                // *args
+                let token = self.previous_token();
+                let value = Box::new(self.parse_expression()?);
+                
+                args.push(Box::new(Expr::Starred {
+                    value,
+                    ctx: ExprContext::Load,
+                    line: token.line,
+                    column: token.column,
+                }));
+                saw_keyword = true;
+            } else if self.match_token(TokenType::Power) {
+                // **kwargs
+                let arg = Box::new(self.parse_expression()?);
+                keywords.push((None, arg));
+                saw_keyword = true;
+            } else if self.check_identifier() {
+                // This might be a keyword argument or a positional argument
+                let id_token = self.current.clone().unwrap();
+                let id_line = id_token.line;
+                let id_column = id_token.column;
+                let id_name = match &id_token.token_type {
+                    TokenType::Identifier(name) => name.clone(),
+                    _ => unreachable!(),
+                };
+                
+                self.advance(); // Consume the identifier
+                
+                // Check if this is a keyword argument
+                if self.check(TokenType::Assign) {
+                    self.advance(); // Consume the equals sign
+                    let value = Box::new(self.parse_expression()?);
+                    keywords.push((Some(id_name), value));
+                    saw_keyword = true;
+                } else if !saw_keyword {
+                    // Regular positional argument
+                    args.push(Box::new(Expr::Name {
+                        id: id_name,
+                        ctx: ExprContext::Load,
+                        line: id_line,
+                        column: id_column,
+                    }));
+                } else {
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Positional argument after keyword argument".to_string(),
+                        line: id_line,
+                        column: id_column,
+                    });
+                }
+            } else if !saw_keyword {
+                // Regular non-identifier expression as positional argument
+                args.push(Box::new(self.parse_expression()?));
+            } else {
+                return Err(ParseError::InvalidSyntax {
+                    message: "Positional argument after keyword argument".to_string(),
+                    line: self.current.as_ref().unwrap().line,
+                    column: self.current.as_ref().unwrap().column,
                 });
             }
         }
@@ -3026,6 +3235,15 @@ impl Parser {
     fn consume(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError> {
         match &self.current {
             Some(token) => {
+                // Special handling for function calls with keyword arguments
+                if matches!(expected_type, TokenType::RightParen) 
+                   && matches!(token.token_type, TokenType::Assign) 
+                   && self.last_token.as_ref().map_or(false, |t| matches!(t.token_type, TokenType::Identifier(_))) {
+                    // We're in a function call and we've encountered an equals sign after an identifier
+                    // This is likely a keyword argument, so don't treat it as an error
+                    return Ok(token.clone());
+                }
+                
                 // Improved token type comparison that doesn't consider associated data
                 let types_match = match (&token.token_type, &expected_type) {
                     (TokenType::Identifier(_), TokenType::Identifier(_)) |
