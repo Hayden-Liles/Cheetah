@@ -1613,6 +1613,11 @@ impl Parser {
                 line: *line,
                 column: *column,
             }),
+            Expr::Call { line, column, .. } => Err(ParseError::InvalidSyntax {
+                message: "Cannot assign to function call".to_string(),
+                line: *line,
+                column: *column,
+            }),
             _ => Err(ParseError::InvalidSyntax {
                 message: "Invalid assignment target".to_string(),
                 line: expr.get_line(),
@@ -2254,13 +2259,13 @@ impl Parser {
         let mut args = Vec::new();
         let mut keywords = Vec::new();
         let mut saw_keyword = false;
-
+    
         loop {
             if self.match_token(TokenType::Multiply) {
                 // Handle *args
                 let token = self.previous_token();
-                let value = Box::new(self.parse_expression()?); // Use parse_expression for consistency
-
+                let value = Box::new(self.parse_or_test()?); // Change from parse_expression to parse_or_test
+    
                 args.push(Box::new(Expr::Starred {
                     value,
                     ctx: ExprContext::Load,
@@ -2270,7 +2275,7 @@ impl Parser {
                 saw_keyword = true;
             } else if self.match_token(TokenType::Power) {
                 // Handle **kwargs
-                let arg = Box::new(self.parse_expression()?); // Use parse_expression for consistency
+                let arg = Box::new(self.parse_or_test()?); // Change from parse_expression to parse_or_test
                 keywords.push((None, arg));
                 saw_keyword = true;
             } else if self.check_identifier() {
@@ -2282,36 +2287,30 @@ impl Parser {
                     TokenType::Identifier(name) => name.clone(),
                     _ => unreachable!(),
                 };
-
+    
                 self.advance(); // Consume the identifier
-
+    
                 // Explicitly check for the Assign token without consuming it yet
                 let is_keyword = self.check(TokenType::Assign);
-
+    
                 if is_keyword {
                     self.advance(); // Consume the equals sign
-
+    
                     // Parse the value expression
-                    let value = Box::new(self.parse_expression()?); // Use parse_expression for consistency
+                    let value = Box::new(self.parse_or_test()?); // Change from parse_expression to parse_or_test
                     keywords.push((Some(id_name), value));
                     saw_keyword = true;
                 } else if !saw_keyword {
                     // Regular positional argument - use parse_expression to get the full expression
-                    // Don't directly construct a Name expression, as that might prevent binary operations
-
-                    // First, create a Name expression for the identifier
+                    // Create a Name expression for the identifier
                     let name_expr = Expr::Name {
                         id: id_name,
                         ctx: ExprContext::Load,
                         line: id_line,
                         column: id_column,
                     };
-
-                    // Now continue parsing as if we've already parsed this part
-                    // This allows us to handle binary operations after the identifier
-                    // NOTE: This is a simplified approach. In practice, you would need a more complex solution.
-
-                    // For now, just add the name expression to args
+    
+                    // Now add the name expression to args
                     args.push(Box::new(name_expr));
                 } else {
                     return Err(ParseError::InvalidSyntax {
@@ -2322,7 +2321,7 @@ impl Parser {
                 }
             } else if !saw_keyword {
                 // Normal positional argument
-                args.push(Box::new(self.parse_expression()?)); // Use parse_expression for consistency
+                args.push(Box::new(self.parse_or_test()?)); // Change from parse_expression to parse_or_test
             } else {
                 return Err(ParseError::InvalidSyntax {
                     message: "Positional argument after keyword argument".to_string(),
@@ -2330,15 +2329,15 @@ impl Parser {
                     column: self.current.as_ref().unwrap().column,
                 });
             }
-
+    
             if !self.match_token(TokenType::Comma) {
                 break;
             }
-
+    
             if self.check(TokenType::RightParen) {
                 break;
             }
-
+    
             if self.check(TokenType::Comma) {
                 let token = self.current.clone().unwrap();
                 return Err(ParseError::InvalidSyntax {
@@ -2348,7 +2347,7 @@ impl Parser {
                 });
             }
         }
-
+    
         Ok((args, keywords))
     }
 
@@ -2377,7 +2376,7 @@ impl Parser {
                 if self.match_token(TokenType::Multiply) {
                     // *args
                     let star_token = self.previous_token();
-                    let value = Box::new(self.parse_expression()?);
+                    let value = Box::new(self.parse_or_test()?);
 
                     let mut args = vec![Box::new(Expr::Starred {
                         value,
@@ -2407,7 +2406,7 @@ impl Parser {
                 } else if self.match_token(TokenType::Power) {
                     // **kwargs
                     let _star_token = self.previous_token();
-                    let value = Box::new(self.parse_expression()?);
+                    let value = Box::new(self.parse_or_test()?);
 
                     let args = Vec::new();
                     let mut keywords = vec![(None, value)];
@@ -2432,14 +2431,14 @@ impl Parser {
                 } else {
                     // Parse the first argument using parse_expression
                     // This allows binary operations like n-1 to be parsed correctly
-                    let first_arg = self.parse_expression()?;
+                    let first_arg = self.parse_or_test()?;
 
                     // Check if it might be a keyword argument before boxing it
                     if self.check(TokenType::Assign) && matches!(&first_arg, Expr::Name { .. }) {
                         // It's a keyword argument
                         if let Expr::Name { id, .. } = first_arg {
                             self.advance(); // Consume the equals sign
-                            let value = Box::new(self.parse_expression()?);
+                            let value = Box::new(self.parse_or_test()?);
 
                             let mut args = Vec::new();
                             let mut keywords = vec![(Some(id), value)];
