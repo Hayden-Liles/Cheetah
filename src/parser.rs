@@ -406,12 +406,37 @@ impl Parser {
         let mut has_kwarg = false;
         let mut has_vararg = false;
         let mut has_seen_default = false;
+        let mut has_pos_only_separator = false;
         
         if self.check(TokenType::RightParen) {
             return Ok(params);
         }
         
         loop {
+            // Handle positional-only parameter separator (/)
+            if self.match_token(TokenType::Divide) {
+                has_pos_only_separator = true;
+                
+                // After the / we need either a comma or closing parenthesis
+                if !self.check(TokenType::Comma) && !self.check(TokenType::RightParen) {
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Expected comma or closing parenthesis after '/'".to_string(),
+                        line: self.current.as_ref().map_or(0, |t| t.line),
+                        column: self.current.as_ref().map_or(0, |t| t.column),
+                    });
+                }
+                
+                if self.match_token(TokenType::Comma) {
+                    if self.check(TokenType::RightParen) {
+                        break;
+                    }
+                    continue;
+                } else {
+                    // It's a closing parenthesis
+                    break;
+                }
+            }
+            
             if has_kwarg {
                 return Err(ParseError::InvalidSyntax {
                     message: "Parameter after **kwargs is not allowed".to_string(),
@@ -512,12 +537,12 @@ impl Parser {
                 let default = if self.match_token(TokenType::Assign) {
                     has_seen_default = true;
                     
-                    // Fixed: Use parse_or_test instead of parse_expression
+                    // Parse the default value using parse_or_test
                     let default_expr = self.parse_or_test()?;
                     
                     Some(Box::new(default_expr))
                 } else {
-                    if has_seen_default && !has_kwarg && !has_vararg {
+                    if has_seen_default && !has_kwarg && !has_vararg && !has_pos_only_separator {
                         println!("Warning: non-default parameter after default parameter at line {}, column {}",
                                 param_pos.0, param_pos.1);
                     }
