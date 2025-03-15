@@ -38,6 +38,8 @@ pub enum TokenType {
     Yield,
     Del,
     Is,
+    Match,
+    Case,
     
     // Identifiers and literals
     Identifier(String),

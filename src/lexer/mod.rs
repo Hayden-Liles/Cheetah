@@ -490,6 +490,8 @@ impl<'a> Lexer<'a> {
                 "nonlocal" => TokenType::Nonlocal,
                 "yield" => TokenType::Yield,
                 "del" => TokenType::Del,
+                "match" => TokenType::Match,
+                "case" => TokenType::Case,
                 _ => TokenType::Identifier(text.to_string()),
             }
         } else {

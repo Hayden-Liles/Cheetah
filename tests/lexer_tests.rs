@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use cheetah::lexer::{Lexer, LexerConfig, Token, TokenType};
 
     #[test]
     fn test_indentation() {
@@ -1518,4 +1518,318 @@ bytes_data = b"\x00\x01\x02"
         assert!(lexer.get_errors().len() >= 2, "Expected 2+ errors, got: {:?}", lexer.get_errors());
         assert!(tokens.iter().any(|t| matches!(&t.token_type, TokenType::Identifier(s) if s == "x")));
     }
+
+    #[test]
+fn test_match_and_case_keywords() {
+    // Test basic match/case structure
+    let input = "
+match value:
+    case 1:
+        print('one')
+    case 2:
+        print('two')
+    case _:
+        print('default')
+";
+    let mut lexer = Lexer::new(input);
+    let tokens = lexer.tokenize();
+    
+    // Extract the token types for easier comparison
+    let token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
+    
+    // Find the match token
+    let match_token = tokens.iter().find(|t| 
+        matches!(&t.token_type, TokenType::Match)
+    ).unwrap();
+    
+    // Find all case tokens
+    let case_tokens: Vec<&Token> = tokens.iter().filter(|t| 
+        matches!(t.token_type, TokenType::Case)
+    ).collect();
+    
+    // Verify match and case are recognized as keywords
+    assert_eq!(match_token.lexeme, "match");
+    assert_eq!(case_tokens.len(), 3); // Should find 3 case keywords
+    
+    // Verify correct tokenization of the rest of the structure
+    let indent_count = tokens.iter().filter(|t| matches!(t.token_type, TokenType::Indent)).count();
+    let dedent_count = tokens.iter().filter(|t| matches!(t.token_type, TokenType::Dedent)).count();
+    
+    // In the Python indentation model, there are 4 indentation levels here:
+    // 1. The initial level at "match value:"
+    // 2. The indentation for each "case" statement
+    // 3. The further indentation for each "print" statement
+    // 4. Plus another level that captures the end of indented blocks
+    assert_eq!(indent_count, 4, "Should have 4 indentation levels");
+    assert_eq!(dedent_count, 4, "Should have 4 dedentation levels");
+}
+
+#[test]
+fn test_complex_pattern_matching() {
+    // Test more complex pattern matching syntax
+    let input = "
+match point:
+    case (0, 0):
+        print('Origin')
+    case (0, y):
+        print(f'Y={y}')
+    case (x, 0):
+        print(f'X={x}')
+    case (x, y) if x == y:
+        print(f'X=Y={x}')
+    case (x, y):
+        print(f'X={x}, Y={y}')
+    case _:
+        print('Not a point')
+";
+    let mut lexer = Lexer::new(input);
+    let tokens = lexer.tokenize();
+    
+    // Verify complex pattern matching tokens
+    let case_count = tokens.iter().filter(|t| 
+        matches!(t.token_type, TokenType::Case)
+    ).count();
+    
+    assert_eq!(case_count, 6, "Should have 6 case patterns");
+    
+    // Check for parentheses in pattern matching
+    let left_paren_count = tokens.iter().filter(|t| 
+        matches!(t.token_type, TokenType::LeftParen)
+    ).count();
+    
+    let right_paren_count = tokens.iter().filter(|t| 
+        matches!(t.token_type, TokenType::RightParen)
+    ).count();
+    
+    assert_eq!(left_paren_count, right_paren_count, "Parentheses should be balanced");
+    assert!(left_paren_count >= 5, "Should have at least 5 sets of parentheses for patterns");
+    
+    // Check for if guard in pattern matching
+    let if_in_case = tokens.iter()
+        .enumerate()
+        .filter(|(_, t)| matches!(t.token_type, TokenType::If))
+        .any(|(i, _)| {
+            // Check if there's a case keyword before this if
+            tokens[..i].iter().rev().any(|t| 
+                matches!(t.token_type, TokenType::Case)
+            )
+        });
+    
+    assert!(if_in_case, "Should have at least one if guard in a case pattern");
+}
+
+#[test]
+fn test_walrus_operator_in_patterns() {
+    // Test walrus operator in pattern context
+    let input = "
+match data:
+    case [x, y] if (z := x + y) > 10:
+        print(f'Sum {z} exceeds 10')
+    case [x, y] if (z := x + y) <= 10:
+        print(f'Sum {z} is 10 or less')
+";
+    let mut lexer = Lexer::new(input);
+    let tokens = lexer.tokenize();
+    
+    // Find walrus operators
+    let walrus_count = tokens.iter().filter(|t| 
+        matches!(t.token_type, TokenType::Walrus)
+    ).count();
+    
+    assert_eq!(walrus_count, 2, "Should find 2 walrus operators");
+    
+    // Make sure they're in the right context (after case patterns)
+    let case_indices: Vec<usize> = tokens.iter()
+        .enumerate()
+        .filter(|(_, t)| matches!(t.token_type, TokenType::Case))
+        .map(|(i, _)| i)
+        .collect();
+    
+    let walrus_indices: Vec<usize> = tokens.iter()
+        .enumerate()
+        .filter(|(_, t)| matches!(t.token_type, TokenType::Walrus))
+        .map(|(i, _)| i)
+        .collect();
+    
+    // For each walrus operator, check that there's a case keyword before it
+    for walrus_idx in &walrus_indices {
+        let has_case_before = case_indices.iter().any(|case_idx| case_idx < walrus_idx);
+        assert!(has_case_before, "Walrus operator should appear after a case keyword");
+    }
+}
+
+#[test]
+fn test_nested_match_statements() {
+    // Test nested match statements
+    let input = "
+def process(data):
+    match data:
+        case {'type': 'user', 'info': info}:
+            match info:
+                case {'level': level} if level > 5:
+                    print('High level user')
+                case {'level': _}:
+                    print('Regular user')
+                case _:
+                    print('Unknown user type')
+        case {'type': 'admin'}:
+            print('Admin access')
+        case _:
+            print('Unknown data format')
+";
+    let mut lexer = Lexer::new(input);
+    let tokens = lexer.tokenize();
+    
+    // Find all match keywords
+    let match_tokens: Vec<&Token> = tokens.iter().filter(|t| 
+        matches!(t.token_type, TokenType::Match)
+    ).collect();
+    
+    assert_eq!(match_tokens.len(), 2, "Should find 2 match keywords");
+    
+    // Check indentation nesting
+    let indent_indices: Vec<usize> = tokens.iter()
+        .enumerate()
+        .filter(|(_, t)| matches!(t.token_type, TokenType::Indent))
+        .map(|(i, _)| i)
+        .collect();
+    
+    let dedent_indices: Vec<usize> = tokens.iter()
+        .enumerate()
+        .filter(|(_, t)| matches!(t.token_type, TokenType::Dedent))
+        .map(|(i, _)| i)
+        .collect();
+    
+    assert_eq!(indent_indices.len(), dedent_indices.len(), 
+               "Indentation and dedentation should be balanced");
+    assert!(indent_indices.len() >= 3, "Should have at least 3 levels of indentation");
+}
+
+#[test]
+fn test_structural_pattern_matching() {
+    // Test structural pattern matching with complex patterns
+    let input = "
+match command:
+    case ['quit']:
+        print('Exiting')
+    case ['load', filename]:
+        print(f'Loading {filename}')
+    case ['save', filename]:
+        print(f'Saving {filename}')
+    case ['search', *keywords]:
+        print(f'Searching for {keywords}')
+    case ['filter', name, *args, **kwargs]:
+        print(f'Filtering by {name}')
+    case _:
+        print('Unknown command')
+";
+    let mut lexer = Lexer::new(input);
+    let tokens = lexer.tokenize();
+    
+    // Find all case patterns
+    let case_tokens: Vec<&Token> = tokens.iter()
+        .filter(|t| matches!(t.token_type, TokenType::Case))
+        .collect();
+    
+    assert_eq!(case_tokens.len(), 6, "Should have 6 case patterns");
+    
+    // Check for pattern elements
+    let left_bracket_count = tokens.iter()
+        .filter(|t| matches!(t.token_type, TokenType::LeftBracket))
+        .count();
+    
+    let right_bracket_count = tokens.iter()
+        .filter(|t| matches!(t.token_type, TokenType::RightBracket))
+        .count();
+    
+    assert_eq!(left_bracket_count, right_bracket_count, 
+              "Should have balanced brackets for list patterns");
+    assert!(left_bracket_count >= 5, "Should have at least 5 list patterns");
+    
+    // Check for star expressions in patterns
+    let multiply_tokens = tokens.iter()
+        .filter(|t| matches!(t.token_type, TokenType::Multiply))
+        .count();
+    
+    assert!(multiply_tokens >= 2, "Should have at least 2 star expressions in patterns");
+    
+    // Check for double star expressions
+    let power_tokens = tokens.iter()
+        .filter(|t| matches!(t.token_type, TokenType::Power))
+        .count();
+    
+    assert!(power_tokens >= 1, "Should have at least 1 double star expression in patterns");
+}
+
+#[test]
+fn test_advanced_indent_consistency() {
+    // Test various indentation patterns and edge cases
+    let input = "
+def func1():
+    # 4 spaces
+    print('Level 1')
+    
+    if condition:
+        # 8 spaces
+        print('Level 2')
+        
+        for item in items:
+            # 12 spaces
+            print('Level 3')
+            
+            # Empty lines shouldn't affect indentation
+
+            # Comment at same indentation
+            print('Still level 3')
+            
+        # Back to 8 spaces
+        print('Back to level 2')
+        
+    # Back to 4 spaces
+    print('Back to level 1')
+
+# No indentation
+print('No indentation')
+";
+    let mut lexer = Lexer::new(input);
+    let tokens = lexer.tokenize();
+    
+    // Extract newlines and indentation changes
+    let structural_tokens: Vec<TokenType> = tokens.iter()
+        .filter(|t| matches!(t.token_type, 
+                            TokenType::Indent | 
+                            TokenType::Dedent | 
+                            TokenType::Newline))
+        .map(|t| t.token_type.clone())
+        .collect();
+    
+    // Count indentation levels
+    let indent_count = structural_tokens.iter()
+        .filter(|t| matches!(t, TokenType::Indent))
+        .count();
+    
+    let dedent_count = structural_tokens.iter()
+        .filter(|t| matches!(t, TokenType::Dedent))
+        .count();
+    
+    assert_eq!(indent_count, dedent_count, 
+              "Should have balanced indentation (equal indents and dedents)");
+    assert_eq!(indent_count, 3, "Should have exactly 3 indentation levels");
+    
+    // Verify print statements at different levels
+    let print_tokens: Vec<&Token> = tokens.iter()
+        .filter(|t| matches!(&t.token_type, TokenType::Identifier(s) if s == "print"))
+        .collect();
+    
+    // Corrected the expected count to 7 print statements
+    assert_eq!(print_tokens.len(), 7, "Should have 7 print statements");
+    
+    // Check that line numbers are increasing
+    let mut prev_line = 0;
+    for token in print_tokens {
+        assert!(token.line > prev_line, 
+               "Line numbers should be strictly increasing");
+        prev_line = token.line;
+    }
+}
 }
