@@ -419,6 +419,29 @@ y = 2  # Wrong indentation
         }
 
         #[test]
+        fn test_dict_parsing_debug() {
+            // Empty dictionary
+            println!("Testing empty dictionary");
+            assert_parses("{}");
+            
+            // Single key-value pair
+            println!("Testing single key-value pair");
+            assert_parses("{1: 2}");
+            
+            // Testing with a string key
+            println!("Testing with string key");
+            assert_parses("{\"key\": \"value\"}");
+            
+            // Dictionary with two key-value pairs - the problematic case
+            println!("Testing dictionary with two key-value pairs");
+            assert_parses("{1: 2, 3: 4}");
+            
+            // Dictionary with nested dictionary
+            println!("Testing nested dictionary");
+            assert_parses("{1: {2: 3}}");
+        }
+
+        #[test]
         fn test_data_structures() {
             // Lists
             assert_parses("[]");
@@ -751,26 +774,472 @@ def foo(a, *, b=1):
         }
     }
 
-    #[test]
-    fn test_dict_parsing_debug() {
-        // Empty dictionary
-        println!("Testing empty dictionary");
-        assert_parses("{}");
+    mod advanced_expression_tests {
+        use super::*;
+    
+        #[test]
+        fn test_operator_precedence() {
+            // Test complex precedence cases
+            assert_parses("1 + 2 * 3 - 4 / 5");
+            assert_parses("1 + 2 * (3 - 4) / 5");
+            assert_parses("1 << 2 + 3 & 4 | 5 ^ 6");
+            assert_parses("(1 << 2) + (3 & 4) | (5 ^ 6)");
+            
+            // Bitwise operations precedence
+            assert_parses("a | b & c ^ d");
+            assert_parses("a | (b & c) ^ d");
+            
+            // Power operator precedence (right associative)
+            assert_parses("2 ** 3 ** 4");  // Should parse as 2 ** (3 ** 4)
+            assert_parses("(2 ** 3) ** 4");
+        }
+    
+        #[test]
+        fn test_chained_comparisons() {
+            // Simple chained comparison
+            assert_parses("a < b <= c");
+            
+            // Multiple chained comparisons
+            assert_parses("a < b <= c == d != e > f >= g");
+            
+            // Chained comparisons with other operations
+            assert_parses("a + b < c * d <= e - f");
+            
+            // 'is' and 'in' operators
+            assert_parses("a is b is not c");
+            assert_parses("a in b not in c");
+            assert_parses("a is not b in c");
+        }
+    
+        #[test]
+        fn test_formatted_strings() {
+            // Basic f-string
+            assert_parses("f\"Hello, {name}!\"");
+            
+            // f-string with expressions
+            assert_parses("f\"Result: {2 + 3 * 4}\"");
+            
+            // Nested f-strings
+            assert_parses("f\"This is {f'nested {inner}'}\"");
+            
+            // f-string with dictionary access
+            assert_parses("f\"Value: {data['key']}\"");
+            
+            // f-string with function calls
+            assert_parses("f\"Calculated: {calculate(a, b=c)}\"");
+            
+            // f-string with conversions
+            assert_parses("f\"Binary: {value!r:>10}\"");
+        }
         
-        // Single key-value pair
-        println!("Testing single key-value pair");
-        assert_parses("{1: 2}");
+        #[test]
+        fn test_complex_comprehensions() {
+            // Nested comprehensions
+            assert_parses("[x for x in [y for y in range(5)]]");
+            
+            // Multiple for clauses with conditions
+            assert_parses("[x+y for x in range(5) if x % 2 == 0 for y in range(3) if y > 0]");
+            
+            // Dictionary comprehension with complex expressions
+            assert_parses("{k: v**2 for k, v in zip(keys, values) if k not in exclude}");
+            
+            // Set comprehension with function calls
+            assert_parses("{func(x) for x in items if pred(x)}");
+            
+            // Generator expression with complex conditions
+            assert_parses("(x for x in data if x.value > threshold and x.enabled)");
+        }
         
-        // Testing with a string key
-        println!("Testing with string key");
-        assert_parses("{\"key\": \"value\"}");
-        
-        // Dictionary with two key-value pairs - the problematic case
-        println!("Testing dictionary with two key-value pairs");
-        assert_parses("{1: 2, 3: 4}");
-        
-        // Dictionary with nested dictionary
-        println!("Testing nested dictionary");
-        assert_parses("{1: {2: 3}}");
+        #[test]
+        fn test_ellipsis() {
+            // Ellipsis in subscripts
+            assert_parses("array[...]");
+            assert_parses("array[..., 0]");
+            assert_parses("array[0, ...]");
+            
+            // Ellipsis as expression
+            assert_parses("x = ...");
+            
+            // Ellipsis in function call
+            assert_parses("func(...)");
+        }
     }
+
+    mod modern_syntax_tests {
+        use super::*;
+        
+        #[test]
+        fn test_walrus_operator() {
+            // Simple walrus assignment
+            assert_parses("if (n := len(items)) > 0: pass");
+            
+            // Walrus in comprehension
+            assert_parses("[x for x in items if (y := f(x)) > 0]");
+            
+            // Walrus in while loop condition
+            assert_parses("while (line := file.readline()): pass");
+            
+            // Nested walrus expressions
+            assert_parses("if (a := (b := value())) > 0: pass");
+            
+            // Multiple walrus expressions
+            assert_parses("if (a := value_a()) and (b := value_b()): pass");
+        }
+        
+        #[test]
+        fn test_positional_only_arguments() {
+            assert_parses("def func(a, b, /, c, d, *, e, f): pass");
+            assert_parses("def func(a, b=1, /, c=2, *, d=3): pass");
+            assert_parses("def func(a, b, /): pass");
+        }
+        
+        #[test]
+        fn test_async_await_syntax() {
+            // Async function
+            assert_parses("async def fetch(url): pass");
+            
+            // Async with
+            assert_parses("async with session.get(url) as response: pass");
+            
+            // Async for
+            assert_parses("async for item in collection: pass");
+            
+            // Await expression
+            assert_parses("result = await coroutine()");
+            
+            // Await in comprehension
+            assert_parses("[await coroutine() for coroutine in coroutines]");
+            
+            // Complex async function
+            assert_parses(
+                "async def process():\n    async with lock:\n        async for item in queue:\n            await process_item(item)"
+            );
+        }
+        
+        #[test]
+        fn test_type_annotations() {
+            // Basic function annotations
+            assert_parses("def func(a: int, b: str) -> bool: pass");
+            
+            // Generic type annotations
+            assert_parses("def func(a: List[int], b: Dict[str, Any]) -> Optional[int]: pass");
+            
+            // Union types
+            assert_parses("def func(a: Union[int, str]) -> None: pass");
+            
+            // Variable annotations
+            assert_parses("x: int = 5");
+            assert_parses("y: List[Dict[str, int]] = []");
+            
+            // Class variable annotations
+            assert_parses("class Test:\n    x: int\n    y: str = 'default'");
+            
+            // Callable types
+            assert_parses("handler: Callable[[int, str], bool] = process_item");
+        }
+    }
+
+    mod advanced_function_class_tests {
+        use super::*;
+        
+        #[test]
+        fn test_nested_functions() {
+            // Simple nested function
+            assert_parses(
+                "def outer():\n    def inner():\n        return 42\n    return inner()"
+            );
+            
+            // Multiple levels of nesting
+            assert_parses(
+                "def level1():\n    def level2():\n        def level3():\n            return 42\n        return level3()\n    return level2()"
+            );
+            
+            // Nested function with closure
+            assert_parses(
+                "def make_adder(x):\n    def adder(y):\n        return x + y\n    return adder"
+            );
+            
+            // Nested function with nonlocal
+            assert_parses(
+                "def counter():\n    count = 0\n    def increment():\n        nonlocal count\n        count += 1\n        return count\n    return increment"
+            );
+        }
+        
+        #[test]
+        fn test_complex_decorators() {
+            // Multiple decorators
+            assert_parses(
+                "@dec1\n@dec2\n@dec3\ndef func(): pass"
+            );
+            
+            // Decorator with arguments
+            assert_parses(
+                "@decorator(arg1, arg2, keyword=value)\ndef func(): pass"
+            );
+            
+            // Decorator with complex expression
+            assert_parses(
+                "@decorator.method().other()\ndef func(): pass"
+            );
+            
+            // Class method decorators
+            assert_parses(
+                "class Test:\n    @classmethod\n    def cls_method(cls): pass\n    @staticmethod\n    def static_method(): pass"
+            );
+            
+            // Decorators on class
+            assert_parses(
+                "@singleton\nclass Unique: pass"
+            );
+        }
+        
+        #[test]
+        fn test_complex_class_inheritance() {
+            // Multiple base classes
+            assert_parses(
+                "class Derived(Base1, Base2, Base3): pass"
+            );
+            
+            // Inheritance with keyword arguments
+            assert_parses(
+                "class Derived(Base, metaclass=Meta): pass"
+            );
+            
+            // Inheritance with complex expressions
+            assert_parses(
+                "class Derived(get_base_class()): pass"
+            );
+            
+            // Multiple inheritance with keyword arguments
+            assert_parses(
+                "class Derived(Base1, Base2, metaclass=Meta, **kwargs): pass"
+            );
+        }
+        
+        #[test]
+        fn test_generator_functions() {
+            // Simple generator with yield
+            assert_parses(
+                "def gen():\n    yield 1\n    yield 2\n    yield 3"
+            );
+            
+            // Generator with yield from
+            assert_parses(
+                "def gen():\n    yield from range(10)\n    yield from other_gen()"
+            );
+            
+            // Generator with yield expressions
+            assert_parses(
+                "def gen():\n    x = yield\n    y = yield x\n    yield x + y"
+            );
+            
+            // Async generator
+            assert_parses(
+                "async def agen():\n    await asyncio.sleep(1)\n    yield 42"
+            );
+        }
+        
+        #[test]
+        fn test_complex_lambda() {
+            // Lambda with complex expression
+            assert_parses(
+                "lambda x: x * 2 + 3 if x > 0 else x - 1"
+            );
+            
+            // Lambda with multiple arguments
+            assert_parses(
+                "lambda x, y, z=1, *args, **kwargs: sum([x, y, z]) + sum(args) + sum(kwargs.values())"
+            );
+            
+            // Nested lambdas
+            assert_parses(
+                "lambda x: lambda y: x + y"
+            );
+            
+            // Lambda in a function call
+            assert_parses(
+                "map(lambda x: x.strip(), lines)"
+            );
+        }
+    }
+
+    mod advanced_error_tests {
+        use super::*;
+        
+        #[test]
+        fn test_syntax_edge_cases() {
+            // Multiple repeated operators
+            assert_parse_fails("x = 1 ++ 2");  // Python doesn't have ++
+            
+            // Statement with no effect
+            assert_parse_fails("1 + 2");  // This is valid in Python but could be an error
+            
+            // Yield outside function
+            assert_parse_fails("yield 1");  // Only allowed inside a function
+            
+            // Misplaced keywords
+            assert_parse_fails("def = 10");  // Reserved keyword as variable
+            assert_parse_fails("if = 10");   // Reserved keyword as variable
+            
+            // Mixing tabs and spaces in indentation
+            assert_parse_fails("if x:\n\tpass\n    pass");
+        }
+        
+        #[test]
+        fn test_invalid_control_flow() {
+            // Return outside function
+            assert_parse_fails("return 42");
+            
+            // Break outside loop
+            assert_parse_fails("break");
+            
+            // Continue outside loop
+            assert_parse_fails("continue");
+            
+            // Else without if, for, or while
+            assert_parse_fails("else: pass");
+        }
+        
+        #[test]
+        fn test_invalid_decorators() {
+            // Decorator on invalid statement
+            assert_parse_fails("@decorator\nx = 10");
+            
+            // Invalid decorator expression
+            assert_parse_fails("@1 + 2\ndef func(): pass");
+        }
+        
+        #[test]
+        fn test_invalid_augmented_assignment() {
+            // Augmented assignment to literals
+            assert_parse_fails("42 += 1");
+            
+            // Augmented assignment to expressions
+            assert_parse_fails("(a + b) += 1");
+            
+            // Chained augmented assignment
+            assert_parse_fails("x += y += 1");
+        }
+        
+        #[test]
+        fn test_incomplete_constructs() {
+            // Incomplete if statement
+            assert_parse_fails("if :");
+            
+            // Incomplete for statement
+            assert_parse_fails("for x in :");
+            
+            // Incomplete function definition
+            assert_parse_fails("def func(");
+            
+            // Incomplete class
+            assert_parse_fails("class Test(");
+        }
+    }
+
+    mod advanced_statement_tests {
+        use super::*;
+        
+        #[test]
+        fn test_complex_imports() {
+            // Import with complex dotted names
+            assert_parses("import module.submodule.component");
+            
+            // Multiple dotted imports
+            assert_parses("import module1.sub1, module2.sub2 as alias2");
+            
+            // From import with multiple dotted levels
+            assert_parses("from module.submodule import item1, item2");
+            
+            // From import with relative imports
+            assert_parses("from ..module import item");
+            assert_parses("from . import item");
+            
+            // From import with wildcards in parentheses
+            assert_parses("from module import (item1, item2,\n                    item3, item4)");
+        }
+        
+        #[test]
+        fn test_nonlocal_global() {
+            // Global statements
+            assert_parses("def func():\n    global var1, var2\n    var1 = 1\n    var2 = 2");
+            
+            // Nonlocal statements
+            assert_parses("def outer():\n    x = 1\n    def inner():\n        nonlocal x\n        x = 2\n    return inner");
+            
+            // Global and nonlocal together
+            assert_parses("def outer():\n    global g\n    x = 1\n    def inner():\n        nonlocal x\n        global g\n        g = x = 2");
+            
+            // Single variable declarations
+            assert_parses("def func():\n    global x\n    x = 1");
+        }
+        
+        #[test]
+        fn test_complex_assignments() {
+            // Unpacking assignments
+            assert_parses("a, b, c = [1, 2, 3]");
+            assert_parses("a, b, c = func()");
+            
+            // Nested unpacking
+            assert_parses("(a, b), (c, d) = [(1, 2), (3, 4)]");
+            assert_parses("[a, [b, c], d] = [1, [2, 3], 4]");
+            
+            // Star unpacking
+            assert_parses("a, *b, c = range(5)");
+            assert_parses("*a, = b");
+            
+            // Assignments with complex targets
+            assert_parses("obj.attr = value");
+            assert_parses("obj['key'] = value");
+            assert_parses("obj.attr['key'] = value");
+        }
+        
+        #[test]
+        fn test_complex_with_statements() {
+            // Multiple context managers
+            assert_parses("with ctx1() as a, ctx2() as b: pass");
+            
+            // With statement with multiple variables
+            assert_parses("with open('file') as f1, open('file2') as f2: pass");
+            
+            // Nested with statements
+            assert_parses("with ctx1():\n    with ctx2():\n        pass");
+            
+            // With statement without as
+            assert_parses("with ctx(): pass");
+            
+            // Async with
+            assert_parses("async def func():\n    async with lock:\n        pass");
+        }
+        
+        #[test]
+        fn test_match_case_statements() {
+            // Basic match-case
+            assert_parses(
+                "match value:\n    case 1:\n        return 'one'\n    case 2:\n        return 'two'\n    case _:\n        return 'other'"
+            );
+            
+            // Pattern matching with destructuring
+            assert_parses(
+                "match point:\n    case (x, y):\n        return x + y"
+            );
+            
+            // Pattern matching with class patterns
+            assert_parses(
+                "match shape:\n    case Circle(radius=r):\n        return math.pi * r * r\n    case Rectangle(width=w, height=h):\n        return w * h"
+            );
+            
+            // Pattern matching with alternatives
+            assert_parses(
+                "match command:\n    case 'quit' | 'exit':\n        return EXIT\n    case 'restart':\n        return RESTART"
+            );
+            
+            // Pattern matching with guards
+            assert_parses(
+                "match point:\n    case Point(x, y) if x == y:\n        return 'diagonal'\n    case Point():\n        return 'not diagonal'"
+            );
+        }
+    }
+
+    
 }
