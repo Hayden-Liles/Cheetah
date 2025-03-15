@@ -676,6 +676,12 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             Expr::NameConstant { .. } | Expr::Ellipsis { .. } | 
             Expr::Constant { .. } | Expr::FormattedValue { .. } | 
             Expr::JoinedStr { .. } => {},
+            Expr::NamedExpr { target, value, .. } => {
+                // Visit the value first
+                self.visit_expr(value);
+                // Visit target as a definition
+                self.visit_expr_as_target(target);
+            },
         }
     }
 

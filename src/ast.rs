@@ -8,7 +8,7 @@ pub enum Stmt {
         body: Vec<Box<Stmt>>,
         decorator_list: Vec<Box<Expr>>,
         returns: Option<Box<Expr>>,
-        is_async: bool,     // For async functions
+        is_async: bool, // For async functions
         line: usize,
         column: usize,
     },
@@ -56,7 +56,7 @@ pub enum Stmt {
         iter: Box<Expr>,
         body: Vec<Box<Stmt>>,
         orelse: Vec<Box<Stmt>>,
-        is_async: bool,     // For async for loops
+        is_async: bool, // For async for loops
         line: usize,
         column: usize,
     },
@@ -77,7 +77,7 @@ pub enum Stmt {
     With {
         items: Vec<(Box<Expr>, Option<Box<Expr>>)>,
         body: Vec<Box<Stmt>>,
-        is_async: bool,     // For async with statements
+        is_async: bool, // For async with statements
         line: usize,
         column: usize,
     },
@@ -320,6 +320,12 @@ pub enum Expr {
         line: usize,
         column: usize,
     },
+    NamedExpr {
+        target: Box<Expr>,
+        value: Box<Expr>,
+        line: usize,
+        column: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -425,8 +431,8 @@ pub struct Parameter {
     pub name: String,
     pub typ: Option<Box<Expr>>,
     pub default: Option<Box<Expr>>,
-    pub is_vararg: bool,    // For *args
-    pub is_kwarg: bool,     // For **kwargs
+    pub is_vararg: bool, // For *args
+    pub is_kwarg: bool,  // For **kwargs
 }
 
 #[derive(Debug, Clone)]
@@ -506,6 +512,9 @@ impl fmt::Display for Expr {
             Expr::Name { id, .. } => write!(f, "Name({})", id),
             Expr::List { .. } => write!(f, "List"),
             Expr::Tuple { .. } => write!(f, "Tuple"),
+            Expr::NamedExpr { target, value, .. } => {
+                write!(f, "NamedExpr({} := {})", target, value)
+            }
         }
     }
 }

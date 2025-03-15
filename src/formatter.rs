@@ -1,7 +1,6 @@
 use crate::ast::{Module, Stmt, Expr, BoolOperator, Operator, UnaryOperator, CmpOperator};
 use crate::visitor::Visitor;
 
-/// A visitor that formats Python code from the AST
 pub struct CodeFormatter {
     indent_level: usize,
     indent_size: usize,
@@ -989,6 +988,13 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                     
                     self.write(")");
                 }
+            },
+            Expr::NamedExpr { target, value, line: _, column: _ } => {
+                self.write("(");
+                self.visit_expr(target);
+                self.write(" := ");
+                self.visit_expr(value);
+                self.write(")");
             },
         }
     }
