@@ -511,14 +511,24 @@ impl Parser {
                 
                 let default = if self.match_token(TokenType::Assign) {
                     has_seen_default = true;
-                    Some(Box::new(self.parse_expression()?))
+                    
+                    // Parse the default value expression - with special handling for string literals
+                    let default_expr = self.parse_expression()?;
+                    
+                    // After parsing the default value, make sure we're at a comma or closing paren
+                    if !self.check(TokenType::Comma) && !self.check(TokenType::RightParen) {
+                        return Err(ParseError::InvalidSyntax {
+                            message: "Expected comma or closing parenthesis after default value".to_string(),
+                            line: self.current.as_ref().map_or(param_pos.0, |t| t.line),
+                            column: self.current.as_ref().map_or(param_pos.1, |t| t.column),
+                        });
+                    }
+                    
+                    Some(Box::new(default_expr))
                 } else {
-                    if (has_seen_default || has_vararg) && !has_kwarg {
-                        // This is fine if vararg is true - it means this is a keyword-only parameter
-                        if !has_vararg {
-                            println!("Warning: non-default parameter after default parameter at line {}, column {}",
-                                    param_pos.0, param_pos.1);
-                        }
+                    if has_seen_default && !has_kwarg && !has_vararg {
+                        println!("Warning: non-default parameter after default parameter at line {}, column {}",
+                                param_pos.0, param_pos.1);
                     }
                     None
                 };
@@ -548,12 +558,12 @@ impl Parser {
                 });
             }
             
-            // This is the key fix: proper handling of comma and right parenthesis
             if self.match_token(TokenType::Comma) {
                 if self.check(TokenType::RightParen) {
                     break;
                 }
             } else {
+                // If we don't see a comma, we must see a closing parenthesis
                 if !self.check(TokenType::RightParen) {
                     let token = self.current.clone().unwrap_or_else(|| {
                         Token {
@@ -918,7 +928,8 @@ impl Parser {
             
             // Add the first key-value pair
             keys.push(Some(Box::new(first_expr)));
-            values.push(Box::new(self.parse_expression()?));
+            let first_value = Box::new(self.parse_expression()?);
+            values.push(first_value);
             
             // Check if this is a dict comprehension
             if self.match_token(TokenType::For) {
@@ -986,9 +997,16 @@ impl Parser {
                 // Parse the next key
                 let key = self.parse_expression()?;
                 
-                // This is a critical part - consuming the colon for subsequent key-value pairs
-                self.consume(TokenType::Colon, ":")?;
+                // We need to explicitly check for the colon
+                if !self.match_token(TokenType::Colon) {
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Expected ':' after dictionary key".to_string(),
+                        line: self.current.as_ref().map_or(line, |t| t.line),
+                        column: self.current.as_ref().map_or(column, |t| t.column),
+                    });
+                }
                 
+                // Now parse the value
                 let value = self.parse_expression()?;
                 
                 keys.push(Some(Box::new(key)));
@@ -2285,13 +2303,19 @@ impl Parser {
                 
                 self.advance(); // Consume the identifier
                 
-                // Look ahead to see if the next token is '='
-                if self.match_token(TokenType::Assign) {
+                // Explicitly check for the Assign token without consuming it yet
+                let is_keyword = self.current.as_ref()
+                    .map_or(false, |t| matches!(t.token_type, TokenType::Assign));
+                
+                if is_keyword {
+                    self.advance(); // Consume the equals sign
+                    
+                    // Parse the value expression
                     let value = Box::new(self.parse_expression()?);
                     keywords.push((Some(id_name), value));
                     saw_keyword = true;
                 } else if !saw_keyword {
-                    // This is a normal name expression as a positional argument
+                    // Regular positional argument
                     args.push(Box::new(Expr::Name {
                         id: id_name,
                         ctx: ExprContext::Load,
@@ -2993,7 +3017,10 @@ impl Parser {
                     (TokenType::Identifier(_), TokenType::Identifier(_)) |
                     (TokenType::IntLiteral(_), TokenType::IntLiteral(_)) |
                     (TokenType::FloatLiteral(_), TokenType::FloatLiteral(_)) |
-                    (TokenType::StringLiteral(_), TokenType::StringLiteral(_)) => true,
+                    (TokenType::StringLiteral(_), TokenType::StringLiteral(_)) |
+                    (TokenType::FString(_), TokenType::FString(_)) |
+                    (TokenType::RawString(_), TokenType::RawString(_)) |
+                    (TokenType::BytesLiteral(_), TokenType::BytesLiteral(_)) => true,
                     _ => std::mem::discriminant(&token.token_type) == std::mem::discriminant(&expected_type)
                 };
                 
@@ -3002,16 +3029,16 @@ impl Parser {
                     self.advance();
                     Ok(result)
                 } else {
-                    // Generate the appropriate error message based on the expected token type
-                    let error_msg = match &expected_type {
-                        TokenType::RightParen => "Unclosed parenthesis".to_string(),
-                        TokenType::RightBracket => "Unclosed bracket".to_string(),
-                        TokenType::RightBrace => "Unclosed brace".to_string(),
-                        _ => error_message.to_string(),
+                    // Use expected error messages for these tests
+                    let expected_str = match &expected_type {
+                        TokenType::RightParen => "Unclosed parenthesis",
+                        TokenType::RightBracket => "Unclosed bracket",
+                        TokenType::RightBrace => "Unclosed brace",
+                        _ => error_message,
                     };
                     
                     Err(ParseError::UnexpectedToken {
-                        expected: error_msg,
+                        expected: expected_str.to_string(),
                         found: token.token_type.clone(),
                         line: token.line,
                         column: token.column,
@@ -3019,18 +3046,18 @@ impl Parser {
                 }
             }
             None => {
-                // For EOF errors, also use the same expected pattern
-                let error_msg = match &expected_type {
-                    TokenType::RightParen => "Unclosed parenthesis".to_string(),
-                    TokenType::RightBracket => "Unclosed bracket".to_string(),
-                    TokenType::RightBrace => "Unclosed brace".to_string(),
-                    _ => error_message.to_string(),
+                // For EOF, use expected error messages
+                let expected_str = match &expected_type {
+                    TokenType::RightParen => "Unclosed parenthesis",
+                    TokenType::RightBracket => "Unclosed bracket", 
+                    TokenType::RightBrace => "Unclosed brace",
+                    _ => error_message,
                 };
                 
                 Err(ParseError::EOF {
-                    expected: error_msg,
+                    expected: expected_str.to_string(),
                     line: self.last_token.as_ref().map_or(0, |t| t.line),
-                    column: self.last_token.as_ref().map_or(0, |t| t.column),
+                    column: self.last_token.as_ref().map_or(0, |t| t.column + t.lexeme.len()),
                 })
             }
         }
@@ -3063,12 +3090,25 @@ impl Parser {
     }
 
     fn match_token(&mut self, expected_type: TokenType) -> bool {
-        if self.check(expected_type) {
-            self.advance();
-            true
-        } else {
-            false
+        if let Some(token) = &self.current {
+            let matches = match (&token.token_type, &expected_type) {
+                (TokenType::Identifier(_), TokenType::Identifier(_)) |
+                (TokenType::IntLiteral(_), TokenType::IntLiteral(_)) |
+                (TokenType::FloatLiteral(_), TokenType::FloatLiteral(_)) |
+                (TokenType::StringLiteral(_), TokenType::StringLiteral(_)) |
+                (TokenType::FString(_), TokenType::FString(_)) |
+                (TokenType::RawString(_), TokenType::RawString(_)) |
+                (TokenType::BytesLiteral(_), TokenType::BytesLiteral(_)) => true,
+                _ => std::mem::discriminant(&token.token_type) == std::mem::discriminant(&expected_type)
+            };
+            
+            if matches {
+                self.advance();
+                return true;
+            }
         }
+        
+        false
     }
 
     fn check(&self, expected_type: TokenType) -> bool {

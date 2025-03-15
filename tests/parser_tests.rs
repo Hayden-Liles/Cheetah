@@ -750,4 +750,27 @@ def foo(a, *, b=1):
             assert_parse_fails("class Test(Base: pass");
         }
     }
+
+    #[test]
+    fn test_dict_parsing_debug() {
+        // Empty dictionary
+        println!("Testing empty dictionary");
+        assert_parses("{}");
+        
+        // Single key-value pair
+        println!("Testing single key-value pair");
+        assert_parses("{1: 2}");
+        
+        // Testing with a string key
+        println!("Testing with string key");
+        assert_parses("{\"key\": \"value\"}");
+        
+        // Dictionary with two key-value pairs - the problematic case
+        println!("Testing dictionary with two key-value pairs");
+        assert_parses("{1: 2, 3: 4}");
+        
+        // Dictionary with nested dictionary
+        println!("Testing nested dictionary");
+        assert_parses("{1: {2: 3}}");
+    }
 }
