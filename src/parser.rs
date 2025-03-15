@@ -672,37 +672,6 @@ impl Parser {
         })
     }
 
-    fn parse_call_arguments(
-        &mut self,
-    ) -> Result<(Vec<Box<Expr>>, Vec<(Option<String>, Box<Expr>)>), ParseError> {
-        let mut args = Vec::new();
-        let keywords = Vec::new();
-        let mut nesting_level = 1;
-
-        while nesting_level > 0 {
-            if self.check(TokenType::RightParen) {
-                nesting_level -= 1;
-                if nesting_level == 0 {
-                    self.advance(); // Consume the closing paren
-                    break;
-                }
-            }
-
-            // Parse next argument
-            let expr = self.parse_expression()?;
-            args.push(Box::new(expr));
-
-            // Handle comma or nesting
-            if self.match_token(TokenType::Comma) {
-                // Continue
-            } else if self.match_token(TokenType::LeftParen) {
-                nesting_level += 1;
-            }
-        }
-
-        Ok((args, keywords))
-    }
-
     fn parse_class_def(&mut self) -> Result<Stmt, ParseError> {
         let token = self.current.clone().unwrap();
         let line = token.line;
@@ -1440,44 +1409,6 @@ impl Parser {
             self.consume(TokenType::RightBrace, "}")?;
 
             Ok(Expr::Set { elts, line, column })
-        }
-    }
-
-    // Helper function for parsing comprehension targets
-    fn parse_comprehension_target(&mut self) -> Result<Box<Expr>, ParseError> {
-        if self.check(TokenType::LeftParen) {
-            // It's a tuple target like (k, v)
-            let line = self.current.as_ref().unwrap().line;
-            let column = self.current.as_ref().unwrap().column;
-
-            self.advance(); // Consume left paren
-
-            let mut elements = Vec::new();
-
-            // Parse first element
-            if !self.check(TokenType::RightParen) {
-                elements.push(Box::new(self.parse_atom_expr()?));
-
-                // Parse additional elements
-                while self.match_token(TokenType::Comma) {
-                    if self.check(TokenType::RightParen) {
-                        break;
-                    }
-                    elements.push(Box::new(self.parse_atom_expr()?));
-                }
-            }
-
-            self.consume(TokenType::RightParen, ")")?;
-
-            Ok(Box::new(Expr::Tuple {
-                elts: elements,
-                ctx: ExprContext::Store,
-                line,
-                column,
-            }))
-        } else {
-            // It's a simple target
-            Ok(Box::new(self.parse_atom_expr()?))
         }
     }
 
@@ -3861,42 +3792,6 @@ impl Parser {
         }
 
         Ok(expressions)
-    }
-
-    fn parse_match(&mut self) -> Result<Stmt, ParseError> {
-        let token = self.current.clone().unwrap();
-        let line = token.line;
-        let column = token.column;
-    
-        self.advance(); // Consume 'match'
-    
-        // Placeholder implementation to make tests pass
-        // In a real implementation, you would parse the match expression
-        let subject = Box::new(self.parse_expression()?);
-        
-        self.consume(TokenType::Colon, ":")?;
-        
-        // Skip ahead to handle the case blocks
-        self.consume_newline()?;
-        self.advance(); // Consume indent
-        
-        // Basic case handling to make the test pass
-        let cases = Vec::new();
-        
-        // Skip through the case blocks without actually parsing them
-        while !self.check(TokenType::Dedent) {
-            self.advance();
-        }
-        
-        self.advance(); // Consume dedent
-        
-        // Create a Match statement (adjust according to your actual AST structure)
-        Ok(Stmt::Match {
-            subject,
-            cases,
-            line,
-            column,
-        })
     }
 
     fn consume_identifier(&mut self, expected: &str) -> Result<String, ParseError> {
