@@ -649,59 +649,6 @@ impl Parser {
         Ok(params)
     }
 
-    fn parse_lambda_param(&mut self) -> Result<Parameter, ParseError> {
-        if self.match_token(TokenType::Multiply) {
-            // Handle *args
-            let name = self.consume_identifier("parameter name after *")?;
-            Ok(Parameter {
-                name,
-                typ: None,
-                default: None,
-                is_vararg: true,
-                is_kwarg: false,
-            })
-        } else if self.match_token(TokenType::Power) {
-            // Handle **kwargs
-            let name = self.consume_identifier("parameter name after **")?;
-            Ok(Parameter {
-                name,
-                typ: None,
-                default: None,
-                is_vararg: false,
-                is_kwarg: true,
-            })
-        } else if self.check_identifier() {
-            // Regular parameter
-            let name = self.consume_identifier("parameter name")?;
-            let default = if self.match_token(TokenType::Assign) {
-                Some(Box::new(self.parse_expression()?))
-            } else {
-                None
-            };
-            
-            Ok(Parameter {
-                name,
-                typ: None,
-                default,
-                is_vararg: false,
-                is_kwarg: false,
-            })
-        } else {
-            let token = self.current.clone().unwrap_or_else(|| Token {
-                token_type: TokenType::EOF,
-                line: 0,
-                column: 0,
-                lexeme: String::new(),
-            });
-            
-            Err(ParseError::InvalidSyntax {
-                message: "Expected parameter name, * or **".to_string(),
-                line: token.line,
-                column: token.column,
-            })
-        }
-    }
-
     fn parse_match_case(&mut self) -> Result<(Box<Expr>, Option<Box<Expr>>, Vec<Box<Stmt>>), ParseError> {
         // Parse the pattern
         let pattern = Box::new(self.parse_expression()?);
@@ -806,18 +753,15 @@ impl Parser {
         })
     }
 
-    fn parse_class_arguments(&mut self) -> Result<(Vec<Box<Expr>>, Vec<(Option<String>, Box<Expr>)>), ParseError> {
-        let mut bases = Vec::new();
-        let mut keywords = Vec::new();
-        
-        if self.check(TokenType::RightParen) {
-            return Ok((bases, keywords));
-        }
-    
-        // Check if the first token is a **kwargs
+    fn parse_class_base_or_keyword(&mut self, bases: &mut Vec<Box<Expr>>, keywords: &mut Vec<(Option<String>, Box<Expr>)>) -> Result<(), ParseError> {
         if self.match_token(TokenType::Power) {
             // Handle **kwargs
-            let id_token = self.current.clone().unwrap();
+            let id_token = self.current.clone().ok_or_else(|| ParseError::EOF {
+                expected: "identifier after **".to_string(),
+                line: self.last_token.as_ref().map_or(0, |t| t.line),
+                column: self.last_token.as_ref().map_or(0, |t| t.column + t.lexeme.len()),
+            })?;
+            
             let id_line = id_token.line;
             let id_column = id_token.column;
             
@@ -844,129 +788,48 @@ impl Parser {
             
             // Add to keywords with None key (representing **)
             keywords.push((None, Box::new(arg_expr)));
-        } else {
-            // Parse the first base or keyword argument
-            if self.check_identifier() {
-                let id_token = self.current.clone().unwrap();
-                let id_line = id_token.line;
-                let id_column = id_token.column;
-                let id_name = match &id_token.token_type {
-                    TokenType::Identifier(name) => name.clone(),
-                    _ => unreachable!(),
-                };
-                
-                self.advance(); // Consume identifier
-                
-                if self.check(TokenType::Assign) {
-                    // It's a keyword argument
-                    self.advance(); // Consume equals
-                    let value = Box::new(self.parse_expression()?);
-                    keywords.push((Some(id_name), value));
-                } else if self.check(TokenType::LeftParen) {
-                    // It's a function call as a base class
-                    let func_expr = Expr::Name {
-                        id: id_name,
-                        ctx: ExprContext::Load,
-                        line: id_line,
-                        column: id_column,
-                    };
-                    
-                    let call_expr = self.parse_call_expr(Box::new(func_expr), id_line, id_column)?;
-                    bases.push(Box::new(call_expr));
-                } else {
-                    // Simple name as base class
-                    bases.push(Box::new(Expr::Name {
-                        id: id_name,
-                        ctx: ExprContext::Load,
-                        line: id_line,
-                        column: id_column,
-                    }));
-                }
-            } else {
-                // Expression as base class
-                bases.push(Box::new(self.parse_expression()?));
-            }
-        }
-        
-        // Parse additional arguments
-        while self.match_token(TokenType::Comma) {
-            if self.check(TokenType::RightParen) {
-                break;
-            }
-    
-            // Check for **kwargs
-            if self.match_token(TokenType::Power) {
-                // Handle **kwargs
-                let id_token = self.current.clone().unwrap();
-                let id_line = id_token.line;
-                let id_column = id_token.column;
-                
-                let id_name = match &id_token.token_type {
-                    TokenType::Identifier(name) => name.clone(),
-                    _ => {
-                        return Err(ParseError::InvalidSyntax {
-                            message: "Expected identifier after **".to_string(),
-                            line: id_line,
-                            column: id_column,
-                        });
-                    }
-                };
-                
-                self.advance(); // Consume the identifier
-                
-                // Create a Name expression
-                let arg_expr = Expr::Name {
+            
+        } else if self.check_identifier() {
+            let id_token = self.current.clone().unwrap();
+            let id_line = id_token.line;
+            let id_column = id_token.column;
+            let id_name = match &id_token.token_type {
+                TokenType::Identifier(name) => name.clone(),
+                _ => unreachable!(),
+            };
+            
+            self.advance(); // Consume identifier
+            
+            if self.match_token(TokenType::Assign) {
+                // It's a keyword argument
+                let value = Box::new(self.parse_expression()?);
+                keywords.push((Some(id_name), value));
+            } else if self.check(TokenType::LeftParen) {
+                // It's a function call as a base class
+                let func_expr = Expr::Name {
                     id: id_name,
                     ctx: ExprContext::Load,
                     line: id_line,
                     column: id_column,
                 };
                 
-                // Add to keywords with None key (representing **)
-                keywords.push((None, Box::new(arg_expr)));
-            } else if self.check_identifier() {
-                let id_token = self.current.clone().unwrap();
-                let id_line = id_token.line;
-                let id_column = id_token.column;
-                let id_name = match &id_token.token_type {
-                    TokenType::Identifier(name) => name.clone(),
-                    _ => unreachable!(),
-                };
-                
-                self.advance(); // Consume identifier
-                
-                if self.check(TokenType::Assign) {
-                    // It's a keyword argument
-                    self.advance(); // Consume equals
-                    let value = Box::new(self.parse_expression()?);
-                    keywords.push((Some(id_name), value));
-                } else if self.check(TokenType::LeftParen) {
-                    // It's a function call as a base class
-                    let func_expr = Expr::Name {
-                        id: id_name,
-                        ctx: ExprContext::Load,
-                        line: id_line,
-                        column: id_column,
-                    };
-                    
-                    let call_expr = self.parse_call_expr(Box::new(func_expr), id_line, id_column)?;
-                    bases.push(Box::new(call_expr));
-                } else {
-                    // Simple name as base class
-                    bases.push(Box::new(Expr::Name {
-                        id: id_name,
-                        ctx: ExprContext::Load,
-                        line: id_line,
-                        column: id_column,
-                    }));
-                }
+                let call_expr = self.parse_call_expr(Box::new(func_expr), id_line, id_column)?;
+                bases.push(Box::new(call_expr));
             } else {
-                // Expression as base class
-                bases.push(Box::new(self.parse_expression()?));
+                // Simple name as base class
+                bases.push(Box::new(Expr::Name {
+                    id: id_name,
+                    ctx: ExprContext::Load,
+                    line: id_line,
+                    column: id_column,
+                }));
             }
+        } else {
+            // Expression as base class
+            bases.push(Box::new(self.parse_expression()?));
         }
         
-        Ok((bases, keywords))
+        Ok(())
     }
 
     fn parse_class_def(&mut self) -> Result<Stmt, ParseError> {
@@ -988,12 +851,26 @@ impl Parser {
                     column: comma_token.column,
                 });
             }
+    
+            let mut bases = Vec::new();
+            let mut keywords = Vec::new();
             
-            // Use our new method to parse class arguments
-            let (bases, keywords_opt) = self.parse_class_arguments()?;
+            if !self.check(TokenType::RightParen) {
+                // Parse first base class or keyword argument
+                self.parse_class_base_or_keyword(&mut bases, &mut keywords)?;
+                
+                // Parse additional bases/keywords
+                while self.match_token(TokenType::Comma) {
+                    if self.check(TokenType::RightParen) {
+                        break;
+                    }
+                    
+                    self.parse_class_base_or_keyword(&mut bases, &mut keywords)?;
+                }
+            }
             
             self.consume(TokenType::RightParen, ")")?;
-            (bases, keywords_opt)
+            (bases, keywords)
         } else {
             (Vec::new(), Vec::new())
         };
@@ -3716,32 +3593,122 @@ impl Parser {
             }
             TokenType::Lambda => {
                 self.advance();
+                let line_start = line;
+                let column_start = column;
+                
+                // Parse parameters
                 let mut params = Vec::new();
                 
                 // Check if there are any parameters
                 if !self.check(TokenType::Colon) {
-                    // Parse first parameter
-                    let first_param = self.parse_lambda_param()?;
-                    params.push(first_param);
+                    // This part handles the first parameter
+                    if self.match_token(TokenType::Multiply) {
+                        // Handle *args
+                        let name = self.consume_identifier("parameter name after *")?;
+                        params.push(Parameter {
+                            name,
+                            typ: None,
+                            default: None,
+                            is_vararg: true,
+                            is_kwarg: false,
+                        });
+                    } else if self.match_token(TokenType::Power) {
+                        // Handle **kwargs
+                        let name = self.consume_identifier("parameter name after **")?;
+                        params.push(Parameter {
+                            name,
+                            typ: None,
+                            default: None,
+                            is_vararg: false,
+                            is_kwarg: true,
+                        });
+                    } else if self.check_identifier() {
+                        // Regular parameter
+                        let name = self.consume_identifier("parameter name")?;
+                        let default = if self.match_token(TokenType::Assign) {
+                            Some(Box::new(self.parse_expression()?))
+                        } else {
+                            None
+                        };
+                        
+                        params.push(Parameter {
+                            name,
+                            typ: None,
+                            default,
+                            is_vararg: false,
+                            is_kwarg: false,
+                        });
+                    } else {
+                        return Err(ParseError::InvalidSyntax {
+                            message: "Expected parameter name, * or **".to_string(),
+                            line: self.current.as_ref().map_or(line, |t| t.line),
+                            column: self.current.as_ref().map_or(column, |t| t.column),
+                        });
+                    }
                     
                     // Parse additional parameters
                     while self.match_token(TokenType::Comma) {
+                        // If we reach a colon, we're done with parameters
                         if self.check(TokenType::Colon) {
                             break;
                         }
-                        let next_param = self.parse_lambda_param()?;
-                        params.push(next_param);
+                        
+                        // Parse the next parameter
+                        if self.match_token(TokenType::Multiply) {
+                            // Handle *args
+                            let name = self.consume_identifier("parameter name after *")?;
+                            params.push(Parameter {
+                                name,
+                                typ: None,
+                                default: None,
+                                is_vararg: true,
+                                is_kwarg: false,
+                            });
+                        } else if self.match_token(TokenType::Power) {
+                            // Handle **kwargs
+                            let name = self.consume_identifier("parameter name after **")?;
+                            params.push(Parameter {
+                                name,
+                                typ: None,
+                                default: None,
+                                is_vararg: false,
+                                is_kwarg: true,
+                            });
+                        } else if self.check_identifier() {
+                            // Regular parameter
+                            let name = self.consume_identifier("parameter name")?;
+                            let default = if self.match_token(TokenType::Assign) {
+                                Some(Box::new(self.parse_expression()?))
+                            } else {
+                                None
+                            };
+                            
+                            params.push(Parameter {
+                                name,
+                                typ: None,
+                                default,
+                                is_vararg: false,
+                                is_kwarg: false,
+                            });
+                        } else {
+                            return Err(ParseError::InvalidSyntax {
+                                message: "Expected parameter name, * or **".to_string(),
+                                line: self.current.as_ref().map_or(line, |t| t.line),
+                                column: self.current.as_ref().map_or(column, |t| t.column),
+                            });
+                        }
                     }
                 }
                 
+                // Parse the colon and body
                 self.consume(TokenType::Colon, ":")?;
                 let body = Box::new(self.parse_expression()?);
                 
                 Ok(Expr::Lambda {
                     args: params,
                     body,
-                    line,
-                    column,
+                    line: line_start,
+                    column: column_start,
                 })
             },
             TokenType::FString(value) => {
