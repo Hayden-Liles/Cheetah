@@ -218,8 +218,15 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         if i > 0 {
                             self.write(", ");
                         }
-                        self.write(key);
-                        self.write("=");
+                        
+                        // Handle **kwargs vs regular keyword arguments
+                        if let Some(key_name) = key {
+                            self.write(key_name);
+                            self.write("=");
+                        } else {
+                            self.write("**"); // This is the **kwargs case
+                        }
+                        
                         self.visit_expr(&**value);
                     }
                     

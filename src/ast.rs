@@ -15,7 +15,7 @@ pub enum Stmt {
     ClassDef {
         name: String,
         bases: Vec<Box<Expr>>,
-        keywords: Vec<(String, Box<Expr>)>,
+        keywords: Vec<(Option<String>, Box<Expr>)>,
         body: Vec<Box<Stmt>>,
         decorator_list: Vec<Box<Expr>>,
         line: usize,

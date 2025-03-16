@@ -122,7 +122,13 @@ impl<'ast> Visitor<'ast, String> for AstPrinter {
                     result.push_str(&format!("{}Keywords:\n", self.indent()));
                     self.with_indent(|s| {
                         for (key, value) in keywords {
-                            result.push_str(&format!("{}{}: {}\n", s.indent(), key, s.visit_expr(value)));
+                            if let Some(key_name) = key {
+                                // Regular keyword argument (e.g., metaclass=Meta)
+                                result.push_str(&format!("{}{}: {}\n", s.indent(), key_name, s.visit_expr(value)));
+                            } else {
+                                // **kwargs case
+                                result.push_str(&format!("{}**{}\n", s.indent(), s.visit_expr(value)));
+                            }
                         }
                     });
                 }

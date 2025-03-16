@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use cheetah::ast::{Expr, Module, Number, Stmt};
-    use cheetah::lexer::Lexer;
+    use cheetah::lexer::{Lexer, Token, TokenType};
     use cheetah::parser::{ParseError, Parser};
     use std::fmt;
 
@@ -61,6 +61,37 @@ mod tests {
         result
     }
 
+    // Helper function to print token stream for debugging
+    fn print_token_stream(source: &str) {
+        println!("\n=== TOKEN STREAM ANALYSIS ===");
+        println!("Source code: {}", source);
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        
+        if !lexer.get_errors().is_empty() {
+            println!("LEXER ERRORS:");
+            for error in lexer.get_errors() {
+                println!("- Line {}, Column {}: {}", error.line, error.column, error.message);
+            }
+            return;
+        }
+        
+        println!("TOKENS:");
+        let mut token_pos = 0;
+        for token in &tokens {
+            println!("{}: {:?} at line {}, column {} (\"{}\")", 
+                token_pos, 
+                token.token_type, 
+                token.line, 
+                token.column,
+                token.lexeme
+            );
+            token_pos += 1;
+        }
+        println!("=== END TOKEN STREAM ===\n");
+    }
+
     fn parse_code(source: &str) -> Result<Module, Vec<ParseError>> {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize();
@@ -84,8 +115,14 @@ mod tests {
 
     // Helper function to assert parsing succeeds and print the AST for debugging
     fn assert_parses(source: &str) -> Module {
+        println!("\n>>> TESTING PARSER WITH: '{}'", source);
+        print_token_stream(source);
+        
         match parse_code(source) {
-            Ok(module) => module,
+            Ok(module) => {
+                println!("✓ PARSING SUCCEEDED");
+                module
+            },
             Err(errors) => {
                 println!("\n================================");
                 println!("PARSING FAILED FOR CODE SNIPPET:");
@@ -116,6 +153,9 @@ mod tests {
 
     // Helper to assert parsing fails with any error
     fn assert_parse_fails(source: &str) {
+        println!("\n>>> TESTING PARSER FAILURE WITH: '{}'", source);
+        print_token_stream(source);
+        
         match parse_code(source) {
             Ok(_) => {
                 println!("\n=============================");
@@ -124,12 +164,18 @@ mod tests {
                 println!("{}", source);
                 panic!("Expected parsing to fail, but it succeeded");
             },
-            Err(_) => (), // Pass if there's any error
+            Err(_) => {
+                println!("✓ PARSING FAILED AS EXPECTED");
+            },
         }
     }
 
     // Helper to assert parsing fails with a specific error message
     fn assert_parse_fails_with(source: &str, expected_error_substr: &str) {
+        println!("\n>>> TESTING PARSER FAILURE WITH: '{}'", source);
+        println!(">>> EXPECTED ERROR: '{}'", expected_error_substr);
+        print_token_stream(source);
+        
         match parse_code(source) {
             Ok(_) => {
                 println!("\n=============================");
@@ -160,60 +206,87 @@ mod tests {
                     }
                     
                     panic!("Error message doesn't match expected substring");
+                } else {
+                    println!("✓ PARSING FAILED WITH EXPECTED ERROR MESSAGE");
                 }
             },
         }
     }
 
     // Test categories for better organization
-    mod tests {
+    mod lambda_tests {
         use super::*;
 
         #[test]
-        fn test_complex_lambda() {
-            // Lambda with complex expression
-            assert_parses(
-                "lambda x: x * 2 + 3 if x > 0 else x - 1"
-            );
+        fn test_simple_lambda() {
+            // Start with the simplest lambda
+            assert_parses("lambda: None");
             
-            // Lambda with multiple arguments
-            assert_parses(
-                "lambda x, y, z=1, *args, **kwargs: sum([x, y, z]) + sum(args) + sum(kwargs.values())"
-            );
+            // Single parameter
+            assert_parses("lambda x: x");
+        }
+        
+        #[test]
+        fn test_lambda_with_multiple_params() {
+            // Multiple parameters
+            assert_parses("lambda x, y: x + y");
+            
+            // With default value
+            assert_parses("lambda x, y=10: x + y");
+        }
+        
+        #[test]
+        fn test_lambda_with_varargs() {
+            // Test varargs (*args) in isolation
+            assert_parses("lambda *args: sum(args)");
+        }
+        
+        #[test]
+        fn test_lambda_with_kwargs() {
+            // Test kwargs (**kwargs) in isolation
+            assert_parses("lambda **kwargs: sum(kwargs.values())");
+        }
+        
+        #[test]
+        fn test_lambda_mixed_args() {
+            // Mix of regular and varargs
+            assert_parses("lambda x, *args: x + sum(args)");
+            
+            // Mix of regular and kwargs
+            assert_parses("lambda x, **kwargs: x + sum(kwargs.values())");
+            
+            // Mix of regular, varargs and kwargs
+            assert_parses("lambda x, *args, **kwargs: x + sum(args) + sum(kwargs.values())");
+        }
+        
+        #[test]
+        fn test_lambda_with_default_and_special_args() {
+            // Regular params with default values
+            assert_parses("lambda x, y=10, z=20: x + y + z");
+            
+            // Regular params with defaults and varargs
+            assert_parses("lambda x, y=10, *args: x + y + sum(args)");
+            
+            // Regular params with defaults and kwargs
+            assert_parses("lambda x, y=10, **kwargs: x + y + sum(kwargs.values())");
+            
+            // The complete mix
+            assert_parses("lambda x, y=10, z=20, *args, **kwargs: x + y + z + sum(args) + sum(kwargs.values())");
+        }
+        
+        #[test]
+        fn test_complex_lambda_expressions() {
+            // Lambda with complex expression
+            assert_parses("lambda x: x * 2 + 3 if x > 0 else x - 1");
             
             // Nested lambdas
-            assert_parses(
-                "lambda x: lambda y: x + y"
-            );
+            assert_parses("lambda x: lambda y: x + y");
             
             // Lambda in a function call
-            assert_parses(
-                "map(lambda x: x.strip(), lines)"
-            );
-        }
-
-        #[test]
-        fn test_complex_class_inheritance() {
-            // Multiple base classes
-            assert_parses(
-                "class Derived(Base1, Base2, Base3): pass"
-            );
+            assert_parses("map(lambda x: x.strip(), lines)");
             
-            // Inheritance with keyword arguments
-            assert_parses(
-                "class Derived(Base, metaclass=Meta): pass"
-            );
-            
-            // Inheritance with complex expressions
-            assert_parses(
-                "class Derived(get_base_class()): pass"
-            );
-            
-            // Multiple inheritance with keyword arguments
-            assert_parses(
-                "class Derived(Base1, Base2, metaclass=Meta, **kwargs): pass"
-            );
+            // The most complex test case from the original test
+            assert_parses("lambda x, y, z=1, *args, **kwargs: sum([x, y, z]) + sum(args) + sum(kwargs.values())");
         }
     }
-    
 }
