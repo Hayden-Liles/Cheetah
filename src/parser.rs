@@ -805,7 +805,7 @@ impl Parser {
                         
                         // Add to keywords with None key (representing **)
                         keywords.push((None, Box::new(arg_expr)));
-                        continue; // Skip to next iteration
+                        continue;
                     }
                     
                     // Handle regular identifiers and expressions
@@ -2672,7 +2672,16 @@ impl Parser {
             let token = self.previous_token();
             let line = token.line;
             let column = token.column;
-
+    
+            // Add this check to verify we're inside a function context
+            if !self.is_in_function {
+                return Err(ParseError::InvalidSyntax {
+                    message: "Yield statement outside of function".to_string(),
+                    line,
+                    column,
+                });
+            }
+    
             if self.match_token(TokenType::From) {
                 let value = Box::new(self.parse_expression()?);
                 return Ok(Expr::YieldFrom {
@@ -2681,7 +2690,7 @@ impl Parser {
                     column,
                 });
             }
-
+    
             let value = if self.check_newline()
                 || self.check(TokenType::RightParen)
                 || self.check(TokenType::Comma)
@@ -2693,7 +2702,7 @@ impl Parser {
             } else {
                 Some(Box::new(self.parse_expression()?))
             };
-
+    
             Ok(Expr::Yield {
                 value,
                 line,

@@ -1071,8 +1071,8 @@ def foo(a, *, b=1):
             // Multiple repeated operators
             assert_parse_fails("x = 1 ++ 2");  // Python doesn't have ++
             
-            // Statement with no effect
-            assert_parse_fails("1 + 2");  // This is valid in Python but could be an error
+            // Remove this line since it's valid Python:
+            // assert_parse_fails("1 + 2");  
             
             // Yield outside function
             assert_parse_fails("yield 1");  // Only allowed inside a function
