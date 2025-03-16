@@ -660,10 +660,15 @@ impl Parser {
         
         let mut cases = Vec::new();
         
+        // Special handling for function context
+        let was_in_function = self.is_in_function;
+        self.is_in_function = true; // Set function context to true to allow return statements
+        
         // Parse the indented block containing case statements
         self.consume_newline()?;
         
         if !self.match_token(TokenType::Indent) {
+            self.is_in_function = was_in_function; // Restore function context
             return Err(ParseError::InvalidSyntax {
                 message: "Expected indented block after 'match' statement".to_string(),
                 line,
@@ -675,8 +680,11 @@ impl Parser {
         while self.match_token(TokenType::Case) {
             let pattern = Box::new(self.parse_expression()?);
             
+            // Handle guard condition
             let guard = if self.match_token(TokenType::If) {
-                Some(Box::new(self.parse_expression()?))
+                // We're in a case guard, not a normal if expression
+                // Parse the guard condition as an expression
+                Some(Box::new(self.parse_or_test()?))
             } else {
                 None
             };
@@ -690,6 +698,9 @@ impl Parser {
         
         // After processing all cases, we should see a dedent
         self.consume(TokenType::Dedent, "expected dedent after case block")?;
+        
+        // Restore function context
+        self.is_in_function = was_in_function;
         
         Ok(Stmt::Match {
             subject,
@@ -744,7 +755,7 @@ impl Parser {
                     column: comma_token.column,
                 });
             }
-    
+        
             let mut bases = Vec::new();
             let mut keywords = Vec::new();
             
@@ -830,11 +841,14 @@ impl Parser {
                         break;
                     }
                     
-                    // Specifically handle **kwargs after a comma
-                    if self.match_token(TokenType::Power) {
+                    // Check for **kwargs directly (not using match_token yet)
+                    if self.check(TokenType::Power) {
+                        self.advance(); // Now consume the Power token
+                        
                         let id_token = self.current.clone().unwrap();
                         let id_line = id_token.line;
                         let id_column = id_token.column;
+                        
                         let id_name = match &id_token.token_type {
                             TokenType::Identifier(name) => name.clone(),
                             _ => {
@@ -3633,77 +3647,61 @@ impl Parser {
                 self.advance();
                 let mut params = Vec::new();
                 
-                // Parse first parameter if any
-                if self.check_identifier() {
-                    // Handle regular parameter
-                    let param_name = self.consume_identifier("parameter name")?;
-                    let default = if self.match_token(TokenType::Assign) {
-                        Some(Box::new(self.parse_expression()?))
-                    } else {
-                        None
-                    };
-                    params.push(Parameter {
-                        name: param_name,
-                        typ: None,
-                        default,
-                        is_vararg: false,
-                        is_kwarg: false,
-                    });
-                    
-                    // Parse additional parameters
-                    while self.match_token(TokenType::Comma) {
-                        if self.check(TokenType::Colon) {
+                // Parse parameters if any
+                while !self.check(TokenType::Colon) {
+                    if !params.is_empty() {
+                        // If not the first parameter, consume comma
+                        if !self.match_token(TokenType::Comma) {
                             break;
                         }
                         
-                        // Specifically check for *args token
-                        if self.match_token(TokenType::Multiply) {
-                            let param_name = self.consume_identifier("parameter name after *")?;
-                            params.push(Parameter {
-                                name: param_name,
-                                typ: None,
-                                default: None,
-                                is_vararg: true,
-                                is_kwarg: false,
-                            });
-                            continue;
+                        // Check if we've reached the colon after a comma
+                        if self.check(TokenType::Colon) {
+                            break;
                         }
-                        
-                        // Specifically check for **kwargs token
-                        if self.match_token(TokenType::Power) {
-                            let param_name = self.consume_identifier("parameter name after **")?;
-                            params.push(Parameter {
-                                name: param_name,
-                                typ: None,
-                                default: None,
-                                is_vararg: false,
-                                is_kwarg: true,
-                            });
-                            continue;
-                        }
-                        
+                    }
+                    
+                    if self.match_token(TokenType::Multiply) {
+                        // *args parameter
+                        let param_name = self.consume_identifier("parameter name after *")?;
+                        params.push(Parameter {
+                            name: param_name,
+                            typ: None,
+                            default: None,
+                            is_vararg: true,
+                            is_kwarg: false,
+                        });
+                    } else if self.match_token(TokenType::Power) {
+                        // **kwargs parameter
+                        let param_name = self.consume_identifier("parameter name after **")?;
+                        params.push(Parameter {
+                            name: param_name,
+                            typ: None,
+                            default: None,
+                            is_vararg: false,
+                            is_kwarg: true,
+                        });
+                    } else if self.check_identifier() {
                         // Regular parameter
-                        if self.check_identifier() {
-                            let param_name = self.consume_identifier("parameter name")?;
-                            let default = if self.match_token(TokenType::Assign) {
-                                Some(Box::new(self.parse_expression()?))
-                            } else {
-                                None
-                            };
-                            params.push(Parameter {
-                                name: param_name,
-                                typ: None,
-                                default,
-                                is_vararg: false,
-                                is_kwarg: false,
-                            });
+                        let param_name = self.consume_identifier("parameter name")?;
+                        let default = if self.match_token(TokenType::Assign) {
+                            Some(Box::new(self.parse_expression()?))
                         } else {
-                            return Err(ParseError::InvalidSyntax {
-                                message: "Expected parameter".to_string(),
-                                line,
-                                column,
-                            });
-                        }
+                            None
+                        };
+                        params.push(Parameter {
+                            name: param_name,
+                            typ: None,
+                            default,
+                            is_vararg: false,
+                            is_kwarg: false,
+                        });
+                    } else {
+                        return Err(ParseError::InvalidSyntax {
+                            message: "Expected parameter".to_string(),
+                            line,
+                            column,
+                        });
                     }
                 }
                 
