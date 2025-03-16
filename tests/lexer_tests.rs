@@ -1535,7 +1535,7 @@ match value:
     let tokens = lexer.tokenize();
     
     // Extract the token types for easier comparison
-    let token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
+    let _token_types: Vec<TokenType> = tokens.iter().map(|t| t.token_type.clone()).collect();
     
     // Find the match token
     let match_token = tokens.iter().find(|t| 
