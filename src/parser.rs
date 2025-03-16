@@ -875,11 +875,15 @@ impl Parser {
             (Vec::new(), Vec::new())
         };
         
-        // Convert Option<String> to String for keywords
-        let keywords: Vec<(String, Box<Expr>)> = keywords_with_optional_names
-            .into_iter()
-            .filter_map(|(k, v)| k.map(|key| (key, v)))
-            .collect();
+        // Extract standard keywords and handle **kwargs separately
+        let mut keywords = Vec::new();
+        for (k, v) in keywords_with_optional_names {
+            if let Some(key) = k {
+                keywords.push((key, v));
+            }
+            // We ignore the **kwargs for now since the AST doesn't have a specific field for it
+            // In a production parser, you might want to store it in the AST
+        }
         
         self.consume(TokenType::Colon, ":")?;
         let body = self.parse_suite()?;
@@ -3601,7 +3605,7 @@ impl Parser {
                 
                 // Check if there are any parameters
                 if !self.check(TokenType::Colon) {
-                    // This part handles the first parameter
+                    // Parse first parameter
                     if self.match_token(TokenType::Multiply) {
                         // Handle *args
                         let name = self.consume_identifier("parameter name after *")?;
