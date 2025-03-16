@@ -362,6 +362,7 @@ impl Parser {
             TokenType::Pass => self.parse_pass(),
             TokenType::Break => self.parse_break(),
             TokenType::Continue => self.parse_continue(),
+            TokenType::Match => self.parse_match(),
             TokenType::Yield => {
                 let expr = self.parse_yield_expr()?;
                 let line = expr.get_line();
@@ -644,6 +645,58 @@ impl Parser {
         }
 
         Ok(params)
+    }
+
+    fn parse_match(&mut self) -> Result<Stmt, ParseError> {
+        let token = self.current.clone().unwrap();
+        let line = token.line;
+        let column = token.column;
+        
+        self.advance(); // Consume 'match' keyword
+        
+        let subject = Box::new(self.parse_expression()?);
+        
+        self.consume(TokenType::Colon, ":")?;
+        
+        let mut cases = Vec::new();
+        
+        // Parse the indented block containing case statements
+        self.consume_newline()?;
+        
+        if !self.match_token(TokenType::Indent) {
+            return Err(ParseError::InvalidSyntax {
+                message: "Expected indented block after 'match' statement".to_string(),
+                line,
+                column,
+            });
+        }
+        
+        // Parse each case statement
+        while self.match_token(TokenType::Case) {
+            let pattern = Box::new(self.parse_expression()?);
+            
+            let guard = if self.match_token(TokenType::If) {
+                Some(Box::new(self.parse_expression()?))
+            } else {
+                None
+            };
+            
+            self.consume(TokenType::Colon, ":")?;
+            
+            let body = self.parse_suite()?;
+            
+            cases.push((pattern, guard, body));
+        }
+        
+        // After processing all cases, we should see a dedent
+        self.consume(TokenType::Dedent, "expected dedent after case block")?;
+        
+        Ok(Stmt::Match {
+            subject,
+            cases,
+            line,
+            column,
+        })
     }
 
     fn parse_call_expr(
