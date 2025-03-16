@@ -754,8 +754,12 @@ impl Parser {
     }
 
     fn parse_class_base_or_keyword(&mut self, bases: &mut Vec<Box<Expr>>, keywords: &mut Vec<(Option<String>, Box<Expr>)>) -> Result<(), ParseError> {
-        if self.match_token(TokenType::Power) {
-            // Handle **kwargs
+        // Check for **kwargs first
+        if self.check(TokenType::Power) {
+            // We found a **kwargs pattern
+            self.advance(); // Consume the ** token
+            
+            // Parse the identifier after **
             let id_token = self.current.clone().ok_or_else(|| ParseError::EOF {
                 expected: "identifier after **".to_string(),
                 line: self.last_token.as_ref().map_or(0, |t| t.line),
@@ -831,7 +835,7 @@ impl Parser {
         
         Ok(())
     }
-
+    
     fn parse_class_def(&mut self) -> Result<Stmt, ParseError> {
         let token = self.current.clone().unwrap();
         let line = token.line;
@@ -3364,6 +3368,122 @@ impl Parser {
         Ok(expr)
     }
 
+    fn parse_lambda_parameters(&mut self, params: &mut Vec<Parameter>) -> Result<(), ParseError> {
+        // Parse first parameter
+        if self.match_token(TokenType::Multiply) {
+            // Handle *args
+            let name = self.consume_identifier("parameter name after *")?;
+            params.push(Parameter {
+                name,
+                typ: None,
+                default: None,
+                is_vararg: true,
+                is_kwarg: false,
+            });
+        } else if self.match_token(TokenType::Power) {
+            // Handle **kwargs
+            let name = self.consume_identifier("parameter name after **")?;
+            params.push(Parameter {
+                name,
+                typ: None,
+                default: None,
+                is_vararg: false,
+                is_kwarg: true,
+            });
+        } else if self.check_identifier() {
+            // Regular parameter
+            let name = self.consume_identifier("parameter name")?;
+            let default = if self.match_token(TokenType::Assign) {
+                Some(Box::new(self.parse_expression()?))
+            } else {
+                None
+            };
+            
+            params.push(Parameter {
+                name,
+                typ: None,
+                default,
+                is_vararg: false,
+                is_kwarg: false,
+            });
+        } else {
+            let curr_token = self.current.clone().unwrap_or_else(|| Token {
+                token_type: TokenType::EOF,
+                line: 0,
+                column: 0,
+                lexeme: String::new(),
+            });
+            
+            return Err(ParseError::InvalidSyntax {
+                message: "Expected parameter name, * or **".to_string(),
+                line: curr_token.line,
+                column: curr_token.column,
+            });
+        }
+        
+        // Parse additional parameters
+        while self.match_token(TokenType::Comma) {
+            // If we reach a colon, we're done with parameters
+            if self.check(TokenType::Colon) {
+                break;
+            }
+            
+            // Parse the next parameter
+            if self.match_token(TokenType::Multiply) {
+                // Handle *args
+                let name = self.consume_identifier("parameter name after *")?;
+                params.push(Parameter {
+                    name,
+                    typ: None,
+                    default: None,
+                    is_vararg: true,
+                    is_kwarg: false,
+                });
+            } else if self.match_token(TokenType::Power) {
+                // Handle **kwargs
+                let name = self.consume_identifier("parameter name after **")?;
+                params.push(Parameter {
+                    name,
+                    typ: None,
+                    default: None,
+                    is_vararg: false,
+                    is_kwarg: true,
+                });
+            } else if self.check_identifier() {
+                // Regular parameter
+                let name = self.consume_identifier("parameter name")?;
+                let default = if self.match_token(TokenType::Assign) {
+                    Some(Box::new(self.parse_expression()?))
+                } else {
+                    None
+                };
+                
+                params.push(Parameter {
+                    name,
+                    typ: None,
+                    default,
+                    is_vararg: false,
+                    is_kwarg: false,
+                });
+            } else {
+                let curr_token = self.current.clone().unwrap_or_else(|| Token {
+                    token_type: TokenType::EOF,
+                    line: 0,
+                    column: 0,
+                    lexeme: String::new(),
+                });
+                
+                return Err(ParseError::InvalidSyntax {
+                    message: "Expected parameter name, * or **".to_string(),
+                    line: curr_token.line,
+                    column: curr_token.column,
+                });
+            }
+        }
+        
+        Ok(())
+    }
+
     fn parse_atom(&mut self) -> Result<Expr, ParseError> {
         let token = match &self.current {
             Some(t) => t.clone(),
@@ -3605,103 +3725,8 @@ impl Parser {
                 
                 // Check if there are any parameters
                 if !self.check(TokenType::Colon) {
-                    // Parse first parameter
-                    if self.match_token(TokenType::Multiply) {
-                        // Handle *args
-                        let name = self.consume_identifier("parameter name after *")?;
-                        params.push(Parameter {
-                            name,
-                            typ: None,
-                            default: None,
-                            is_vararg: true,
-                            is_kwarg: false,
-                        });
-                    } else if self.match_token(TokenType::Power) {
-                        // Handle **kwargs
-                        let name = self.consume_identifier("parameter name after **")?;
-                        params.push(Parameter {
-                            name,
-                            typ: None,
-                            default: None,
-                            is_vararg: false,
-                            is_kwarg: true,
-                        });
-                    } else if self.check_identifier() {
-                        // Regular parameter
-                        let name = self.consume_identifier("parameter name")?;
-                        let default = if self.match_token(TokenType::Assign) {
-                            Some(Box::new(self.parse_expression()?))
-                        } else {
-                            None
-                        };
-                        
-                        params.push(Parameter {
-                            name,
-                            typ: None,
-                            default,
-                            is_vararg: false,
-                            is_kwarg: false,
-                        });
-                    } else {
-                        return Err(ParseError::InvalidSyntax {
-                            message: "Expected parameter name, * or **".to_string(),
-                            line: self.current.as_ref().map_or(line, |t| t.line),
-                            column: self.current.as_ref().map_or(column, |t| t.column),
-                        });
-                    }
-                    
-                    // Parse additional parameters
-                    while self.match_token(TokenType::Comma) {
-                        // If we reach a colon, we're done with parameters
-                        if self.check(TokenType::Colon) {
-                            break;
-                        }
-                        
-                        // Parse the next parameter
-                        if self.match_token(TokenType::Multiply) {
-                            // Handle *args
-                            let name = self.consume_identifier("parameter name after *")?;
-                            params.push(Parameter {
-                                name,
-                                typ: None,
-                                default: None,
-                                is_vararg: true,
-                                is_kwarg: false,
-                            });
-                        } else if self.match_token(TokenType::Power) {
-                            // Handle **kwargs
-                            let name = self.consume_identifier("parameter name after **")?;
-                            params.push(Parameter {
-                                name,
-                                typ: None,
-                                default: None,
-                                is_vararg: false,
-                                is_kwarg: true,
-                            });
-                        } else if self.check_identifier() {
-                            // Regular parameter
-                            let name = self.consume_identifier("parameter name")?;
-                            let default = if self.match_token(TokenType::Assign) {
-                                Some(Box::new(self.parse_expression()?))
-                            } else {
-                                None
-                            };
-                            
-                            params.push(Parameter {
-                                name,
-                                typ: None,
-                                default,
-                                is_vararg: false,
-                                is_kwarg: false,
-                            });
-                        } else {
-                            return Err(ParseError::InvalidSyntax {
-                                message: "Expected parameter name, * or **".to_string(),
-                                line: self.current.as_ref().map_or(line, |t| t.line),
-                                column: self.current.as_ref().map_or(column, |t| t.column),
-                            });
-                        }
-                    }
+                    // Parse parameters
+                    self.parse_lambda_parameters(&mut params)?;
                 }
                 
                 // Parse the colon and body
