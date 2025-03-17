@@ -1048,6 +1048,44 @@ impl Parser {
         })
     }
 
+    fn with_store_context(&self, expr: Expr) -> Result<Expr, ParseError> {
+        match expr {
+            Expr::Name { id, ctx: _, line, column } => {
+                Ok(Expr::Name { id, ctx: ExprContext::Store, line, column })
+            },
+            Expr::Tuple { elts, ctx: _, line, column } => {
+                let mut new_elts = Vec::new();
+                for elt in elts {
+                    new_elts.push(Box::new(self.with_store_context(*elt)?));
+                }
+                Ok(Expr::Tuple { elts: new_elts, ctx: ExprContext::Store, line, column })
+            },
+            Expr::List { elts, ctx: _, line, column } => {
+                let mut new_elts = Vec::new();
+                for elt in elts {
+                    new_elts.push(Box::new(self.with_store_context(*elt)?));
+                }
+                Ok(Expr::List { elts: new_elts, ctx: ExprContext::Store, line, column })
+            },
+            Expr::Starred { value, ctx: _, line, column } => {
+                Ok(Expr::Starred { value: Box::new(self.with_store_context(*value)?), ctx: ExprContext::Store, line, column })
+            },
+            Expr::Subscript { value, slice, ctx: _, line, column } => {
+                Ok(Expr::Subscript { value, slice, ctx: ExprContext::Store, line, column })
+            },
+            Expr::Attribute { value, attr, ctx: _, line, column } => {
+                Ok(Expr::Attribute { value, attr, ctx: ExprContext::Store, line, column })
+            },
+            _ => {
+                Err(ParseError::InvalidSyntax {
+                    message: "Invalid target for assignment".to_string(),
+                    line: expr.get_line(),
+                    column: expr.get_column(),
+                })
+            }
+        }
+    }
+
     fn parse_for(&mut self) -> Result<Stmt, ParseError> {
         let token = self.current.clone().unwrap();
         let line = token.line;
@@ -1104,7 +1142,8 @@ impl Parser {
                 } else if self.check(TokenType::LeftParen) {
                     // Handle nested tuple pattern like (y, z)
                     let nested_expr = self.parse_atom_expr()?;
-                    elts.push(Box::new(nested_expr));
+                    let nested_expr_with_store = self.with_store_context(nested_expr)?;
+                    elts.push(Box::new(nested_expr_with_store));
                 } else {
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected identifier or tuple in for loop target".to_string(),
@@ -1128,7 +1167,8 @@ impl Parser {
             })
         } else {
             // Use the original parse_atom_expr for simple targets
-            Box::new(self.parse_atom_expr()?)
+            let expr = self.parse_atom_expr()?;
+            Box::new(self.with_store_context(expr)?)
         };
 
         self.consume(TokenType::In, "in")?;
