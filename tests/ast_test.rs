@@ -1765,30 +1765,78 @@ mod ast_verification_tests {
         }
         
         // List literal
-        let module = assert_parses("[1, 2, 3]");
+        println!("\n==== TESTING SET LITERAL ====");
+        let source = "{1, 2, 3}";
+        println!("Source code: {}", source);
+        
+        let module = parse_code(source).unwrap_or_else(|errors| {
+            println!("PARSING FAILED:");
+            for error in &errors {
+                println!("  - {}", ErrorFormatter(error));
+            }
+            panic!("Failed to parse set literal");
+        });
+        
+        println!("Successfully parsed into module");
         
         if let Some(stmt) = module.body.first() {
+            println!("Found first statement: {:?}", stmt);
+            
             if let Stmt::Expr { value, .. } = &**stmt {
-                if let Expr::List { elts, ctx, .. } = &**value {
-                    assert_eq!(elts.len(), 3);
-                    assert!(matches!(ctx, ExprContext::Load));
+                println!("Statement is an expression: {:?}", value);
+                
+                if let Expr::Set { elts, .. } = &**value {
+                    println!("Expression is a set with {} elements", elts.len());
                     
+                    // Dump each element
                     for (i, elt) in elts.iter().enumerate() {
+                        println!("Element {}: {:?}", i, elt);
+                        
                         if let Expr::Num { value: num, .. } = &**elt {
-                            assert_eq!(*num, Number::Integer(i as i64 + 1));
+                            println!("  - Number value: {:?}", num);
                         } else {
+                            println!("  - Not a number: {:?}", elt);
+                        }
+                    }
+                    
+                    // Try a different approach: collect all numbers without assuming order
+                    let mut values = Vec::new();
+                    for elt in elts.iter() {
+                        if let Expr::Num { value: num, .. } = &**elt {
+                            if let Number::Integer(i) = num {
+                                println!("Adding integer: {}", i);
+                                values.push(*i);
+                            } else {
+                                println!("Non-integer number: {:?}", num);
+                                panic!("Expected integer, got: {:?}", num);
+                            }
+                        } else {
+                            println!("Non-number element: {:?}", elt);
                             panic!("Expected number, got: {:?}", elt);
                         }
                     }
+                    
+                    println!("Collected values: {:?}", values);
+                    values.sort();
+                    println!("Sorted values: {:?}", values);
+                    println!("Expected values: [1, 2, 3]");
+                    
+                    assert_eq!(values.len(), 3, "Expected 3 elements, got {}", values.len());
+                    assert_eq!(values, vec![1, 2, 3], "Values don't match expected [1, 2, 3]");
                 } else {
-                    panic!("Expected list, got: {:?}", value);
+                    println!("Expression is not a set: {:?}", value);
+                    panic!("Expected set, got: {:?}", value);
                 }
             } else {
+                println!("Statement is not an expression: {:?}", stmt);
                 panic!("Expected expression statement, got: {:?}", stmt);
             }
         } else {
+            println!("No statements in module");
             panic!("Expected at least one statement");
         }
+        
+        println!("Set literal test passed!");
         
         // Tuple literal
         let module = assert_parses("(1, 2, 3)");

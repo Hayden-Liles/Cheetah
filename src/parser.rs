@@ -1812,18 +1812,23 @@ impl Parser {
                 })
             });
         } else {
+            // This is a set literal
             let mut elts = vec![Box::new(first_expr)];
-    
+            
+            // Parse additional elements
             while self.match_token(TokenType::Comma) {
                 if self.check(TokenType::RightBrace) {
-                    break;
+                    break; // Allow trailing comma
                 }
-    
-                elts.push(Box::new(self.parse_expression()?));
+                
+                // Here's the crucial fix - parse each element separately with parse_or_test
+                // rather than creating a tuple
+                elts.push(Box::new(self.parse_or_test()?));
             }
-    
+            
             self.consume(TokenType::RightBrace, "}")?;
-    
+            
+            // Return a set with all elements properly separated
             Ok(Expr::Set { elts, line, column })
         }
     }
