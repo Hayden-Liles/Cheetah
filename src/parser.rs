@@ -1344,8 +1344,46 @@ impl Parser {
     
                     let mut generators = Vec::new();
     
-                    // Parse the target and iter
-                    let target = Box::new(this.parse_atom_expr()?);
+                    // Special handling for tuple targets in dict comprehensions
+                    let target = if this.check_identifier() && 
+                        this.tokens.front().map_or(false, |t| matches!(t.token_type, TokenType::Comma)) {
+                        // This is a tuple pattern like "k, v"
+                        let line = this.current.as_ref().unwrap().line;
+                        let column = this.current.as_ref().unwrap().column;
+    
+                        // Parse first element
+                        let first_id = this.consume_identifier("identifier")?;
+                        let first_expr = Expr::Name {
+                            id: first_id,
+                            ctx: ExprContext::Store,
+                            line,
+                            column,
+                        };
+    
+                        // Consume the comma
+                        this.advance();
+    
+                        // Parse second element
+                        let second_id = this.consume_identifier("identifier")?;
+                        let second_expr = Expr::Name {
+                            id: second_id,
+                            ctx: ExprContext::Store,
+                            line: this.last_token.as_ref().unwrap().line,
+                            column: this.last_token.as_ref().unwrap().column,
+                        };
+    
+                        // Create a tuple expression
+                        Box::new(Expr::Tuple {
+                            elts: vec![Box::new(first_expr), Box::new(second_expr)],
+                            ctx: ExprContext::Store,
+                            line,
+                            column,
+                        })
+                    } else {
+                        // Not a tuple pattern, use regular parsing
+                        Box::new(this.parse_atom_expr()?)
+                    };
+    
                     this.consume(TokenType::In, "in")?;
                     let iter = Box::new(this.parse_expression()?);
     
@@ -1373,7 +1411,41 @@ impl Parser {
                             false
                         };
     
-                        let target = Box::new(this.parse_atom_expr()?);
+                        // Handle tuple targets in additional for clauses too
+                        let target = if this.check_identifier() && 
+                            this.tokens.front().map_or(false, |t| matches!(t.token_type, TokenType::Comma)) {
+                            // Tuple pattern
+                            let line = this.current.as_ref().unwrap().line;
+                            let column = this.current.as_ref().unwrap().column;
+    
+                            let first_id = this.consume_identifier("identifier")?;
+                            let first_expr = Expr::Name {
+                                id: first_id,
+                                ctx: ExprContext::Store,
+                                line,
+                                column,
+                            };
+    
+                            this.advance(); // Consume comma
+                            
+                            let second_id = this.consume_identifier("identifier")?;
+                            let second_expr = Expr::Name {
+                                id: second_id,
+                                ctx: ExprContext::Store,
+                                line: this.last_token.as_ref().unwrap().line,
+                                column: this.last_token.as_ref().unwrap().column,
+                            };
+    
+                            Box::new(Expr::Tuple {
+                                elts: vec![Box::new(first_expr), Box::new(second_expr)],
+                                ctx: ExprContext::Store,
+                                line,
+                                column,
+                            })
+                        } else {
+                            Box::new(this.parse_atom_expr()?)
+                        };
+    
                         this.consume(TokenType::In, "in")?;
                         let iter = Box::new(this.parse_expression()?);
     
@@ -1412,8 +1484,46 @@ impl Parser {
                     this.advance(); // Consume 'async'
                     this.consume(TokenType::For, "for")?; // Consume 'for'
     
-                    // Parse the target and iter
-                    let target = Box::new(this.parse_atom_expr()?);
+                    // Special handling for tuple targets in async dict comprehensions
+                    let target = if this.check_identifier() && 
+                        this.tokens.front().map_or(false, |t| matches!(t.token_type, TokenType::Comma)) {
+                        // This is a tuple pattern like "k, v"
+                        let line = this.current.as_ref().unwrap().line;
+                        let column = this.current.as_ref().unwrap().column;
+    
+                        // Parse first element
+                        let first_id = this.consume_identifier("identifier")?;
+                        let first_expr = Expr::Name {
+                            id: first_id,
+                            ctx: ExprContext::Store,
+                            line,
+                            column,
+                        };
+    
+                        // Consume the comma
+                        this.advance();
+    
+                        // Parse second element
+                        let second_id = this.consume_identifier("identifier")?;
+                        let second_expr = Expr::Name {
+                            id: second_id,
+                            ctx: ExprContext::Store,
+                            line: this.last_token.as_ref().unwrap().line,
+                            column: this.last_token.as_ref().unwrap().column,
+                        };
+    
+                        // Create a tuple expression
+                        Box::new(Expr::Tuple {
+                            elts: vec![Box::new(first_expr), Box::new(second_expr)],
+                            ctx: ExprContext::Store,
+                            line,
+                            column,
+                        })
+                    } else {
+                        // Not a tuple pattern, use regular parsing
+                        Box::new(this.parse_atom_expr()?)
+                    };
+    
                     this.consume(TokenType::In, "in")?;
                     let iter = Box::new(this.parse_expression()?);
     
@@ -1429,7 +1539,7 @@ impl Parser {
                         is_async: true, // This is an async comprehension
                     });
     
-                    // Additional for/async for clauses
+                    // Additional for/async for clauses with tuple target handling
                     while this.match_token(TokenType::For) || 
                          (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
                         // Check if this is an async for
@@ -1441,7 +1551,41 @@ impl Parser {
                             false
                         };
     
-                        let target = Box::new(this.parse_atom_expr()?);
+                        // Handle tuple targets in additional for clauses too
+                        let target = if this.check_identifier() && 
+                            this.tokens.front().map_or(false, |t| matches!(t.token_type, TokenType::Comma)) {
+                            // Tuple pattern
+                            let line = this.current.as_ref().unwrap().line;
+                            let column = this.current.as_ref().unwrap().column;
+    
+                            let first_id = this.consume_identifier("identifier")?;
+                            let first_expr = Expr::Name {
+                                id: first_id,
+                                ctx: ExprContext::Store,
+                                line,
+                                column,
+                            };
+    
+                            this.advance(); // Consume comma
+                            
+                            let second_id = this.consume_identifier("identifier")?;
+                            let second_expr = Expr::Name {
+                                id: second_id,
+                                ctx: ExprContext::Store,
+                                line: this.last_token.as_ref().unwrap().line,
+                                column: this.last_token.as_ref().unwrap().column,
+                            };
+    
+                            Box::new(Expr::Tuple {
+                                elts: vec![Box::new(first_expr), Box::new(second_expr)],
+                                ctx: ExprContext::Store,
+                                line,
+                                column,
+                            })
+                        } else {
+                            Box::new(this.parse_atom_expr()?)
+                        };
+    
                         this.consume(TokenType::In, "in")?;
                         let iter = Box::new(this.parse_expression()?);
     
