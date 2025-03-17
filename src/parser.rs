@@ -742,23 +742,56 @@ impl Parser {
                 column: self.last_token.as_ref().map_or(0, |t| t.column),
             });
         }
-
+    
         let token = self.current.clone().unwrap();
         let line = token.line;
         let column = token.column;
-
+    
         // Handle different token types
         match &token.token_type {
+            // Add this case to handle star expressions (*args)
+            TokenType::Multiply => {
+                self.advance(); // Consume the Multiply token
+    
+                // Check if we have an identifier after *
+                if let Some(id_token) = &self.current {
+                    if let TokenType::Identifier(name) = &id_token.token_type {
+                        let args_name = name.clone();
+                        self.advance(); // Consume the identifier
+    
+                        // Add to bases list with a Starred expression
+                        bases.push(Box::new(Expr::Starred {
+                            value: Box::new(Expr::Name {
+                                id: args_name,
+                                ctx: ExprContext::Load,
+                                line,
+                                column: column + 1, // +1 to account for the * character
+                            }),
+                            ctx: ExprContext::Load,
+                            line,
+                            column,
+                        }));
+    
+                        return Ok(());
+                    }
+                }
+    
+                return Err(ParseError::InvalidSyntax {
+                    message: "Expected identifier after *".to_string(),
+                    line,
+                    column,
+                });
+            },
             // If it's a Power token (**), handle **kwargs
             TokenType::Power => {
                 self.advance(); // Consume the Power token
-
+    
                 // Check if we have an identifier after **
                 if let Some(id_token) = &self.current {
                     if let TokenType::Identifier(name) = &id_token.token_type {
                         let kwargs_name = name.clone();
                         self.advance(); // Consume the identifier
-
+    
                         // Add to keywords list with None key (representing **)
                         keywords.push((
                             None,
@@ -769,18 +802,18 @@ impl Parser {
                                 column: column + 2, // +2 to account for the ** characters
                             }),
                         ));
-
+    
                         return Ok(());
                     }
                 }
-
+    
                 return Err(ParseError::InvalidSyntax {
                     message: "Expected identifier after **".to_string(),
                     line,
                     column,
                 });
             }
-
+    
             // If it's a comma, we have an empty argument
             TokenType::Comma => {
                 return Err(ParseError::UnexpectedToken {
@@ -790,17 +823,17 @@ impl Parser {
                     column,
                 });
             }
-
+    
             // If it's an identifier, it might be a base class, a keyword arg, or a function call
             TokenType::Identifier(name) => {
                 let id_name = name.clone();
                 self.advance(); // Consume the identifier
-
+    
                 // If next token is =, this is a keyword argument
                 if let Some(token) = &self.current {
                     if matches!(token.token_type, TokenType::Assign) {
                         self.advance(); // Consume the = token
-
+    
                         // Parse the expression after =
                         let value = self.parse_or_test()?; // Using parse_or_test instead of parse_expression
                         keywords.push((Some(id_name), Box::new(value)));
@@ -809,11 +842,11 @@ impl Parser {
                     // If next token is (, this is a function call base class
                     else if matches!(token.token_type, TokenType::LeftParen) {
                         self.advance(); // Consume the ( token
-
+    
                         // Parse function call arguments
                         let mut args = Vec::new();
                         let mut kw_args = Vec::new();
-
+    
                         if let Some(token) = &self.current {
                             if !matches!(token.token_type, TokenType::RightParen) {
                                 let (more_args, more_kw_args) = self.parse_more_arguments()?;
@@ -824,7 +857,7 @@ impl Parser {
                                 self.advance(); // Consume the ) token
                             }
                         }
-
+    
                         // Create Call expression for function-based base class
                         bases.push(Box::new(Expr::Call {
                             func: Box::new(Expr::Name {
@@ -841,7 +874,7 @@ impl Parser {
                         return Ok(());
                     }
                 }
-
+    
                 // If it's just an identifier, it's a simple base class
                 bases.push(Box::new(Expr::Name {
                     id: id_name,
@@ -851,7 +884,7 @@ impl Parser {
                 }));
                 return Ok(());
             }
-
+    
             // For all other tokens, try to parse as an expression
             _ => {
                 // Let parse_atom_expr handle the error if it's an invalid token
