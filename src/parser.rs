@@ -145,7 +145,7 @@ impl Parser {
         let token_type;
         let line;
         let column;
-
+    
         match &self.current {
             Some(token) => {
                 token_type = token.token_type.clone();
@@ -160,7 +160,7 @@ impl Parser {
                 });
             }
         }
-
+    
         if matches!(
             token_type,
             TokenType::Plus
@@ -178,7 +178,7 @@ impl Parser {
                 });
             }
         }
-
+    
         if matches!(
             token_type,
             TokenType::IntLiteral(_)
@@ -191,7 +191,7 @@ impl Parser {
             let expr = self.parse_expression()?;
             let expr_line = expr.get_line();
             let expr_column = expr.get_column();
-
+    
             if self.match_token(TokenType::Assign) {
                 return Err(ParseError::InvalidSyntax {
                     message: "Cannot assign to literal".to_string(),
@@ -199,7 +199,7 @@ impl Parser {
                     column: expr_column,
                 });
             }
-
+    
             self.consume_newline()?;
             return Ok(Stmt::Expr {
                 value: Box::new(expr),
@@ -207,26 +207,26 @@ impl Parser {
                 column: expr_column,
             });
         }
-
+    
         if matches!(token_type, TokenType::Yield) {
             let yield_expr = self.parse_yield_expr()?;
             let line = yield_expr.get_line();
             let column = yield_expr.get_column();
-
+    
             self.consume_newline()?;
-
+    
             return Ok(Stmt::Expr {
                 value: Box::new(yield_expr),
                 line,
                 column,
             });
         }
-
+    
         if matches!(token_type, TokenType::At) {
             let decorators = self.parse_decorators()?;
-
+    
             let decorated_token_type = self.current.as_ref().map(|t| t.token_type.clone());
-
+    
             match decorated_token_type {
                 Some(TokenType::Def) => {
                     let mut func_def = self.parse_function_def()?;
@@ -260,47 +260,47 @@ impl Parser {
                 }
             }
         }
-
+    
         if matches!(token_type, TokenType::Async) {
             self.advance();
-
+    
             let async_next_token_type = self.current.as_ref().map(|t| t.token_type.clone());
-
+    
             match async_next_token_type {
                 Some(TokenType::Def) => {
                     let mut func_def = self.parse_function_def()?;
-
+    
                     if let Stmt::FunctionDef {
                         ref mut is_async, ..
                     } = func_def
                     {
                         *is_async = true;
                     }
-
+    
                     return Ok(func_def);
                 }
                 Some(TokenType::For) => {
                     let mut for_stmt = self.parse_for()?;
-
+    
                     if let Stmt::For {
                         ref mut is_async, ..
                     } = for_stmt
                     {
                         *is_async = true;
                     }
-
+    
                     return Ok(for_stmt);
                 }
                 Some(TokenType::With) => {
                     let mut with_stmt = self.parse_with()?;
-
+    
                     if let Stmt::With {
                         ref mut is_async, ..
                     } = with_stmt
                     {
                         *is_async = true;
                     }
-
+    
                     return Ok(with_stmt);
                 }
                 _ => {
@@ -312,7 +312,7 @@ impl Parser {
                 }
             }
         }
-
+    
         match token_type {
             TokenType::Def => self.parse_function_def(),
             TokenType::Class => self.parse_class_def(),
@@ -321,7 +321,7 @@ impl Parser {
             TokenType::If => {
                 self.advance();
                 let test = Box::new(self.parse_expression()?);
-
+    
                 if !self.check(TokenType::Colon) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected ':' after if condition".to_string(),
@@ -329,12 +329,12 @@ impl Parser {
                         column: self.current.as_ref().map_or(column + 2, |t| t.column),
                     });
                 }
-
+    
                 self.consume(TokenType::Colon, ":")?;
                 let body = self.parse_suite()?;
-
+    
                 let mut orelse = Vec::new();
-
+    
                 if self.check(TokenType::Elif) {
                     let elif_stmt = self.parse_if()?;
                     orelse.push(Box::new(elif_stmt));
@@ -342,7 +342,7 @@ impl Parser {
                     self.consume(TokenType::Colon, ":")?;
                     orelse = self.parse_suite()?;
                 }
-
+    
                 Ok(Stmt::If {
                     test,
                     body,
@@ -369,9 +369,9 @@ impl Parser {
                 let expr = self.parse_yield_expr()?;
                 let line = expr.get_line();
                 let column = expr.get_column();
-
+    
                 self.consume_newline()?;
-
+    
                 Ok(Stmt::Expr {
                     value: Box::new(expr),
                     line,
@@ -391,7 +391,7 @@ impl Parser {
                     let expr = self.parse_expression()?;
                     let line = expr.get_line();
                     let column = expr.get_column();
-
+    
                     if self.match_token(TokenType::Assign) {
                         return Err(ParseError::InvalidSyntax {
                             message: "Cannot assign to literal".to_string(),
@@ -399,7 +399,7 @@ impl Parser {
                             column,
                         });
                     }
-
+    
                     self.consume_newline()?;
                     return Ok(Stmt::Expr {
                         value: Box::new(expr),
@@ -407,7 +407,7 @@ impl Parser {
                         column,
                     });
                 }
-
+    
                 self.parse_expr_statement()
             }
         }
@@ -1199,28 +1199,28 @@ impl Parser {
         let token = self.current.clone().unwrap();
         let line = token.line;
         let column = token.column;
-
+    
         self.advance(); // Consume 'with'
-
+    
         let mut items = Vec::new();
-
+    
         // Parse context managers
         loop {
             let context_expr = Box::new(self.parse_expression()?);
-
+    
             let optional_vars = if self.match_token(TokenType::As) {
                 Some(Box::new(self.parse_atom_expr()?))
             } else {
                 None
             };
-
+    
             items.push((context_expr, optional_vars));
-
+    
             // If we see a comma, there are more context managers
             if !self.match_token(TokenType::Comma) {
                 break;
             }
-
+    
             // If after a comma we see a colon, that's a syntax error
             if self.check(TokenType::Colon) {
                 return Err(ParseError::InvalidSyntax {
@@ -1230,17 +1230,17 @@ impl Parser {
                 });
             }
         }
-
+    
         // Now we should see a colon
         self.consume(TokenType::Colon, ":")?;
-
+    
         // Parse the suite (body of the with statement)
         let body = self.parse_suite()?;
-
+    
         Ok(Stmt::With {
             items,
             body,
-            is_async: false,
+            is_async: false, // This will be set to true in parse_statement when "async with" is found
             line,
             column,
         })
@@ -1320,123 +1320,146 @@ impl Parser {
                 column,
             });
         }
-
+    
         // Parse the first item (could be key:value or just a value)
         let first_expr = self.parse_or_test()?; // Use parse_or_test instead of parse_expression
-
+    
         // Check if this is a dictionary or a set
         if self.match_token(TokenType::Colon) {
             // This is a dictionary
             let mut keys = Vec::new();
             let mut values = Vec::new();
-
+    
             // Add the first key-value pair
             keys.push(Some(Box::new(first_expr)));
             let first_value = Box::new(self.parse_or_test()?); // Use parse_or_test here too
             values.push(first_value);
-
-            // Check if this is a dict comprehension
+    
+            // Check if this is a dict comprehension (either 'for' or 'async for')
             if self.match_token(TokenType::For) {
-                // Dict comprehension
+                // Regular dict comprehension
                 return self.with_comprehension_context(|this| {
                     let key = keys[0].as_ref().unwrap().clone();
                     let value = values[0].clone();
-
+    
                     let mut generators = Vec::new();
-
-                    // First comprehension clause, checking specifically for tuple targets
-                    // First determine if this is a tuple target by looking for either
-                    // plain identifier or tuple pattern (identifier followed by comma)
-                    if this.check_identifier() {
-                        // Peek ahead to see if there's a comma after the identifier
-                        let is_tuple_pattern = this
-                            .tokens
-                            .front()
-                            .map_or(false, |t| matches!(t.token_type, TokenType::Comma));
-
-                        let target = if is_tuple_pattern {
-                            // This is a tuple pattern like "k, v"
-                            let line = this.current.as_ref().unwrap().line;
-                            let column = this.current.as_ref().unwrap().column;
-
-                            // Parse first element
-                            let first_id = this.consume_identifier("identifier")?;
-                            let first_expr = Expr::Name {
-                                id: first_id,
-                                ctx: ExprContext::Store,
-                                line,
-                                column,
-                            };
-
-                            // Consume the comma
-                            this.advance();
-
-                            // Parse second element
-                            let second_id = this.consume_identifier("identifier")?;
-                            let second_expr = Expr::Name {
-                                id: second_id,
-                                ctx: ExprContext::Store,
-                                line: this.last_token.as_ref().unwrap().line,
-                                column: this.last_token.as_ref().unwrap().column,
-                            };
-
-                            // Create a tuple expression
-                            Box::new(Expr::Tuple {
-                                elts: vec![Box::new(first_expr), Box::new(second_expr)],
-                                ctx: ExprContext::Store,
-                                line,
-                                column,
-                            })
+    
+                    // Parse the target and iter
+                    let target = Box::new(this.parse_atom_expr()?);
+                    this.consume(TokenType::In, "in")?;
+                    let iter = Box::new(this.parse_expression()?);
+    
+                    let mut ifs = Vec::new();
+                    while this.match_token(TokenType::If) {
+                        ifs.push(Box::new(this.parse_or_test()?));
+                    }
+    
+                    generators.push(Comprehension {
+                        target,
+                        iter,
+                        ifs,
+                        is_async: false, // Regular 'for'
+                    });
+    
+                    // Additional for/async for clauses
+                    while this.match_token(TokenType::For) || 
+                         (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
+                        // Check if this is an async for
+                        let is_async = if this.check(TokenType::Async) {
+                            this.advance(); // Consume 'async'
+                            this.consume(TokenType::For, "for")?; // Consume 'for'
+                            true
                         } else {
-                            // Simple target
-                            Box::new(this.parse_atom_expr()?)
+                            false
                         };
-
-                        this.consume(TokenType::In, "in")?;
-                        let iter = Box::new(this.parse_expression()?);
-
-                        let mut ifs = Vec::new();
-                        while this.match_token(TokenType::If) {
-                            ifs.push(Box::new(this.parse_or_test()?));
-                        }
-
-                        generators.push(Comprehension {
-                            target,
-                            iter,
-                            ifs,
-                            is_async: false,
-                        });
-                    } else {
-                        return Err(ParseError::InvalidSyntax {
-                            message: "Expected target after 'for'".to_string(),
-                            line: this.current.as_ref().map_or(0, |t| t.line),
-                            column: this.current.as_ref().map_or(0, |t| t.column),
-                        });
-                    }
-
-                    // Additional comprehension clauses if any
-                    while this.match_token(TokenType::For) {
-                        // Similar logic for additional for clauses...
+    
                         let target = Box::new(this.parse_atom_expr()?);
-
                         this.consume(TokenType::In, "in")?;
                         let iter = Box::new(this.parse_expression()?);
-
+    
                         let mut ifs = Vec::new();
                         while this.match_token(TokenType::If) {
                             ifs.push(Box::new(this.parse_or_test()?));
                         }
-
+    
                         generators.push(Comprehension {
                             target,
                             iter,
                             ifs,
-                            is_async: false,
+                            is_async,
                         });
                     }
-
+    
                     this.consume(TokenType::RightBrace, "}")?;
-
+    
+                    Ok(Expr::DictComp {
+                        key,
+                        value,
+                        generators,
+                        line,
+                        column,
+                    })
+                });
+            } else if self.check(TokenType::Async) && self.peek_matches(TokenType::For) {
+                // Async dict comprehension
+                return self.with_comprehension_context(|this| {
+                    let key = keys[0].as_ref().unwrap().clone();
+                    let value = values[0].clone();
+    
+                    let mut generators = Vec::new();
+    
+                    // Consume 'async' and 'for'
+                    this.advance(); // Consume 'async'
+                    this.consume(TokenType::For, "for")?; // Consume 'for'
+    
+                    // Parse the target and iter
+                    let target = Box::new(this.parse_atom_expr()?);
+                    this.consume(TokenType::In, "in")?;
+                    let iter = Box::new(this.parse_expression()?);
+    
+                    let mut ifs = Vec::new();
+                    while this.match_token(TokenType::If) {
+                        ifs.push(Box::new(this.parse_or_test()?));
+                    }
+    
+                    generators.push(Comprehension {
+                        target,
+                        iter,
+                        ifs,
+                        is_async: true, // This is an async comprehension
+                    });
+    
+                    // Additional for/async for clauses
+                    while this.match_token(TokenType::For) || 
+                         (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
+                        // Check if this is an async for
+                        let is_async = if this.check(TokenType::Async) {
+                            this.advance(); // Consume 'async'
+                            this.consume(TokenType::For, "for")?; // Consume 'for'
+                            true
+                        } else {
+                            false
+                        };
+    
+                        let target = Box::new(this.parse_atom_expr()?);
+                        this.consume(TokenType::In, "in")?;
+                        let iter = Box::new(this.parse_expression()?);
+    
+                        let mut ifs = Vec::new();
+                        while this.match_token(TokenType::If) {
+                            ifs.push(Box::new(this.parse_or_test()?));
+                        }
+    
+                        generators.push(Comprehension {
+                            target,
+                            iter,
+                            ifs,
+                            is_async,
+                        });
+                    }
+    
+                    this.consume(TokenType::RightBrace, "}")?;
+    
                     Ok(Expr::DictComp {
                         key,
                         value,
@@ -1446,16 +1469,16 @@ impl Parser {
                     })
                 });
             }
-
+    
             // Regular dictionary with possibly more key-value pairs
             while self.match_token(TokenType::Comma) {
                 if self.check(TokenType::RightBrace) {
                     break;
                 }
-
+    
                 // Parse the next key - use parse_or_test() instead of parse_expression()
                 let key = self.parse_or_test()?;
-
+    
                 // We need to explicitly check for the colon
                 if !self.match_token(TokenType::Colon) {
                     return Err(ParseError::InvalidSyntax {
@@ -1464,16 +1487,16 @@ impl Parser {
                         column: self.current.as_ref().map_or(column, |t| t.column),
                     });
                 }
-
+    
                 // Now parse the value - use parse_or_test() here too
                 let value = self.parse_or_test()?;
-
+    
                 keys.push(Some(Box::new(key)));
                 values.push(Box::new(value));
             }
-
+    
             self.consume(TokenType::RightBrace, "}")?;
-
+    
             Ok(Expr::Dict {
                 keys,
                 values,
@@ -1481,48 +1504,122 @@ impl Parser {
                 column,
             })
         } else if self.match_token(TokenType::For) {
-            // Set comprehension
+            // Set comprehension with regular for
             return self.with_comprehension_context(|this| {
                 let mut generators = Vec::new();
-
-                // First comprehension clause
+    
+                // Parse the target and iter
                 let target = Box::new(this.parse_atom_expr()?);
                 this.consume(TokenType::In, "in")?;
                 let iter = Box::new(this.parse_expression()?);
-
+    
                 let mut ifs = Vec::new();
                 while this.match_token(TokenType::If) {
                     ifs.push(Box::new(this.parse_or_test()?));
                 }
-
+    
                 generators.push(Comprehension {
                     target,
                     iter,
                     ifs,
-                    is_async: false,
+                    is_async: false, // Regular 'for'
                 });
-
+    
                 // Additional comprehension clauses if any
-                while this.match_token(TokenType::For) {
+                while this.match_token(TokenType::For) || 
+                     (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
+                    // Check if this is an async for
+                    let is_async = if this.check(TokenType::Async) {
+                        this.advance(); // Consume 'async'
+                        this.consume(TokenType::For, "for")?; // Consume 'for'
+                        true
+                    } else {
+                        false
+                    };
+    
                     let target = Box::new(this.parse_atom_expr()?);
                     this.consume(TokenType::In, "in")?;
                     let iter = Box::new(this.parse_expression()?);
-
+    
                     let mut ifs = Vec::new();
                     while this.match_token(TokenType::If) {
                         ifs.push(Box::new(this.parse_or_test()?));
                     }
-
+    
                     generators.push(Comprehension {
                         target,
                         iter,
                         ifs,
-                        is_async: false,
+                        is_async,
                     });
                 }
-
+    
                 this.consume(TokenType::RightBrace, "}")?;
-
+    
+                Ok(Expr::SetComp {
+                    elt: Box::new(first_expr),
+                    generators,
+                    line,
+                    column,
+                })
+            });
+        } else if self.check(TokenType::Async) && self.peek_matches(TokenType::For) {
+            // Set comprehension with async for
+            return self.with_comprehension_context(|this| {
+                let mut generators = Vec::new();
+    
+                // Consume 'async' and 'for'
+                this.advance(); // Consume 'async'
+                this.consume(TokenType::For, "for")?; // Consume 'for'
+    
+                // Parse the target and iter
+                let target = Box::new(this.parse_atom_expr()?);
+                this.consume(TokenType::In, "in")?;
+                let iter = Box::new(this.parse_expression()?);
+    
+                let mut ifs = Vec::new();
+                while this.match_token(TokenType::If) {
+                    ifs.push(Box::new(this.parse_or_test()?));
+                }
+    
+                generators.push(Comprehension {
+                    target,
+                    iter,
+                    ifs,
+                    is_async: true, // This is an async comprehension
+                });
+    
+                // Additional comprehension clauses if any
+                while this.match_token(TokenType::For) || 
+                     (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
+                    // Check if this is an async for
+                    let is_async = if this.check(TokenType::Async) {
+                        this.advance(); // Consume 'async'
+                        this.consume(TokenType::For, "for")?; // Consume 'for'
+                        true
+                    } else {
+                        false
+                    };
+    
+                    let target = Box::new(this.parse_atom_expr()?);
+                    this.consume(TokenType::In, "in")?;
+                    let iter = Box::new(this.parse_expression()?);
+    
+                    let mut ifs = Vec::new();
+                    while this.match_token(TokenType::If) {
+                        ifs.push(Box::new(this.parse_or_test()?));
+                    }
+    
+                    generators.push(Comprehension {
+                        target,
+                        iter,
+                        ifs,
+                        is_async,
+                    });
+                }
+    
+                this.consume(TokenType::RightBrace, "}")?;
+    
                 Ok(Expr::SetComp {
                     elt: Box::new(first_expr),
                     generators,
@@ -1532,17 +1629,17 @@ impl Parser {
             });
         } else {
             let mut elts = vec![Box::new(first_expr)];
-
+    
             while self.match_token(TokenType::Comma) {
                 if self.check(TokenType::RightBrace) {
                     break;
                 }
-
+    
                 elts.push(Box::new(self.parse_expression()?));
             }
-
+    
             self.consume(TokenType::RightBrace, "}")?;
-
+    
             Ok(Expr::Set { elts, line, column })
         }
     }
@@ -3469,7 +3566,7 @@ impl Parser {
         };
         let line = token.line;
         let column = token.column;
-
+    
         match &token.token_type {
             TokenType::Identifier(name) => {
                 self.advance();
@@ -3485,7 +3582,7 @@ impl Parser {
             }
             TokenType::LeftParen => {
                 self.advance();
-
+    
                 if self.match_token(TokenType::RightParen) {
                     if !self.is_in_comprehension_context {
                         return Err(ParseError::InvalidSyntax {
@@ -3502,49 +3599,123 @@ impl Parser {
                     })
                 } else {
                     let expr = self.parse_expression()?;
-
+    
                     if self.match_token(TokenType::For) {
                         let elt = expr;
-
+    
                         return self.with_comprehension_context(|this| {
                             let mut generators = Vec::new();
-
+    
                             let target = Box::new(this.parse_atom_expr()?);
                             this.consume(TokenType::In, "in")?;
                             let iter = Box::new(this.parse_expression()?);
-
+    
                             let mut ifs = Vec::new();
                             while this.match_token(TokenType::If) {
                                 ifs.push(Box::new(this.parse_or_test()?));
                             }
-
+    
                             generators.push(Comprehension {
                                 target,
                                 iter,
                                 ifs,
                                 is_async: false,
                             });
-
-                            while this.match_token(TokenType::For) {
+    
+                            while this.match_token(TokenType::For) || 
+                                 (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
+                                // Check if this is an async for
+                                let is_async = if this.check(TokenType::Async) {
+                                    this.advance(); // Consume 'async'
+                                    this.consume(TokenType::For, "for")?; // Consume 'for'
+                                    true
+                                } else {
+                                    false
+                                };
+    
                                 let target = Box::new(this.parse_atom_expr()?);
                                 this.consume(TokenType::In, "in")?;
                                 let iter = Box::new(this.parse_expression()?);
-
+    
                                 let mut ifs = Vec::new();
                                 while this.match_token(TokenType::If) {
                                     ifs.push(Box::new(this.parse_or_test()?));
                                 }
-
+    
                                 generators.push(Comprehension {
                                     target,
                                     iter,
                                     ifs,
-                                    is_async: false,
+                                    is_async,
                                 });
                             }
-
+    
                             this.consume(TokenType::RightParen, ")")?;
-
+    
+                            Ok(Expr::GeneratorExp {
+                                elt: Box::new(elt),
+                                generators,
+                                line,
+                                column,
+                            })
+                        });
+                    } else if self.check(TokenType::Async) && self.peek_matches(TokenType::For) {
+                        // Handle async generator expression
+                        let elt = expr;
+    
+                        return self.with_comprehension_context(|this| {
+                            let mut generators = Vec::new();
+    
+                            // Consume 'async' and 'for'
+                            this.advance(); // Consume 'async'
+                            this.consume(TokenType::For, "for")?; // Consume 'for'
+    
+                            let target = Box::new(this.parse_atom_expr()?);
+                            this.consume(TokenType::In, "in")?;
+                            let iter = Box::new(this.parse_expression()?);
+    
+                            let mut ifs = Vec::new();
+                            while this.match_token(TokenType::If) {
+                                ifs.push(Box::new(this.parse_or_test()?));
+                            }
+    
+                            generators.push(Comprehension {
+                                target,
+                                iter,
+                                ifs,
+                                is_async: true, // This is an async comprehension
+                            });
+    
+                            while this.match_token(TokenType::For) || 
+                                 (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
+                                // Check if this is an async for
+                                let is_async = if this.check(TokenType::Async) {
+                                    this.advance(); // Consume 'async'
+                                    this.consume(TokenType::For, "for")?; // Consume 'for'
+                                    true
+                                } else {
+                                    false
+                                };
+    
+                                let target = Box::new(this.parse_atom_expr()?);
+                                this.consume(TokenType::In, "in")?;
+                                let iter = Box::new(this.parse_expression()?);
+    
+                                let mut ifs = Vec::new();
+                                while this.match_token(TokenType::If) {
+                                    ifs.push(Box::new(this.parse_or_test()?));
+                                }
+    
+                                generators.push(Comprehension {
+                                    target,
+                                    iter,
+                                    ifs,
+                                    is_async,
+                                });
+                            }
+    
+                            this.consume(TokenType::RightParen, ")")?;
+    
                             Ok(Expr::GeneratorExp {
                                 elt: Box::new(elt),
                                 generators,
@@ -3554,13 +3725,13 @@ impl Parser {
                         });
                     } else if self.match_token(TokenType::Comma) {
                         let mut elts = vec![Box::new(expr)];
-
+    
                         if !self.check(TokenType::RightParen) {
                             elts.extend(self.parse_expr_list()?);
                         }
-
+    
                         self.consume(TokenType::RightParen, ")")?;
-
+    
                         Ok(Expr::Tuple {
                             elts,
                             ctx: ExprContext::Load,
@@ -3575,7 +3746,7 @@ impl Parser {
             }
             TokenType::LeftBracket => {
                 self.advance();
-
+    
                 if self.check(TokenType::EOF) || self.check_newline() {
                     return Err(ParseError::InvalidSyntax {
                         message: "Unclosed bracket".to_string(),
@@ -3583,7 +3754,7 @@ impl Parser {
                         column,
                     });
                 }
-
+    
                 if self.match_token(TokenType::RightBracket) {
                     Ok(Expr::List {
                         elts: Vec::new(),
@@ -3593,47 +3764,120 @@ impl Parser {
                     })
                 } else {
                     let first_expr = self.parse_expression()?;
-
+    
                     if self.match_token(TokenType::For) {
+                        // Regular list comprehension
                         return self.with_comprehension_context(|this| {
                             let mut generators = Vec::new();
-
+    
                             let target = Box::new(this.parse_atom_expr()?);
                             this.consume(TokenType::In, "in")?;
                             let iter = Box::new(this.parse_expression()?);
-
+    
                             let mut ifs = Vec::new();
                             while this.match_token(TokenType::If) {
                                 ifs.push(Box::new(this.parse_or_test()?));
                             }
-
+    
                             generators.push(Comprehension {
                                 target,
                                 iter,
                                 ifs,
                                 is_async: false,
                             });
-
-                            while this.match_token(TokenType::For) {
+    
+                            while this.match_token(TokenType::For) || 
+                                 (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
+                                // Check if this is an async for
+                                let is_async = if this.check(TokenType::Async) {
+                                    this.advance(); // Consume 'async'
+                                    this.consume(TokenType::For, "for")?; // Consume 'for'
+                                    true
+                                } else {
+                                    false
+                                };
+    
                                 let target = Box::new(this.parse_atom_expr()?);
                                 this.consume(TokenType::In, "in")?;
                                 let iter = Box::new(this.parse_expression()?);
-
+    
                                 let mut ifs = Vec::new();
                                 while this.match_token(TokenType::If) {
                                     ifs.push(Box::new(this.parse_or_test()?));
                                 }
-
+    
                                 generators.push(Comprehension {
                                     target,
                                     iter,
                                     ifs,
-                                    is_async: false,
+                                    is_async,
                                 });
                             }
-
+    
                             this.consume(TokenType::RightBracket, "]")?;
-
+    
+                            Ok(Expr::ListComp {
+                                elt: Box::new(first_expr),
+                                generators,
+                                line,
+                                column,
+                            })
+                        });
+                    } else if self.check(TokenType::Async) && self.peek_matches(TokenType::For) {
+                        // Async list comprehension
+                        return self.with_comprehension_context(|this| {
+                            let mut generators = Vec::new();
+    
+                            // Consume 'async' and 'for'
+                            this.advance(); // Consume 'async'
+                            this.consume(TokenType::For, "for")?; // Consume 'for'
+    
+                            let target = Box::new(this.parse_atom_expr()?);
+                            this.consume(TokenType::In, "in")?;
+                            let iter = Box::new(this.parse_expression()?);
+    
+                            let mut ifs = Vec::new();
+                            while this.match_token(TokenType::If) {
+                                ifs.push(Box::new(this.parse_or_test()?));
+                            }
+    
+                            generators.push(Comprehension {
+                                target,
+                                iter,
+                                ifs,
+                                is_async: true, // This is an async comprehension
+                            });
+    
+                            while this.match_token(TokenType::For) || 
+                                 (this.check(TokenType::Async) && this.peek_matches(TokenType::For)) {
+                                // Check if this is an async for
+                                let is_async = if this.check(TokenType::Async) {
+                                    this.advance(); // Consume 'async'
+                                    this.consume(TokenType::For, "for")?; // Consume 'for'
+                                    true
+                                } else {
+                                    false
+                                };
+    
+                                let target = Box::new(this.parse_atom_expr()?);
+                                this.consume(TokenType::In, "in")?;
+                                let iter = Box::new(this.parse_expression()?);
+    
+                                let mut ifs = Vec::new();
+                                while this.match_token(TokenType::If) {
+                                    ifs.push(Box::new(this.parse_or_test()?));
+                                }
+    
+                                generators.push(Comprehension {
+                                    target,
+                                    iter,
+                                    ifs,
+                                    is_async,
+                                });
+                            }
+    
+                            this.consume(TokenType::RightBracket, "]")?;
+    
                             Ok(Expr::ListComp {
                                 elt: Box::new(first_expr),
                                 generators,
@@ -3660,7 +3904,7 @@ impl Parser {
             }
             TokenType::LeftBrace => {
                 self.advance();
-
+    
                 if self.check(TokenType::EOF) || self.check_newline() {
                     return Err(ParseError::InvalidSyntax {
                         message: "Unclosed brace".to_string(),
@@ -3668,7 +3912,7 @@ impl Parser {
                         column,
                     });
                 }
-
+    
                 self.parse_dict_literal(line, column)
             }
             TokenType::IntLiteral(value) => {
@@ -3691,16 +3935,16 @@ impl Parser {
                 self.advance(); // Consume the lambda keyword
                 let line_start = line;
                 let column_start = column;
-
+    
                 // Parse the parameter list
                 let params = self.parse_lambda_parameters()?;
-
+    
                 // Parse the colon
                 self.consume(TokenType::Colon, ":")?;
-
+    
                 // Parse the body
                 let body = Box::new(self.parse_expression()?);
-
+    
                 // Create the lambda expression
                 Ok(Expr::Lambda {
                     args: params,
