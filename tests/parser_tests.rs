@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod parser_tests {
     use cheetah::ast::{Expr, Module, Number, Stmt};
     use cheetah::lexer::Lexer;
     use cheetah::parser::{ParseError, Parser};

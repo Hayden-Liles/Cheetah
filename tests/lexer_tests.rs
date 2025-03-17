@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod lexer_tests {
     use cheetah::lexer::{Lexer, LexerConfig, Token, TokenType};
 
     #[test]
