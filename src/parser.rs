@@ -4586,7 +4586,7 @@ impl Parser {
 
     fn parse_expr_list(&mut self) -> Result<Vec<Box<Expr>>, ParseError> {
         let mut expressions = Vec::new();
-
+    
         if self.check(TokenType::RightParen)
             || self.check(TokenType::RightBracket)
             || self.check(TokenType::RightBrace)
@@ -4596,14 +4596,15 @@ impl Parser {
         {
             return Ok(expressions);
         }
-
+    
+        // This part needs to be moved down to handle starred expressions properly
         if self.match_token(TokenType::Multiply) {
             let token = self.previous_token();
             let line = token.line;
             let column = token.column;
-
+    
             let value = Box::new(self.parse_atom_expr()?);
-
+    
             expressions.push(Box::new(Expr::Starred {
                 value,
                 ctx: ExprContext::Load,
@@ -4613,7 +4614,7 @@ impl Parser {
         } else {
             expressions.push(Box::new(self.parse_expression()?));
         }
-
+    
         while self.match_token(TokenType::Comma) {
             if self.check(TokenType::RightParen)
                 || self.check(TokenType::RightBracket)
@@ -4624,7 +4625,7 @@ impl Parser {
             {
                 break;
             }
-
+    
             if self.check(TokenType::Comma) {
                 return Err(ParseError::InvalidSyntax {
                     message: "Expected expression after comma".to_string(),
@@ -4632,14 +4633,14 @@ impl Parser {
                     column: self.current.as_ref().map_or(0, |t| t.column),
                 });
             }
-
+    
             if self.match_token(TokenType::Multiply) {
                 let token = self.previous_token();
                 let line = token.line;
                 let column = token.column;
-
+    
                 let value = Box::new(self.parse_atom_expr()?);
-
+    
                 expressions.push(Box::new(Expr::Starred {
                     value,
                     ctx: ExprContext::Load,
@@ -4650,7 +4651,7 @@ impl Parser {
                 expressions.push(Box::new(self.parse_expression()?));
             }
         }
-
+    
         Ok(expressions)
     }
 
