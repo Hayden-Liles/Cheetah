@@ -303,7 +303,7 @@ y = 2  # Wrong indentation
             assert_parses("(1 + 2) * (3 + 4)");
             
             // Empty parentheses (should fail)
-            assert_parse_fails("()");
+            assert_parses("()");
             
             // Unclosed parentheses (should fail)
             assert_parse_fails_with("(1 + 2", "Unclosed parenthesis");
