@@ -185,7 +185,7 @@ impl Parser {
         }
 
         if matches!(token_type, TokenType::Except) {
-            let current_context = self.current.clone();
+            let _current_context = self.current.clone();
             
             return Err(ParseError::InvalidSyntax {
                 message: "'except' statement outside of try block".to_string(),
