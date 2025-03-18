@@ -4,9 +4,9 @@ use clap::{Parser as ClapParser, Subcommand};
 use anyhow::{Result, Context};
 use colored::Colorize;
 
-// Import modules from lib.rs instead of just the lexer module
+// Import modules from lib.rs
 use cheetah::lexer::{Lexer, Token, TokenType, LexerConfig};
-use cheetah::parser::{Parser, ParseError};
+use cheetah::parser::{self, ParseError};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 
@@ -123,9 +123,8 @@ fn run_file(filename: &str) -> Result<()> {
         return Ok(());
     }
     
-    // Then, parse the tokens
-    let mut parser = Parser::new(tokens);
-    match parser.parse() {
+    // Then, parse the tokens with the new parser interface
+    match parser::parse(tokens) {
         Ok(module) => {
             println!("Successfully parsed file: {}", filename);
             println!("AST contains {} top-level statements", module.body.len());
@@ -134,7 +133,7 @@ fn run_file(filename: &str) -> Result<()> {
         Err(errors) => {
             eprintln!("Syntax errors found in '{}':", filename);
             for error in errors {
-                eprintln!("  {}", format_parse_error(&error));
+                eprintln!("  {}", error.get_message());
             }
         }
     }
@@ -195,9 +194,8 @@ fn run_repl() -> Result<()> {
                         eprintln!("{}", error.to_string().bright_red());
                     }
                 } else {
-                    // Then try parsing
-                    let mut parser = Parser::new(tokens.clone());
-                    match parser.parse() {
+                    // Then try parsing with the new parser interface
+                    match parser::parse(tokens.clone()) {
                         Ok(_module) => {
                             println!("{}", "✓ Parsed successfully".bright_green());
                             // Here you would execute the parsed code in a future interpreter
@@ -214,7 +212,7 @@ fn run_repl() -> Result<()> {
                         },
                         Err(errors) => {
                             for error in errors {
-                                eprintln!("{}", format_parse_error(&error).bright_red());
+                                eprintln!("{}", error.get_message().bright_red());
                             }
                         }
                     }
@@ -339,9 +337,8 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
         return Ok(());
     }
     
-    // Then, parse the tokens
-    let mut parser = Parser::new(tokens);
-    match parser.parse() {
+    // Then, parse the tokens with the new parser interface
+    match parser::parse(tokens) {
         Ok(module) => {
             println!("Successfully parsed file: {}", filename);
             
@@ -375,7 +372,7 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
         Err(errors) => {
             eprintln!("Syntax errors found in '{}':", filename);
             for error in errors {
-                eprintln!("  {}", format_parse_error(&error));
+                eprintln!("  {}", error.get_message());
             }
         }
     }
@@ -418,9 +415,8 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
         return Ok(());
     }
     
-    // Then check for syntax errors
-    let mut parser = Parser::new(tokens);
-    match parser.parse() {
+    // Then check for syntax errors using the new parser interface
+    match parser::parse(tokens) {
         Ok(_) => {
             println!("✓ No syntax errors found in '{}'", filename);
         },
@@ -428,34 +424,26 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
             eprintln!("✗ Syntax errors found in '{}':", filename);
             for error in errors {
                 if verbose {
-                    match &error {
-                        ParseError::UnexpectedToken { expected, found, line, column } => {
-                            eprintln!("  Line {}, Col {}: Expected {}, found {:?}", line, column, expected, found);
-                            
-                            // Trying to extract line from source for context
-                            if let Some(context) = get_line_context(&source, *line) {
-                                eprintln!("  {}", context);
-                                eprintln!("  {}^", " ".repeat(*column + 1));
-                            }
-                            eprintln!();
-                        },
-                        ParseError::InvalidSyntax { message, line, column } => {
-                            eprintln!("  Line {}, Col {}: {}", line, column, message);
-                            
-                            // Trying to extract line from source for context
-                            if let Some(context) = get_line_context(&source, *line) {
-                                eprintln!("  {}", context);
-                                eprintln!("  {}^", " ".repeat(*column + 1));
-                            }
-                            eprintln!();
-                        },
-                        ParseError::EOF { expected, line, column } => {
-                            eprintln!("  Line {}, Col {}: Unexpected end of file, expected {}", line, column, expected);
-                            eprintln!();
-                        },
+                    // Get error details and display with context
+                    let (line, column, message) = match &error {
+                        ParseError::UnexpectedToken { expected, found, line, column } => 
+                            (*line, *column, format!("Expected {}, found {:?}", expected, found)),
+                        ParseError::InvalidSyntax { message, line, column } => 
+                            (*line, *column, message.clone()),
+                        ParseError::EOF { expected, line, column } => 
+                            (*line, *column, format!("Unexpected end of file, expected {}", expected)),
+                    };
+                    
+                    eprintln!("  Line {}, Col {}: {}", line, column, message);
+                    
+                    // Trying to extract line from source for context
+                    if let Some(context) = get_line_context(&source, line) {
+                        eprintln!("  {}", context);
+                        eprintln!("  {}^", " ".repeat(column + 1));
                     }
+                    eprintln!();
                 } else {
-                    eprintln!("  {}", format_parse_error(&error));
+                    eprintln!("  {}", error.get_message());
                 }
             }
         }
@@ -495,9 +483,8 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
         return Ok(());
     }
     
-    // Then parse into AST
-    let mut parser = Parser::new(tokens);
-    match parser.parse() {
+    // Then parse into AST using the new parser interface
+    match parser::parse(tokens) {
         Ok(module) => {
             // Format the AST
             let mut formatter = CodeFormatter::new(indent_size);
@@ -515,27 +502,12 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
         Err(errors) => {
             eprintln!("Cannot format file with syntax errors:");
             for error in errors {
-                eprintln!("  {}", format_parse_error(&error));
+                eprintln!("  {}", error.get_message());
             }
         }
     }
     
     Ok(())
-}
-
-// Helper function to format ParseError into a readable string
-fn format_parse_error(error: &ParseError) -> String {
-    match error {
-        ParseError::UnexpectedToken { expected, found, line, column } => {
-            format!("Line {}, Col {}: Expected {}, found {:?}", line, column, expected, found)
-        },
-        ParseError::InvalidSyntax { message, line, column } => {
-            format!("Line {}, Col {}: {}", line, column, message)
-        },
-        ParseError::EOF { expected, line, column } => {
-            format!("Line {}, Col {}: Unexpected end of file, expected {}", line, column, expected)
-        },
-    }
 }
 
 /// Format the token output based on token type

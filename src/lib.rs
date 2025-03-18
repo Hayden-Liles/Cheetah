@@ -18,19 +18,14 @@ pub fn parse(source: &str) -> Result<ast::Module, Vec<parser::ParseError>> {
     if !lexer.get_errors().is_empty() {
         // Convert lexer errors to parser errors
         let errors = lexer.get_errors().iter().map(|e| {
-            parser::ParseError::InvalidSyntax {
-                message: e.message.clone(),
-                line: e.line,
-                column: e.column,
-            }
+            parser::ParseError::invalid_syntax(&e.message, e.line, e.column)
         }).collect();
         
         return Err(errors);
     }
     
-    // Parse tokens into AST
-    let mut parser = parser::Parser::new(tokens);
-    parser.parse()
+    // Parse tokens into AST using the new parser interface
+    parser::parse(tokens)
 }
 
 /// Format the given AST back to Python-like source code
@@ -58,7 +53,7 @@ pub fn print_ast(source: &str) -> Result<(), String> {
         },
         Err(errors) => {
             for error in errors {
-                println!("Error: {:?}", error);
+                println!("Error: {}", error.get_message());
             }
             Err("Parse errors occurred".to_string())
         },
@@ -71,7 +66,7 @@ pub fn format_code(source: &str, indent_size: usize) -> Result<String, String> {
         Ok(module) => Ok(format_ast(&module, indent_size)),
         Err(errors) => {
             let error_messages = errors.iter()
-                .map(|e| format!("{:?}", e))
+                .map(|e| e.get_message())
                 .collect::<Vec<String>>()
                 .join("\n");
             Err(error_messages)
@@ -98,7 +93,7 @@ pub fn analyze_code(source: &str) -> Result<(), String> {
         },
         Err(errors) => {
             for error in errors {
-                println!("Error: {:?}", error);
+                println!("Error: {}", error.get_message());
             }
             Err("Parse errors occurred".to_string())
         },
