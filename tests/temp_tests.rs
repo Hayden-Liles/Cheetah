@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[cfg(test)]
 mod parser_specialized_tests {
     use cheetah::ast::Module;
