@@ -881,7 +881,7 @@ impl ExprParser for Parser {
             } else if self.match_token(TokenType::Dot) {
                 let line = expr.get_line();
                 let column = expr.get_column();
-                let attr = self.consume_identifier("attribute name")?;
+                let attr = self.consume_attribute_name("attribute name")?;
 
                 expr = Expr::Attribute {
                     value: Box::new(expr),

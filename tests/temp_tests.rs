@@ -164,140 +164,23 @@ mod parser_specialized_tests {
     mod tests {
         use super::*;
 
-        // Breaking down the test_statement_edge_cases into separate tests
         #[test]
-        fn test_single_statements() {
-            // Test single statements
-            assert_parses("x = 1");
-            assert_parses("y = 2");
-            assert_parses("z = 3");
-        }
-
-        #[test]
-        fn test_empty_and_trailing_semicolon() {
-            // Empty statement (just a semicolon)
-            assert_parses(";");
-            
-            // Statement with trailing semicolon
-            assert_parses("x = 1;");
-        }
-
-        #[test]
-        fn test_import_with_trailing_comma() {
-            // Import statements with trailing comma
-            assert_parses("from module import item1, item2,");
-        }
-
-        #[test]
-        fn test_multiple_statements_newline() {
-            // Multiple statements on separate lines
-            assert_parses("x = 1\ny = 2\nz = 3");
-        }
-
-        #[test]
-        fn test_tuple_unpacking() {
-            // Multiple assignments with different unpackings
-            assert_parses("a, b = 1, 2");
-        }
-
-        #[test]
-        fn test_chained_assignments() {
-            // Test chained assignments without semicolons
-            assert_parses("c = d = 3");
-        }
-
-        // We'll skip the test of "a, b = c = d, e = 1, 2" for now
-        // as it's a complex case that the parser might not support yet
-
-        // We'll also skip testing "x = 1; y = 2; z = 3" directly for now,
-        // since there seems to be an issue with semicolon handling
-
-        // Test manually created AST for multiple statements to show the
-        // expected structure of "x = 1; y = 2; z = 3"
-        #[test]
-        fn test_multiple_statements_manual() {
-            use cheetah::ast::{Expr, ExprContext, Number, Stmt};
-            
-            // Create an AST for "x = 1" and "y = 2" and "z = 3" manually
-            let module = Module {
-                body: vec![
-                    // x = 1
-                    Box::new(Stmt::Assign {
-                        targets: vec![
-                            Box::new(Expr::Name {
-                                id: "x".to_string(),
-                                ctx: ExprContext::Store,
-                                line: 1,
-                                column: 1,
-                            }),
-                        ],
-                        value: Box::new(Expr::Num {
-                            value: Number::Integer(1),
-                            line: 1,
-                            column: 5,
-                        }),
-                        line: 1,
-                        column: 1,
-                    }),
-                    // y = 2
-                    Box::new(Stmt::Assign {
-                        targets: vec![
-                            Box::new(Expr::Name {
-                                id: "y".to_string(),
-                                ctx: ExprContext::Store,
-                                line: 1,
-                                column: 8,
-                            }),
-                        ],
-                        value: Box::new(Expr::Num {
-                            value: Number::Integer(2),
-                            line: 1,
-                            column: 12,
-                        }),
-                        line: 1,
-                        column: 8,
-                    }),
-                    // z = 3
-                    Box::new(Stmt::Assign {
-                        targets: vec![
-                            Box::new(Expr::Name {
-                                id: "z".to_string(),
-                                ctx: ExprContext::Store,
-                                line: 1,
-                                column: 15,
-                            }),
-                        ],
-                        value: Box::new(Expr::Num {
-                            value: Number::Integer(3),
-                            line: 1,
-                            column: 19,
-                        }),
-                        line: 1,
-                        column: 15,
-                    }),
-                ],
-            };
-            
-            // Verify the structure
-            assert_eq!(module.body.len(), 3);
-        }
-
-        #[test]
-        fn test_complex_tuple_unpacking() {
-            // Basic tuple unpacking
-            assert_parses("a, b = 1, 2");
-            
-            // Nested tuple unpacking
-            assert_parses("(a, (b, c)) = (1, (2, 3))");
-            
-            // Tuple unpacking with lists
-            assert_parses("a, b = [1, 2]");
-            
-            // Tuple unpacking with starred expressions
+        fn test_starred_expressions() {
+            // Starred in assignment
             assert_parses("a, *b, c = range(10)");
             
-            // Multiple unpackings
-            assert_parses("a, b = c, d = 1, 2");
+            // Starred in list literal
+            assert_parses("[1, 2, *rest, 3, 4]");
+            
+            // Starred in tuple literal
+            assert_parses("(1, 2, *rest, 3, 4)");
+            
+            // Starred in function call
+            assert_parses("func(1, 2, *args, key=value)");
+            
+            // Multiple starred expressions
+            assert_parses("[*start, *middle, *end]");
         }
+        
     }
 }

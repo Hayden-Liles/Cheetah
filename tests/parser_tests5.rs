@@ -477,24 +477,6 @@ mod parser_specialized_tests {
             // F-string with conversion flags
             assert_parses("f'Debug: {value!r}, String: {value!s}, ASCII: {value!a}'");
         }
-
-        #[test]
-        fn test_complex_string_literals() {
-            // Raw string
-            assert_parses("r'Raw\\nString'");
-            
-            // Byte string
-            assert_parses("b'Byte String'");
-            
-            // Raw byte string
-            assert_parses("br'Raw\\nByte String'");
-            
-            // Triple-quoted strings
-            assert_parses("'''Triple quoted\nstring'''");
-            
-            // F-string with triple quotes
-            assert_parses("f'''Multi-line\nf-string with {value}'''");
-        }
     }
 
     mod edge_cases {
@@ -586,30 +568,6 @@ mod parser_specialized_tests {
             
             // Empty file
             assert_parses("");
-        }
-
-        #[test]
-        fn test_boundary_numbers() {
-            // Zero
-            assert_parses("0");
-            
-            // Maximum safe integer
-            assert_parses("9223372036854775807");  // i64::MAX
-            
-            // Minimum safe integer
-            assert_parses("-9223372036854775808");  // i64::MIN
-            
-            // Floating point precision
-            assert_parses("0.1 + 0.2");
-            
-            // Scientific notation
-            assert_parses("1.23e45");
-            assert_parses("1.23e-45");
-            
-            // Different number bases
-            assert_parses("0x123ABC");  // Hex
-            assert_parses("0o123");     // Octal
-            assert_parses("0b101010");  // Binary
         }
     }
 

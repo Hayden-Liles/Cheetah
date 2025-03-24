@@ -44,12 +44,18 @@ pub trait TokenMatching {
     #[allow(dead_code)]
     fn expect(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError>;
     
+    fn consume_attribute_name(&mut self, expected: &str) -> Result<String, ParseError>;
+
+    fn get_keyword_name(&self, token_type: &TokenType) -> String;
+
     /// Consume a token of the given type, or return an error
     fn consume(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError>;
     
     /// Consume a newline token
     fn consume_newline(&mut self) -> Result<(), ParseError>;
     
+    fn is_keyword_token(&self) -> bool;
+
     /// Check if the current token is a newline
     fn check_newline(&self) -> bool;
     
@@ -105,6 +111,81 @@ impl TokenMatching for Parser {
             self.syntax_error(error_message)
         }
     }
+
+    fn get_keyword_name(&self, token_type: &TokenType) -> String {
+        match token_type {
+            TokenType::And => "and".to_string(),
+            TokenType::As => "as".to_string(),
+            TokenType::Assert => "assert".to_string(),
+            TokenType::Async => "async".to_string(),
+            TokenType::Await => "await".to_string(),
+            TokenType::Break => "break".to_string(),
+            TokenType::Class => "class".to_string(),
+            TokenType::Continue => "continue".to_string(),
+            TokenType::Def => "def".to_string(),
+            TokenType::Del => "del".to_string(),
+            TokenType::Elif => "elif".to_string(),
+            TokenType::Else => "else".to_string(),
+            TokenType::Except => "except".to_string(),
+            TokenType::Finally => "finally".to_string(),
+            TokenType::For => "for".to_string(),
+            TokenType::From => "from".to_string(),
+            TokenType::Global => "global".to_string(),
+            TokenType::If => "if".to_string(),
+            TokenType::Import => "import".to_string(),
+            TokenType::In => "in".to_string(),
+            TokenType::Is => "is".to_string(),
+            TokenType::Lambda => "lambda".to_string(),
+            TokenType::None => "None".to_string(),
+            TokenType::Nonlocal => "nonlocal".to_string(),
+            TokenType::Not => "not".to_string(),
+            TokenType::Or => "or".to_string(),
+            TokenType::Pass => "pass".to_string(),
+            TokenType::Raise => "raise".to_string(),
+            TokenType::Return => "return".to_string(),
+            TokenType::Try => "try".to_string(),
+            TokenType::While => "while".to_string(),
+            TokenType::With => "with".to_string(),
+            TokenType::Yield => "yield".to_string(),
+            TokenType::Match => "match".to_string(),
+            TokenType::Case => "case".to_string(),
+            TokenType::True => "True".to_string(),
+            TokenType::False => "False".to_string(),
+            _ => "unknown_keyword".to_string(), // Fallback
+        }
+    }
+
+    fn consume_attribute_name(&mut self, expected: &str) -> Result<String, ParseError> {
+        match &self.current {
+            Some(token) => {
+                match &token.token_type {
+                    TokenType::Identifier(name) => {
+                        let result = name.clone();
+                        self.advance();
+                        Ok(result)
+                    },
+                    // Handle keywords as attribute names
+                    _ if self.is_keyword_token() => {
+                        // Convert the keyword token to a string representation
+                        let keyword_name = self.get_keyword_name(&token.token_type);
+                        self.advance();
+                        Ok(keyword_name)
+                    },
+                    _ => Err(ParseError::UnexpectedToken {
+                        expected: expected.to_string(),
+                        found: token.token_type.clone(),
+                        line: token.line,
+                        column: token.column,
+                    }),
+                }
+            },
+            None => Err(ParseError::EOF {
+                expected: expected.to_string(),
+                line: self.last_position().0,
+                column: self.last_position().1,
+            }),
+        }
+    }
     
     fn consume(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError> {
         match &self.current {
@@ -143,6 +224,24 @@ impl TokenMatching for Parser {
             None => {
                 self.unexpected_eof(error_message)
             }
+        }
+    }
+
+    fn is_keyword_token(&self) -> bool {
+        match &self.current {
+            Some(token) => matches!(
+                token.token_type,
+                TokenType::And | TokenType::As | TokenType::Assert | TokenType::Async |
+                TokenType::Await | TokenType::Break | TokenType::Class | TokenType::Continue |
+                TokenType::Def | TokenType::Del | TokenType::Elif | TokenType::Else |
+                TokenType::Except | TokenType::Finally | TokenType::For | TokenType::From |
+                TokenType::Global | TokenType::If | TokenType::Import | TokenType::In |
+                TokenType::Is | TokenType::Lambda | TokenType::None | TokenType::Nonlocal |
+                TokenType::Not | TokenType::Or | TokenType::Pass | TokenType::Raise |
+                TokenType::Return | TokenType::Try | TokenType::While | TokenType::With |
+                TokenType::Yield | TokenType::Match | TokenType::Case
+            ),
+            None => false,
         }
     }
     
