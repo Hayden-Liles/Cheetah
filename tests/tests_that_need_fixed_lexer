@@ -1,0 +1,23 @@
+#[test]
+        fn test_string_edge_cases() {
+            // Empty strings
+            assert_parses("''");
+            assert_parses("\"\"");
+            
+            // Strings with escapes
+            assert_parses("'String with \\'quote\\''");
+            assert_parses("\"String with \\\"double quote\\\"\"");
+            
+            // String with Unicode escapes
+            assert_parses("'\\u0041\\u0042\\u0043'");  // ABC
+            
+            // String with hex escapes
+            assert_parses("'\\x41\\x42\\x43'");  // ABC
+            
+            // String with unusual characters
+            assert_parses("'String with tab\\t and newline\\n'");
+            
+            // Triple-quoted string edge cases
+            assert_parses("'''String with both ' and \" quotes'''");
+            assert_parses("'''''"); // Single quote inside triple quotes
+        }

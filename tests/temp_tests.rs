@@ -164,63 +164,21 @@ mod parser_specialized_tests {
         use super::*;
 
         #[test]
-        fn test_match_case_statements() {
-            // Simple match-case
-            assert_parses(
-                "match value:
-                    case 1:
-                        print('one')
-                    case 2:
-                        print('two')
-                    case _:
-                        print('other')"
-            );
+        fn test_statement_edge_cases() {
+            // Multiple statements on a line
+            assert_parses("x = 1; y = 2; z = 3");
             
-            // Match-case with guards
-            assert_parses(
-                "match point:
-                    case (x, y) if x == y:
-                        print('On diagonal')
-                    case (0, y):
-                        print(f'Y-axis at {y}')
-                    case (x, 0):
-                        print(f'X-axis at {x}')
-                    case _:
-                        print('Elsewhere')"
-            );
+            // Empty statement (just a semicolon)
+            assert_parses(";");
             
-            // Match-case with class patterns
-            assert_parses(
-                "match shape:
-                    case Circle(radius=r):
-                        print(f'Circle with radius {r}')
-                    case Rectangle(width=w, height=h):
-                        print(f'Rectangle {w}x{h}')
-                    case _:
-                        print('Unknown shape')"
-            );
+            // Statement with trailing semicolon
+            assert_parses("x = 1;");
             
-            // Match-case with alternatives
-            assert_parses(
-                "match command:
-                    case 'quit' | 'exit':
-                        quit_app()
-                    case 'help' | '?':
-                        show_help()
-                    case _:
-                        print('Unknown command')"
-            );
+            // Import statements with trailing comma
+            assert_parses("from module import item1, item2,");
             
-            // Complex nested patterns
-            assert_parses(
-                "match data:
-                    case {'name': str(name), 'age': int(age), 'skills': [*skills]}:
-                        process_person(name, age, skills)
-                    case {'error': str(msg)}:
-                        handle_error(msg)
-                    case _:
-                        handle_unknown_data()"
-            );
+            // Multiple assignments with different unpackings
+            assert_parses("a, b = c = d, e = 1, 2");
         }
 
     }

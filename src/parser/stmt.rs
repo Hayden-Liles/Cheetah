@@ -134,6 +134,11 @@ impl StmtParser for Parser {
             }
         }
 
+        if matches!(token_type, TokenType::SemiColon) {
+            self.advance(); // Consume the semicolon
+            return Ok(Stmt::Pass { line, column }); // Use Pass as an empty statement
+        }
+
         // Check for invalid operators at start of statement
         if matches!(
             token_type,
@@ -1612,19 +1617,21 @@ impl StmtParser for Parser {
 
         if self.match_token(TokenType::Assign) {
             self.validate_assignment_target(&expr)?;
-
+            
             let mut targets = vec![Box::new(expr)];
+            
+            // Keep parsing the right side until we hit a final expression
             let mut current_expr = self.parse_expression()?;
-
-            while self.check(TokenType::Assign) {
-                self.advance();
+            
+            // Keep collecting targets until we stop seeing '=' signs
+            while self.match_token(TokenType::Assign) {
                 self.validate_assignment_target(&current_expr)?;
                 targets.push(Box::new(current_expr));
                 current_expr = self.parse_expression()?;
             }
-
+            
             self.consume_newline()?;
-
+            
             return Ok(Stmt::Assign {
                 targets,
                 value: Box::new(current_expr),

@@ -148,22 +148,22 @@ impl TokenMatching for Parser {
     
     fn consume_newline(&mut self) -> Result<(), ParseError> {
         if self.match_token(TokenType::SemiColon) {
-            if self.check_newline() {
-                self.advance();
+            // After consuming a semicolon, check if there are more statements on the same line
+            if !self.check_newline() && !self.check(TokenType::EOF) && !self.check(TokenType::Dedent) {
+                return Ok(()); // Allow continuing to parse more statements on the same line
             }
-            return Ok(());
-        }
-
-        if self.check_newline() {
-            self.advance();
-            return Ok(());
-        }
-
-        if self.check(TokenType::EOF) || self.check(TokenType::Dedent) {
-            return Ok(());
         }
         
-        // Allow missing newline at end of expression
+        if !self.check_newline() && !self.check(TokenType::EOF) && !self.check(TokenType::Dedent) {
+            return Err(ParseError::InvalidSyntax {
+                message: "Expected newline after statement".to_string(),
+                line: self.current.as_ref().map_or(0, |t| t.line),
+                column: self.current.as_ref().map_or(0, |t| t.column),
+            });
+        }
+        
+        while self.match_token(TokenType::Newline) {}
+        
         Ok(())
     }
     
