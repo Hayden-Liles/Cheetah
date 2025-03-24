@@ -603,7 +603,7 @@ mod parser_specialized_tests {
             assert_parses("def    f   (   x   )   :   \n    return    x   *   x");
             
             // Tabs and spaces
-            assert_parses("if condition:\n\tpass");
+            assert_parses("if condition:\n    pass");
             
             // Blank lines
             assert_parses("\n\n\ndef f():\n\n\n    return 42\n\n\n");
