@@ -1475,9 +1475,9 @@ impl StmtParser for Parser {
             let star_token = self.previous_token();
             let star_line = star_token.line;
             let star_column = star_token.column;
-
+    
             let name = self.consume_identifier("identifier after *")?;
-
+    
             let starred_expr = Expr::Starred {
                 value: Box::new(Expr::Name {
                     id: name,
@@ -1489,7 +1489,7 @@ impl StmtParser for Parser {
                 line: star_line,
                 column: star_column,
             };
-
+    
             if self.match_token(TokenType::Comma) {
                 let tuple_expr = Expr::Tuple {
                     elts: vec![Box::new(starred_expr)],
@@ -1497,11 +1497,11 @@ impl StmtParser for Parser {
                     line: star_line,
                     column: star_column,
                 };
-
+    
                 self.consume(TokenType::Assign, "=")?;
                 let value = Box::new(self.parse_expression()?);
                 self.consume_newline()?;
-
+    
                 return Ok(Stmt::Assign {
                     targets: vec![Box::new(tuple_expr)],
                     value,
@@ -1509,11 +1509,11 @@ impl StmtParser for Parser {
                     column: star_column,
                 });
             }
-
+    
             self.consume(TokenType::Assign, "=")?;
             let value = Box::new(self.parse_expression()?);
             self.consume_newline()?;
-
+    
             return Ok(Stmt::Assign {
                 targets: vec![Box::new(starred_expr)],
                 value,
@@ -1521,11 +1521,11 @@ impl StmtParser for Parser {
                 column: star_column,
             });
         }
-
+    
         if self.check_identifier() && self.peek_matches(TokenType::Comma) {
             let line = self.current.as_ref().unwrap().line;
             let column = self.current.as_ref().unwrap().column;
-
+    
             let ident = self.consume_identifier("identifier")?;
             let mut elts = vec![Box::new(Expr::Name {
                 id: ident,
@@ -1533,9 +1533,9 @@ impl StmtParser for Parser {
                 line,
                 column,
             })];
-
+    
             self.advance();
-
+    
             while !self.check(TokenType::Assign)
                 && !self.check_newline()
                 && !self.check(TokenType::EOF)
@@ -1547,13 +1547,13 @@ impl StmtParser for Parser {
                         column: self.current.as_ref().map_or(column, |t| t.column),
                     });
                 }
-
+    
                 if self.match_token(TokenType::Multiply) {
                     if self.check_identifier() {
                         let star_line = self.current.as_ref().unwrap().line;
                         let star_column = self.current.as_ref().unwrap().column;
                         let star_name = self.consume_identifier("identifier after *")?;
-
+    
                         elts.push(Box::new(Expr::Starred {
                             value: Box::new(Expr::Name {
                                 id: star_name,
@@ -1576,7 +1576,7 @@ impl StmtParser for Parser {
                     let item_line = self.current.as_ref().unwrap().line;
                     let item_column = self.current.as_ref().unwrap().column;
                     let item_ident = self.consume_identifier("identifier")?;
-
+    
                     elts.push(Box::new(Expr::Name {
                         id: item_ident,
                         ctx: ExprContext::Store,
@@ -1586,41 +1586,52 @@ impl StmtParser for Parser {
                 } else {
                     elts.push(Box::new(self.parse_atom_expr()?));
                 }
-
+    
                 if !self.match_token(TokenType::Comma) {
                     break;
                 }
             }
-
+    
             let tuple_expr = Expr::Tuple {
                 elts,
                 ctx: ExprContext::Store,
                 line,
                 column,
             };
-
+    
             self.consume(TokenType::Assign, "=")?;
-            let value = Box::new(self.parse_expression()?);
+            
+            // Parse the right-hand side and handle chained assignments
+            let mut targets = vec![Box::new(tuple_expr)];
+            let mut current_expr = self.parse_expression()?;
+            
+            // Process chained assignments
+            while self.match_token(TokenType::Assign) {
+                self.validate_assignment_target(&current_expr)?;
+                targets.push(Box::new(current_expr));
+                current_expr = self.parse_expression()?;
+            }
+            
             self.consume_newline()?;
-
+    
             return Ok(Stmt::Assign {
-                targets: vec![Box::new(tuple_expr)],
-                value,
+                targets,
+                value: Box::new(current_expr),
                 line,
                 column,
             });
         }
-
+    
         let expr = self.parse_expression()?;
         let line = expr.get_line();
         let column = expr.get_column();
-
+    
         if self.match_token(TokenType::Assign) {
             self.validate_assignment_target(&expr)?;
             
             let mut targets = vec![Box::new(expr)];
             
-            // Keep parsing the right side until we hit a final expression
+            // Parse the right-hand side
             let mut current_expr = self.parse_expression()?;
             
             // Keep collecting targets until we stop seeing '=' signs
@@ -1649,13 +1660,13 @@ impl StmtParser for Parser {
                     });
                 }
             }
-
+    
             let op = self.parse_augmented_assign_op();
             self.advance();
-
+    
             let value = Box::new(self.parse_expression()?);
             self.consume_newline()?;
-
+    
             return Ok(Stmt::AugAssign {
                 target: Box::new(expr),
                 op,
@@ -1674,17 +1685,17 @@ impl StmtParser for Parser {
                     });
                 }
             }
-
+    
             let annotation = Box::new(self.parse_type_annotation(false)?);
-
+    
             let value = if self.match_token(TokenType::Assign) {
                 Some(Box::new(self.parse_expression()?))
             } else {
                 None
             };
-
+    
             self.consume_newline()?;
-
+    
             return Ok(Stmt::AnnAssign {
                 target: Box::new(expr),
                 annotation,
@@ -1694,7 +1705,7 @@ impl StmtParser for Parser {
             });
         } else {
             self.consume_newline()?;
-
+    
             return Ok(Stmt::Expr {
                 value: Box::new(expr),
                 line,

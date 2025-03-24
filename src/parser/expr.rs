@@ -92,22 +92,22 @@ pub trait ExprParser {
 impl ExprParser for Parser {
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_or_test()?;
-
+    
         if self.check(TokenType::If)
             && !self.is_in_context(ParserContext::Comprehension)
             && !self.is_in_context(ParserContext::Match)
         {
             let line = expr.get_line();
             let column = expr.get_column();
-
+    
             self.advance();
-
+    
             let test = Box::new(self.parse_or_test()?);
-
+    
             self.consume(TokenType::Else, "else")?;
-
+    
             let orelse = Box::new(self.parse_expression()?);
-
+    
             expr = Expr::IfExp {
                 test,
                 body: Box::new(expr),
@@ -115,19 +115,19 @@ impl ExprParser for Parser {
                 line,
                 column,
             };
-        } else if self.check(TokenType::Comma) {
+        } else if self.match_token(TokenType::Comma) {
             let line = expr.get_line();
             let column = expr.get_column();
-
+    
             let mut elts = vec![Box::new(expr)];
-
-            self.advance();
-
+    
+            // Continue parsing the tuple until we reach a delimiter token
+            // Note: We no longer check for TokenType::Assign here, which was causing
+            // the issue with chained assignments with tuple unpacking
             while !self.check_newline()
                 && !self.check(TokenType::EOF)
                 && !self.check(TokenType::RightParen)
                 && !self.check(TokenType::RightBracket)
-                && !self.check(TokenType::Assign)
             {
                 if self.check(TokenType::Comma) {
                     return Err(ParseError::InvalidSyntax {
@@ -136,14 +136,14 @@ impl ExprParser for Parser {
                         column: self.current.as_ref().map_or(column, |t| t.column),
                     });
                 }
-
+    
                 elts.push(Box::new(self.parse_or_test()?));
-
+    
                 if !self.match_token(TokenType::Comma) {
                     break;
                 }
             }
-
+    
             expr = Expr::Tuple {
                 elts,
                 ctx: ExprContext::Load,
@@ -151,7 +151,7 @@ impl ExprParser for Parser {
                 column,
             };
         }
-
+    
         Ok(expr)
     }
     
