@@ -165,15 +165,21 @@ mod parser_specialized_tests {
         use super::*;
 
         #[test]
-        fn test_comprehension_conditions() {
-            // Simple condition
-            assert_parses("[x for x in range(100) if x % 2 == 0]");
+        fn test_starred_expressions() {
+            // Starred in assignment
+            assert_parses("a, *b, c = range(10)");
             
-            // Multiple conditions
-            assert_parses("[x for x in range(100) if x % 2 == 0 if x % 3 == 0]");
+            // Starred in list literal
+            assert_parses("[1, 2, *rest, 3, 4]");
             
-            // Complex conditions
-            assert_parses("[x for x in range(100) if all(x % i != 0 for i in range(2, int(x ** 0.5) + 1))]");
+            // Starred in tuple literal
+            assert_parses("(1, 2, *rest, 3, 4)");
+            
+            // Starred in function call
+            assert_parses("func(1, 2, *args, key=value)");
+            
+            // Multiple starred expressions
+            assert_parses("[*start, *middle, *end]");
         }
         
     }
