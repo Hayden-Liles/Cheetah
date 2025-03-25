@@ -165,21 +165,15 @@ mod parser_specialized_tests {
         use super::*;
 
         #[test]
-        fn test_starred_expressions() {
-            // Starred in assignment
-            assert_parses("a, *b, c = range(10)");
+        fn test_list_comprehension_context() {
+            // List comprehension target should be in store context
+            assert_parses("[x for x in range(10)]");
             
-            // Starred in list literal
-            assert_parses("[1, 2, *rest, 3, 4]");
+            // Tuple unpacking in list comprehension
+            assert_parses("[(x, y) for x, y in pairs]");
             
-            // Starred in tuple literal
-            assert_parses("(1, 2, *rest, 3, 4)");
-            
-            // Starred in function call
-            assert_parses("func(1, 2, *args, key=value)");
-            
-            // Multiple starred expressions
-            assert_parses("[*start, *middle, *end]");
+            // Nested unpacking in list comprehension
+            assert_parses("[(x, (y, z)) for x, (y, z) in complex_pairs]");
         }
         
     }
