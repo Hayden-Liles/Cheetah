@@ -1069,7 +1069,7 @@ impl Type {
 }
 
 /// Determine if a type is a reference type (pointer to an object)
-fn is_reference_type(ty: &Type) -> bool {
+pub(crate) fn is_reference_type(ty: &Type) -> bool {
     matches!(
         ty,
         Type::String

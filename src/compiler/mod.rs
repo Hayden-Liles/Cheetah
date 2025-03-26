@@ -2,9 +2,11 @@ use crate::ast;
 pub mod types;
 pub mod context;
 pub mod expr;
+pub mod stmt;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;
+use stmt::StmtCompiler;
 use types::Type;
 use std::path::Path;
 
@@ -84,10 +86,8 @@ impl<'ctx> Compiler<'ctx> {
     
     /// Compile a statement_stmt
     fn compile_stmt(&self, stmt: &Box<ast::Stmt>) -> Result<(), String> {
-        let _ = stmt;
-        // Implementation will use type mapping for various statement types
-        
-        Ok(())
+        // Use our new StmtCompiler trait
+        self.context.compile_stmt(stmt.as_ref())
     }
     
     /// Save the compiled module to a file
