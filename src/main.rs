@@ -1,6 +1,5 @@
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
 use clap::{Parser as ClapParser, Subcommand};
 use anyhow::{Result, Context};
 use colored::Colorize;
@@ -78,53 +77,6 @@ enum Commands {
         #[arg(short, long, default_value = "4")]
         indent: usize,
     },
-    /// Compile a Cheetah source file to LLVM IR
-    CompileIR {
-        /// The source file to compile
-        file: String,
-        
-        /// Output file (defaults to <input>.ll)
-        #[arg(short, long)]
-        output: Option<String>,
-        
-        /// Optimization level (0-3)
-        #[arg(short, long, default_value = "2")]
-        opt_level: u32,
-    },
-    
-    /// Compile a Cheetah source file to an object file
-    CompileObj {
-        /// The source file to compile
-        file: String,
-        
-        /// Output file (defaults to <input>.o)
-        #[arg(short, long)]
-        output: Option<String>,
-        
-        /// Optimization level (0-3)
-        #[arg(short, long, default_value = "2")]
-        opt_level: u32,
-    },
-    
-    /// Compile a Cheetah source file to an executable
-    CompileExe {
-        /// The source file to compile
-        file: String,
-        
-        /// Output file name
-        #[arg(short, long)]
-        output: Option<String>,
-        
-        /// Optimization level (0-3)
-        #[arg(short, long, default_value = "2")]
-        opt_level: u32,
-    },
-    
-    /// Run a Cheetah source file directly (JIT compilation)
-    RunJIT {
-        /// The source file to run
-        file: String,
-    },
 }
 
 fn main() -> Result<()> {
@@ -148,18 +100,6 @@ fn main() -> Result<()> {
         }
         Commands::Format { file, write, indent } => {
             format_file(&file, write, indent)?;
-        }
-        Commands::CompileIR { file, output, opt_level } => {
-            compile_ir(&file, output, opt_level)?;
-        }
-        Commands::CompileObj { file, output, opt_level } => {
-            compile_obj(&file, output, opt_level)?;
-        }
-        Commands::CompileExe { file, output, opt_level } => {
-            compile_exe(&file, output, opt_level)?;
-        }
-        Commands::RunJIT { file } => {
-            run_jit(&file)?;
         }
     }
 
@@ -189,9 +129,6 @@ fn run_file(filename: &str) -> Result<()> {
             println!("Successfully parsed file: {}", filename);
             println!("AST contains {} top-level statements", module.body.len());
             // Here you would execute the parsed code in a future interpreter
-            
-            // In the updated version, we use JIT compilation to run the code
-            return run_jit(filename);
         },
         Err(errors) => {
             eprintln!("Syntax errors found in '{}':", filename);
@@ -259,20 +196,11 @@ fn run_repl() -> Result<()> {
                 } else {
                     // Then try parsing with the new parser interface
                     match parser::parse(tokens.clone()) {
-                        Ok(module) => {
+                        Ok(_module) => {
                             println!("{}", "✓ Parsed successfully".bright_green());
+                            // Here you would execute the parsed code in a future interpreter
                             
-                            // Try to JIT compile and execute the code
-                            match cheetah::run_code(&complete_input, "repl") {
-                                Ok(()) => {
-                                    // Code executed successfully via JIT
-                                },
-                                Err(err) => {
-                                    eprintln!("{}", format!("Execution error: {}", err).bright_red());
-                                }
-                            }
-                            
-                            // For debug: show tokens if requested
+                            // For now, just print the tokens
                             if input.starts_with("tokens") || input.starts_with("lexer") {
                                 for token in &tokens {
                                     match &token.token_type {
@@ -636,134 +564,4 @@ fn format_token_for_repl(token: &Token, use_color: bool) -> String {
     };
     
     format!("{} at {}:{}", token_desc, token.line, token.column)
-}
-
-fn compile_ir(filename: &str, output: Option<String>, opt_level: u32) -> Result<()> {
-    let source = fs::read_to_string(filename)
-        .with_context(|| format!("Failed to read file: {}", filename))?;
-    
-    let module_name = Path::new(filename)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "module".to_string());
-    
-    match cheetah::compile_to_llvm(&source, &module_name, opt_level) {
-        Ok(ir) => {
-            let output_path = match output {
-                Some(path) => path,
-                None => format!("{}.ll", module_name),
-            };
-            
-            // Write the IR to the output file
-            let mut file = File::create(&output_path)
-                .with_context(|| format!("Failed to create output file: {}", output_path))?;
-            
-            file.write_all(ir.as_bytes())
-                .with_context(|| format!("Failed to write to output file: {}", output_path))?;
-            
-            println!("Successfully compiled to LLVM IR: {}", output_path);
-            Ok(())
-        },
-        Err(error) => {
-            eprintln!("Error compiling file: {}", error);
-            Err(anyhow::anyhow!("Compilation failed"))
-        }
-    }
-}
-
-fn compile_obj(filename: &str, output: Option<String>, opt_level: u32) -> Result<()> {
-    let source = fs::read_to_string(filename)
-        .with_context(|| format!("Failed to read file: {}", filename))?;
-    
-    let module_name = Path::new(filename)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "module".to_string());
-    
-    // Get the output path
-    let output_path = match output {
-        Some(path) => Path::new(&path).to_path_buf(),
-        None => Path::new(&format!("{}.o", module_name)).to_path_buf(),
-    };
-    
-    match cheetah::compile_to_object(&source, &module_name, &output_path) {
-        Ok(()) => {
-            println!("Successfully compiled to object file: {}", output_path.display());
-            Ok(())
-        },
-        Err(error) => {
-            eprintln!("Error compiling file: {}", error);
-            Err(anyhow::anyhow!("Compilation failed"))
-        }
-    }
-}
-
-fn compile_exe(filename: &str, output: Option<String>, opt_level: u32) -> Result<()> {
-    let source = fs::read_to_string(filename)
-        .with_context(|| format!("Failed to read file: {}", filename))?;
-    
-    let module_name = Path::new(filename)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "module".to_string());
-    
-    // Get the output path
-    let obj_path = format!("{}.o", module_name);
-    let output_path = match output {
-        Some(path) => path,
-        None => format!("{}", module_name),
-    };
-    
-    // First compile to object file
-    match cheetah::compile_to_object(&source, &module_name, Path::new(&obj_path)) {
-        Ok(()) => {
-            println!("Successfully compiled to object file: {}", obj_path);
-            
-            // Then link to executable
-            let status = std::process::Command::new("cc")
-                .arg("-o")
-                .arg(&output_path)
-                .arg(&obj_path)
-                .arg("-lc")
-                .status()
-                .with_context(|| "Failed to execute linker")?;
-                
-            if status.success() {
-                println!("Successfully linked executable: {}", output_path);
-                
-                // Clean up object file
-                std::fs::remove_file(&obj_path)
-                    .with_context(|| format!("Failed to remove object file: {}", obj_path))?;
-                    
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Linking failed"))
-            }
-        },
-        Err(error) => {
-            eprintln!("Error compiling file: {}", error);
-            Err(anyhow::anyhow!("Compilation failed"))
-        }
-    }
-}
-
-fn run_jit(filename: &str) -> Result<()> {
-    let source = fs::read_to_string(filename)
-        .with_context(|| format!("Failed to read file: {}", filename))?;
-    
-    let module_name = Path::new(filename)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "module".to_string());
-    
-    match cheetah::run_code(&source, &module_name) {
-        Ok(()) => {
-            println!("Successfully executed program");
-            Ok(())
-        },
-        Err(error) => {
-            eprintln!("Error running file: {}", error);
-            Err(anyhow::anyhow!("Execution failed"))
-        }
-    }
 }

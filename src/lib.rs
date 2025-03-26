@@ -5,11 +5,9 @@ pub mod parser;
 pub mod symtable;
 pub mod visitor;
 pub mod formatter;
-pub mod codegen;  // Add the new module
 
 // Import the Visitor trait so it's in scope
 use crate::visitor::Visitor;
-use codegen::LLVMCompiler;
 
 /// Parse the given Python-like source code into an AST
 pub fn parse(source: &str) -> Result<ast::Module, Vec<parser::ParseError>> {
@@ -98,60 +96,6 @@ pub fn analyze_code(source: &str) -> Result<(), String> {
                 println!("Error: {}", error.get_message());
             }
             Err("Parse errors occurred".to_string())
-        },
-    }
-}
-
-/// Compile Python-like source code to LLVM IR
-pub fn compile_to_llvm(source: &str, module_name: &str, opt_level: u32) -> Result<String, String> {
-    match parse(source) {
-        Ok(module) => {
-            let compiler = LLVMCompiler::new(opt_level);
-            compiler.compile(&module, module_name)
-                .map_err(|e| e.to_string())
-        },
-        Err(errors) => {
-            let error_messages = errors.iter()
-                .map(|e| e.get_message())
-                .collect::<Vec<String>>()
-                .join("\n");
-            Err(error_messages)
-        },
-    }
-}
-
-/// Compile Python-like source code to an object file
-pub fn compile_to_object(source: &str, module_name: &str, output_path: &std::path::Path) -> Result<(), String> {
-    match parse(source) {
-        Ok(module) => {
-            let compiler = LLVMCompiler::new(2);  // Use optimization level 2
-            compiler.compile_to_obj(&module, module_name, output_path)
-                .map_err(|e| e.to_string())
-        },
-        Err(errors) => {
-            let error_messages = errors.iter()
-                .map(|e| e.get_message())
-                .collect::<Vec<String>>()
-                .join("\n");
-            Err(error_messages)
-        },
-    }
-}
-
-/// Compile and run Python-like source code directly
-pub fn run_code(source: &str, module_name: &str) -> Result<(), String> {
-    match parse(source) {
-        Ok(module) => {
-            let compiler = LLVMCompiler::new(2);  // Use optimization level 2
-            compiler.compile_and_run(&module, module_name)
-                .map_err(|e| e.to_string())
-        },
-        Err(errors) => {
-            let error_messages = errors.iter()
-                .map(|e| e.get_message())
-                .collect::<Vec<String>>()
-                .join("\n");
-            Err(error_messages)
         },
     }
 }

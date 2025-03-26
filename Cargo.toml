@@ -18,8 +18,6 @@ colored = "2.0.0"
 unicode-segmentation = "1.10"
 # Benchmarking (for development use)
 criterion = { version = "0.5", optional = true }
-llvm-sys = "181.1.8"
-inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm18-0"] }
 
 [lib]
 name = "cheetah"
