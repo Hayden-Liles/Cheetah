@@ -254,6 +254,37 @@ impl TokenMatching for Parser {
         }
         
         if !self.check_newline() && !self.check(TokenType::EOF) && !self.check(TokenType::Dedent) {
+            // Check for unexpected delimiters and provide a more specific error message
+            if let Some(token) = &self.current {
+                match token.token_type {
+                    TokenType::RightParen => {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "newline".to_string(),
+                            found: TokenType::RightParen,
+                            line: token.line,
+                            column: token.column,
+                        });
+                    },
+                    TokenType::RightBracket => {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "newline".to_string(), 
+                            found: TokenType::RightBracket,
+                            line: token.line,
+                            column: token.column,
+                        });
+                    },
+                    TokenType::RightBrace => {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "newline".to_string(),
+                            found: TokenType::RightBrace,
+                            line: token.line,
+                            column: token.column,
+                        });
+                    },
+                    _ => {}
+                }
+            }
+            
             return Err(ParseError::InvalidSyntax {
                 message: "Expected newline after statement".to_string(),
                 line: self.current.as_ref().map_or(0, |t| t.line),

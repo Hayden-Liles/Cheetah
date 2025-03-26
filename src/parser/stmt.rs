@@ -746,37 +746,46 @@ impl StmtParser for Parser {
         let token = self.current.clone().unwrap();
         let line = token.line;
         let column = token.column;
-
+    
         self.advance();
-
+    
         let name = self.consume_identifier("class name")?;
-
+    
         let (bases, keywords) = if self.match_token(TokenType::LeftParen) {
             let mut bases = Vec::new();
             let mut keywords = Vec::new();
-
+    
             if !self.check(TokenType::RightParen) {
                 self.parse_class_argument(&mut bases, &mut keywords)?;
-
+    
+                // Check for missing comma between base classes
+                if !self.check(TokenType::Comma) && !self.check(TokenType::RightParen) {
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Expected comma between base classes".to_string(),
+                        line: self.current.as_ref().unwrap().line,
+                        column: self.current.as_ref().unwrap().column,
+                    });
+                }
+    
                 while self.match_token(TokenType::Comma) {
                     if self.check(TokenType::RightParen) {
                         break;
                     }
-
+    
                     self.parse_class_argument(&mut bases, &mut keywords)?;
                 }
             }
-
+    
             self.consume(TokenType::RightParen, ")")?;
             (bases, keywords)
         } else {
             (Vec::new(), Vec::new())
         };
-
+    
         self.consume(TokenType::Colon, ":")?;
-
+    
         let body = self.parse_suite()?;
-
+    
         Ok(Stmt::ClassDef {
             name,
             bases,
