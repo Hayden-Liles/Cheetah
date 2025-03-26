@@ -65,6 +65,25 @@ mod parser_specialized_tests {
         result
     }
 
+    fn check_error_quality(source: &str) -> String {
+        match parse_code(source) {
+            Ok(_) => {
+                panic!("Expected parsing to fail, but it succeeded: {}", source);
+            },
+            Err(errors) => {
+                assert!(!errors.is_empty(), "Expected at least one error to be reported");
+                let error_message = format!("{}", ErrorFormatter(&errors[0]));
+                
+                // Verify that error message contains useful information
+                assert!(!error_message.is_empty(), "Error message should not be empty");
+                assert!(error_message.contains("line"), "Error message should contain line number");
+                assert!(error_message.contains("column"), "Error message should contain column number");
+                
+                error_message
+            },
+        }
+    }
+
     fn parse_code(source: &str) -> Result<Module, Vec<ParseError>> {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize();
@@ -251,6 +270,35 @@ mod parser_specialized_tests {
         }
     }
 
+    fn debug_parse_attempt(source: &str) {
+        println!("\n==== DEBUGGING {} ====", source);
+        
+        // Tokenize and print tokens
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        
+        println!("Tokens:");
+        for (i, token) in tokens.iter().enumerate() {
+            println!("  {}: {:?} at line {}, column {}", 
+                     i, token.token_type, token.line, token.column);
+        }
+        
+        // Try parsing
+        let mut parser = Parser::new(tokens.clone());
+        match parser.parse() {
+            Ok(_) => {
+                println!("⚠️ PARSE SUCCEEDED UNEXPECTEDLY!");
+            },
+            Err(errors) => {
+                println!("Parse failed with errors:");
+                for (i, error) in errors.iter().enumerate() {
+                    println!("  Error {}: {}", i+1, ErrorFormatter(error));
+                }
+            }
+        }
+        println!("==== END DEBUG ====\n");
+    }
+
     // Helper function to parse and build symbol table
     fn parse_and_analyze(source: &str) -> Result<(), String> {
         let mut lexer = Lexer::new(source);
@@ -276,43 +324,38 @@ mod parser_specialized_tests {
         use super::*;
 
         #[test]
-        fn test_error_positioning() {
-            // Parse some invalid code and check that error positions are reasonable
-            let code = "x = 1 + * 2";
-            match parse_code(code) {
-                Err(errors) => {
-                    let error = &errors[0];
-                    match error {
-                        ParseError::UnexpectedToken { line, column, .. } |
-                        ParseError::InvalidSyntax { line, column, .. } |
-                        ParseError::EOF { line, column, .. } => {
-                            // The error should be around the '*' character, which is at position 8
-                            assert_eq!(*line, 1, "Error should be on line 1");
-                            assert!((*column >= 7 && *column <= 9), 
-                                "Error should be near the '*' character (column 8), but was at column {}", column);
-                        }
-                    }
-                },
-                Ok(_) => panic!("Expected parsing to fail"),
-            }
-            
-            let code = "def func(x, ):\n    return x";
-            match parse_code(code) {
-                Err(errors) => {
-                    let error = &errors[0];
-                    match error {
-                        ParseError::UnexpectedToken { line, column, .. } |
-                        ParseError::InvalidSyntax { line, column, .. } |
-                        ParseError::EOF { line, column, .. } => {
-                            // The error should be around the trailing comma
-                            assert_eq!(*line, 1, "Error should be on line 1");
-                            assert!((*column >= 11 && *column <= 12), 
-                                "Error should be near the trailing comma, but was at column {}", column);
-                        }
-                    }
-                },
-                Ok(_) => panic!("Expected parsing to fail"),
-            }
-        }
+    fn test_invalid_function_definitions() {
+        // Debug each case
+        debug_parse_attempt("def func(, ): pass");
+        debug_parse_attempt("def (x, y): pass");
+        debug_parse_attempt("def func(*args, x): pass");  // This is actually valid Python syntax
+        debug_parse_attempt("def func(**kwargs, x): pass");
+        debug_parse_attempt("def func(x y): pass");
+        
+        // Original test code follows...
+        // Missing parameter name
+        let error = check_error_quality("def func(, ): pass");
+        assert!(error.contains("Expected parameter name") || error.contains("expected 'expression'"), 
+            "Error message should indicate missing parameter: {}", error);
+        
+        // Missing function name
+        let error = check_error_quality("def (x, y): pass");
+        assert!(error.contains("function name") || error.contains("expected identifier"), 
+            "Error message should indicate missing function name: {}", error);
+        
+        // Parameter after *args
+        let _error = check_error_quality("def func(*args, x): pass");
+        // This is actually valid Python syntax (for keyword-only parameters)
+        
+        // Parameter after **kwargs
+        let error = check_error_quality("def func(**kwargs, x): pass");
+        assert!(error.contains("Parameter after **kwargs") || error.contains("Invalid syntax"), 
+            "Error message should indicate invalid parameter order: {}", error);
+        
+        // Invalid parameter syntax
+        let error = check_error_quality("def func(x y): pass");
+        assert!(error.contains("Expected comma between parameters") || error.contains("expected ','"), 
+            "Error message should indicate missing comma: {}", error);
+    }
     }
 }

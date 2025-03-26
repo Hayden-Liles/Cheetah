@@ -402,7 +402,12 @@ impl StmtParser for Parser {
     
                 if self.match_token(TokenType::Comma) {
                     if self.check(TokenType::RightParen) {
-                        break;
+                        // This is the fix - report an error for trailing comma
+                        return Err(ParseError::InvalidSyntax {
+                            message: "Trailing comma in parameter list".to_string(),
+                            line: self.last_token.as_ref().unwrap().line,
+                            column: self.last_token.as_ref().unwrap().column,
+                        });
                     }
                     continue;
                 } else {
@@ -423,7 +428,12 @@ impl StmtParser for Parser {
                     has_vararg = true;
                     if self.match_token(TokenType::Comma) {
                         if self.check(TokenType::RightParen) {
-                            break;
+                            // This is the fix - report an error for trailing comma
+                            return Err(ParseError::InvalidSyntax {
+                                message: "Trailing comma in parameter list".to_string(),
+                                line: self.last_token.as_ref().unwrap().line,
+                                column: self.last_token.as_ref().unwrap().column,
+                            });
                         }
                         continue;
                     }
@@ -537,7 +547,12 @@ impl StmtParser for Parser {
     
             if self.match_token(TokenType::Comma) {
                 if self.check(TokenType::RightParen) {
-                    break;
+                    // This is the key fix: return an error for trailing comma
+                    return Err(ParseError::InvalidSyntax {
+                        message: "Trailing comma in parameter list".to_string(),
+                        line: self.last_token.as_ref().unwrap().line,
+                        column: self.last_token.as_ref().unwrap().column,
+                    });
                 }
             } else {
                 if !self.check(TokenType::RightParen) {
