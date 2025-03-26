@@ -312,6 +312,30 @@ impl Type {
             },
         }
     }
+
+    /// Get the appropriate LLVM void type (use this instead of returning a pointer for Void)
+    pub fn get_void_type<'ctx>(context: &'ctx Context) -> inkwell::types::VoidType<'ctx> {
+        context.void_type()
+    }
+
+    /// Create a class type with fields and methods
+    pub fn create_class_type<'ctx>(
+        &self,
+        context: &'ctx Context,
+        name: &str,
+        fields: &HashMap<String, Type>,
+    ) -> inkwell::types::StructType<'ctx> {
+        let field_types: Vec<BasicTypeEnum> = fields
+            .values()
+            .map(|ty| ty.to_llvm_type(context))
+            .collect();
+        
+        // Create named struct type for the class
+        let struct_type = context.opaque_struct_type(name);
+        struct_type.set_body(&field_types, false);
+        
+        struct_type
+    }
     
     /// Create an LLVM function type with given parameter and return types
     pub fn get_function_type<'ctx>(
@@ -328,6 +352,354 @@ impl Type {
             Type::Void => context.void_type().fn_type(&param_llvm_types, false),
             _ => return_type.to_llvm_type(context).fn_type(&param_llvm_types, false),
         }
+    }
+
+    // Add to the Type impl block
+    pub fn get_function_pointer_type<'ctx>(
+        &self, 
+        context: &'ctx Context
+    ) -> inkwell::types::PointerType<'ctx> {
+        if let Type::Function { param_types, return_type, .. } = self {
+            let param_llvm_types: Vec<_> = param_types
+                .iter()
+                .map(|ty| ty.to_llvm_type(context).into())
+                .collect();
+                
+            let ret_type = if let Type::Void = **return_type {
+                context.void_type().fn_type(&param_llvm_types, false)
+            } else {
+                return_type.to_llvm_type(context).fn_type(&param_llvm_types, false)
+            };
+            
+            context.ptr_type(inkwell::AddressSpace::default())
+        } else {
+            panic!("Not a function type")
+        }
+    }
+
+    pub fn create_type_info<'ctx>(
+        &self,
+        context: &'ctx Context
+    ) -> inkwell::values::StructValue<'ctx> {
+        // Create a struct containing type information
+        let type_id = match self {
+            Type::Int => 1,
+            Type::Float => 2,
+            Type::Bool => 3,
+            Type::None => 4,
+            Type::String => 5,
+            Type::Bytes => 6,
+            Type::List(_) => 7,
+            Type::Tuple(_) => 8,
+            Type::Dict(_, _) => 9,
+            Type::Set(_) => 10,
+            Type::Function { .. } => 11,
+            Type::Class { .. } => 12,
+            Type::Any => 13,
+            Type::Void => 14,
+            Type::Unknown => 15,
+            Type::TypeParam(_) => 16,
+            Type::Generic { .. } => 17,
+        };
+        
+        let type_name = match self {
+            Type::Int => "int",
+            Type::Float => "float",
+            Type::Bool => "bool",
+            Type::None => "None",
+            Type::String => "str",
+            Type::Bytes => "bytes",
+            Type::List(elem_type) => return self.create_container_type_info(context, "list", &[elem_type]),
+            Type::Tuple(items) => return self.create_tuple_type_info(context, items),
+            Type::Dict(key_type, val_type) => return self.create_container_type_info(context, "dict", &[key_type, val_type]),
+            Type::Set(elem_type) => return self.create_container_type_info(context, "set", &[elem_type]),
+            Type::Function { return_type, .. } => return self.create_function_type_info(context, return_type),
+            Type::Class { name, .. } => return self.create_class_type_info(context, name),
+            Type::Any => "Any",
+            Type::Void => "void",
+            Type::Unknown => "unknown",
+            Type::TypeParam(name) => return self.create_named_type_info(context, "TypeParam", name),
+            Type::Generic { base_type, .. } => return self.create_generic_type_info(context, base_type),
+        };
+        
+        let i32_type = context.i32_type();
+        let str_type = context.ptr_type(inkwell::AddressSpace::default());
+        
+        let struct_type = context.struct_type(&[
+            i32_type.into(),
+            str_type.into()
+        ], false);
+        
+        // Create values for the type info fields
+        let id_value = i32_type.const_int(type_id as u64, false);
+        let name_value = context.const_string(type_name.as_bytes(), true);
+        
+        struct_type.const_named_struct(&[
+            id_value.into(),
+            name_value.into()
+        ])
+    }
+    
+    // New function to handle tuple types specifically
+    pub fn create_tuple_type_info<'ctx>(
+        &self,
+        context: &'ctx Context,
+        items: &Vec<Type>
+    ) -> inkwell::values::StructValue<'ctx> {
+        let i32_type = context.i32_type();
+        let str_type = context.ptr_type(inkwell::AddressSpace::default());
+        let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+        
+        // Create type name (e.g., "tuple[int, str]")
+        let mut type_name = String::from("tuple[");
+        
+        for (i, elem_type) in items.iter().enumerate() {
+            if i > 0 {
+                type_name.push_str(", ");
+            }
+            type_name.push_str(&format!("{}", elem_type));
+        }
+        
+        type_name.push(']');
+        
+        // Create struct type (id, name, element_count, elements[])
+        let struct_type = context.struct_type(&[
+            i32_type.into(),              // type id
+            str_type.into(),              // type name
+            i32_type.into(),              // element count
+            ptr_type.into(),              // element types array
+        ], false);
+        
+        // Create values for the struct fields
+        let id_value = i32_type.const_int(8, false);  // Tuple type ID
+        let name_value = context.const_string(type_name.as_bytes(), true);
+        let count_value = i32_type.const_int(items.len() as u64, false);
+        let elements_value = ptr_type.const_null();
+        
+        struct_type.const_named_struct(&[
+            id_value.into(),
+            name_value.into(),
+            count_value.into(),
+            elements_value.into(),
+        ])
+    }
+
+    pub fn create_container_type_info<'ctx>(
+        &self,
+        context: &'ctx Context,
+        container_type: &str,
+        element_types: &[&Type]
+    ) -> inkwell::values::StructValue<'ctx> {
+        let i32_type = context.i32_type();
+        let str_type = context.ptr_type(inkwell::AddressSpace::default());
+        let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+        
+        // Type ID based on container type
+        let type_id = match container_type {
+            "list" => 7,
+            "tuple" => 8,
+            "dict" => 9,
+            "set" => 10,
+            _ => 0,
+        };
+        
+        // Create type name string (e.g., "list[int]", "tuple[int, str]")
+        let mut type_name = String::from(container_type);
+        type_name.push('[');
+        
+        for (i, elem_type) in element_types.iter().enumerate() {
+            if i > 0 {
+                type_name.push_str(", ");
+            }
+            type_name.push_str(&format!("{}", elem_type));
+        }
+        
+        type_name.push(']');
+        
+        // Create struct type (id, name, element_count, elements[])
+        let struct_type = context.struct_type(&[
+            i32_type.into(),              // type id
+            str_type.into(),              // type name
+            i32_type.into(),              // element count
+            ptr_type.into(),              // element types array
+        ], false);
+        
+        // Create values for the struct fields
+        let id_value = i32_type.const_int(type_id as u64, false);
+        let name_value = context.const_string(type_name.as_bytes(), true);
+        let count_value = i32_type.const_int(element_types.len() as u64, false);
+        
+        // We'd need to create an array of element type infos here
+        // For simplicity, we'll just use a null pointer and handle this in a more complete implementation
+        let elements_value = ptr_type.const_null();
+        
+        struct_type.const_named_struct(&[
+            id_value.into(),
+            name_value.into(),
+            count_value.into(),
+            elements_value.into(),
+        ])
+    }
+
+    pub fn create_function_type_info<'ctx>(
+        &self,
+        context: &'ctx Context,
+        return_type: &Box<Type>
+    ) -> inkwell::values::StructValue<'ctx> {
+        let i32_type = context.i32_type();
+        let str_type = context.ptr_type(inkwell::AddressSpace::default());
+        let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+        
+        // Create function type name (e.g., "function() -> int")
+        let type_name = format!("function() -> {}", return_type);
+        
+        // Create struct type (id, name, return_type)
+        let struct_type = context.struct_type(&[
+            i32_type.into(),              // type id
+            str_type.into(),              // type name
+            ptr_type.into(),              // return type (would be a type_info in a real implementation)
+        ], false);
+        
+        // Create values for the struct fields
+        let id_value = i32_type.const_int(11 as u64, false);  // Function type ID
+        let name_value = context.const_string(type_name.as_bytes(), true);
+        let return_value = ptr_type.const_null();  // In a complete implementation, this would be a pointer to return type's type_info
+        
+        struct_type.const_named_struct(&[
+            id_value.into(),
+            name_value.into(),
+            return_value.into(),
+        ])
+    }
+    
+    pub fn create_class_type_info<'ctx>(
+        &self,
+        context: &'ctx Context,
+        class_name: &str
+    ) -> inkwell::values::StructValue<'ctx> {
+        let i32_type = context.i32_type();
+        let str_type = context.ptr_type(inkwell::AddressSpace::default());
+        
+        // Create struct type (id, name, class_name)
+        let struct_type = context.struct_type(&[
+            i32_type.into(),              // type id
+            str_type.into(),              // type name 
+            str_type.into(),              // class name
+        ], false);
+        
+        // Create values for the struct fields
+        let id_value = i32_type.const_int(12 as u64, false);  // Class type ID
+        let type_name = format!("class {}", class_name);
+        let name_value = context.const_string(type_name.as_bytes(), true);
+        let class_name_value = context.const_string(class_name.as_bytes(), true);
+        
+        struct_type.const_named_struct(&[
+            id_value.into(),
+            name_value.into(),
+            class_name_value.into(),
+        ])
+    }
+    
+    pub fn create_named_type_info<'ctx>(
+        &self,
+        context: &'ctx Context,
+        prefix: &str,
+        name: &str
+    ) -> inkwell::values::StructValue<'ctx> {
+        let i32_type = context.i32_type();
+        let str_type = context.ptr_type(inkwell::AddressSpace::default());
+        
+        // Create type name (e.g., "TypeParam<T>")
+        let type_name = format!("{}<{}>", prefix, name);
+        
+        // Create struct type (id, name)
+        let struct_type = context.struct_type(&[
+            i32_type.into(),              // type id
+            str_type.into(),              // type name
+        ], false);
+        
+        // Create values for the struct fields
+        let id_value = i32_type.const_int(16 as u64, false);  // TypeParam type ID
+        let name_value = context.const_string(type_name.as_bytes(), true);
+        
+        struct_type.const_named_struct(&[
+            id_value.into(),
+            name_value.into(),
+        ])
+    }
+    
+    pub fn create_generic_type_info<'ctx>(
+        &self,
+        context: &'ctx Context,
+        base_type: &Box<Type>
+    ) -> inkwell::values::StructValue<'ctx> {
+        let i32_type = context.i32_type();
+        let str_type = context.ptr_type(inkwell::AddressSpace::default());
+        let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+        
+        // Create generic type name (e.g., "Generic<list>")
+        let type_name = format!("Generic<{}>", base_type);
+        
+        // Create struct type (id, name, base_type)
+        let struct_type = context.struct_type(&[
+            i32_type.into(),              // type id
+            str_type.into(),              // type name
+            ptr_type.into(),              // base type (would be a type_info in a real implementation)
+        ], false);
+        
+        // Create values for the struct fields
+        let id_value = i32_type.const_int(17 as u64, false);  // Generic type ID
+        let name_value = context.const_string(type_name.as_bytes(), true);
+        let base_value = ptr_type.const_null();  // In a complete implementation, this would be a pointer to base type's type_info
+        
+        struct_type.const_named_struct(&[
+            id_value.into(),
+            name_value.into(),
+            base_value.into(),
+        ])
+    }
+
+    // Add this function to handle the tuple case specifically:
+    pub fn create_tuple_type_info<'ctx>(
+        &self,
+        context: &'ctx Context,
+        items: &Vec<Type>
+    ) -> inkwell::values::StructValue<'ctx> {
+        let i32_type = context.i32_type();
+        let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+        
+        // Create type name (e.g., "tuple[int, str]")
+        let mut type_name = String::from("tuple[");
+        
+        for (i, elem_type) in items.iter().enumerate() {
+            if i > 0 {
+                type_name.push_str(", ");
+            }
+            type_name.push_str(&format!("{}", elem_type));
+        }
+        
+        type_name.push(']');
+        
+        // Create struct type (id, name, element_count, elements[])
+        let struct_type = context.struct_type(&[
+            i32_type.into(),              // type id
+            ptr_type.into(),              // type name
+            i32_type.into(),              // element count
+            ptr_type.into(),              // element types array
+        ], false);
+        
+        // Create values for the struct fields
+        let id_value = i32_type.const_int(8, false);  // Tuple type ID
+        let name_value = context.const_string(type_name.as_bytes(), true);
+        let count_value = i32_type.const_int(items.len() as u64, false);
+        let elements_value = ptr_type.const_null();
+        
+        struct_type.const_named_struct(&[
+            id_value.into(),
+            name_value.into(),
+            count_value.into(),
+            elements_value.into(),
+        ])
     }
     
     /// Infer the type of an AST expression
