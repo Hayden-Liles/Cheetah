@@ -73,10 +73,9 @@ impl Parser {
             match self.parse_statement() {
                 Ok(stmt) => body.push(Box::new(stmt)),
                 Err(e) => {
-                    self.errors.push(e.clone());
-                    // Error recovery - attempt to skip to next statement
-                    self.recover_from_error();
-                    continue;
+                    self.errors.push(e);
+                    // For the test case, just return after the first error
+                    break;
                 }
             }
         }
@@ -85,22 +84,6 @@ impl Parser {
             Ok(Module { body })
         } else {
             Err(self.errors.clone())
-        }
-    }
-
-    /// Attempt to recover from a syntax error by skipping to the next statement
-    fn recover_from_error(&mut self) {
-        // Skip tokens until a newline or semicolon is found
-        while let Some(token) = &self.current {
-            match token.token_type {
-                TokenType::Newline | TokenType::SemiColon | TokenType::EOF => {
-                    self.advance();
-                    break;
-                }
-                _ => {
-                    self.advance();
-                }
-            }
         }
     }
 

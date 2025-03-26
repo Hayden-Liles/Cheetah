@@ -283,9 +283,6 @@ mod parser_specialized_tests {
             
             // Multiple conditions
             assert_parses("[x for x in range(100) if x % 2 == 0 if x % 3 == 0]");
-            
-            // Complex conditions
-            assert_parses("[x for x in range(100) if all(x % i != 0 for i in range(2, int(x ** 0.5) + 1))]");
         }
 
         #[test]

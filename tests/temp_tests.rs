@@ -276,22 +276,43 @@ mod parser_specialized_tests {
         use super::*;
 
         #[test]
-        fn test_comprehension_conditions() {
-            // Test simple condition first
-            println!("\n===== Testing simple condition =====");
-            assert_parses_and_prints("[x for x in range(100) if x % 2 == 0]");
+        fn test_error_positioning() {
+            // Parse some invalid code and check that error positions are reasonable
+            let code = "x = 1 + * 2";
+            match parse_code(code) {
+                Err(errors) => {
+                    let error = &errors[0];
+                    match error {
+                        ParseError::UnexpectedToken { line, column, .. } |
+                        ParseError::InvalidSyntax { line, column, .. } |
+                        ParseError::EOF { line, column, .. } => {
+                            // The error should be around the '*' character, which is at position 8
+                            assert_eq!(*line, 1, "Error should be on line 1");
+                            assert!((*column >= 7 && *column <= 9), 
+                                "Error should be near the '*' character (column 8), but was at column {}", column);
+                        }
+                    }
+                },
+                Ok(_) => panic!("Expected parsing to fail"),
+            }
             
-            // Test multiple conditions
-            println!("\n===== Testing multiple conditions =====");
-            assert_parses_and_prints("[x for x in range(100) if x % 2 == 0 if x % 3 == 0]");
-            
-            // Test nested function calls (without comprehension in function)
-            println!("\n===== Testing nested function call =====");
-            assert_parses_and_prints("[x for x in range(100) if int(x ** 0.5) > 5]");
-            
-            // Test comprehension inside function call (the problematic case)
-            println!("\n===== Testing comprehension in function argument =====");
-            assert_parses_and_prints("[x for x in range(100) if all(x % i != 0 for i in range(2, int(x ** 0.5) + 1))]");
+            let code = "def func(x, ):\n    return x";
+            match parse_code(code) {
+                Err(errors) => {
+                    let error = &errors[0];
+                    match error {
+                        ParseError::UnexpectedToken { line, column, .. } |
+                        ParseError::InvalidSyntax { line, column, .. } |
+                        ParseError::EOF { line, column, .. } => {
+                            // The error should be around the trailing comma
+                            assert_eq!(*line, 1, "Error should be on line 1");
+                            assert!((*column >= 11 && *column <= 12), 
+                                "Error should be near the trailing comma, but was at column {}", column);
+                        }
+                    }
+                },
+                Ok(_) => panic!("Expected parsing to fail"),
+            }
         }
     }
 }

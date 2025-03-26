@@ -578,12 +578,18 @@ impl ExprParser for Parser {
     
     fn parse_arithmetic(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_term()?;
-
+    
         while self.match_token(TokenType::Plus) || self.match_token(TokenType::Minus) {
             let token = self.previous_token();
-
+    
+            // Check for consecutive operators - this will catch "1 + + 2"
             if (token.token_type == TokenType::Plus && self.check(TokenType::Plus))
                 || (token.token_type == TokenType::Minus && self.check(TokenType::Minus))
+                || self.check(TokenType::Multiply)
+                || self.check(TokenType::Divide)
+                || self.check(TokenType::FloorDivide)
+                || self.check(TokenType::Modulo)
+                || self.check(TokenType::At)
             {
                 return Err(ParseError::InvalidSyntax {
                     message: "Invalid syntax: consecutive operators".to_string(),
@@ -591,7 +597,7 @@ impl ExprParser for Parser {
                     column: token.column,
                 });
             }
-
+    
             let op = match token.token_type {
                 TokenType::Plus => Operator::Add,
                 TokenType::Minus => Operator::Sub,
@@ -603,7 +609,7 @@ impl ExprParser for Parser {
                     });
                 }
             };
-
+    
             let right = self.parse_term()?;
             expr = Expr::BinOp {
                 left: Box::new(expr),
@@ -613,13 +619,13 @@ impl ExprParser for Parser {
                 column: token.column,
             };
         }
-
+    
         Ok(expr)
     }
     
     fn parse_term(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_factor()?;
-
+    
         while self.match_token(TokenType::Multiply)
             || self.match_token(TokenType::Divide)
             || self.match_token(TokenType::FloorDivide)
@@ -627,7 +633,8 @@ impl ExprParser for Parser {
             || self.match_token(TokenType::At)
         {
             let token = self.previous_token();
-
+    
+            // Check for consecutive operators - this will catch "1 + * 2"
             if self.check(TokenType::Multiply)
                 || self.check(TokenType::Divide)
                 || self.check(TokenType::FloorDivide)
@@ -642,7 +649,8 @@ impl ExprParser for Parser {
                     column: token.column + token.lexeme.len(),
                 });
             }
-
+    
+            // Also check for EOF or newline
             if self.check(TokenType::EOF) || self.check_newline() {
                 return Err(ParseError::InvalidSyntax {
                     message: "Incomplete expression".to_string(),
@@ -650,7 +658,8 @@ impl ExprParser for Parser {
                     column: token.column + 1,
                 });
             }
-
+    
+            // Rest of the method unchanged...
             let op = match token.token_type {
                 TokenType::Multiply => Operator::Mult,
                 TokenType::Divide => Operator::Div,
@@ -665,9 +674,9 @@ impl ExprParser for Parser {
                     });
                 }
             };
-
+    
             let right = self.parse_factor()?;
-
+    
             expr = Expr::BinOp {
                 left: Box::new(expr),
                 op,
@@ -676,7 +685,7 @@ impl ExprParser for Parser {
                 column: token.column,
             };
         }
-
+    
         Ok(expr)
     }
     

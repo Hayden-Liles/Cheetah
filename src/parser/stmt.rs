@@ -368,15 +368,30 @@ impl StmtParser for Parser {
         let mut has_vararg = false;
         let mut has_seen_default = false;
         let mut has_pos_only_separator = false;
-
+    
         if self.check(TokenType::RightParen) {
             return Ok(params);
         }
-
+    
         loop {
+            // Handle trailing comma error
+            if self.check(TokenType::RightParen) && params.len() > 0 {
+                // We've seen a parameter and now we're at a closing paren
+                // Check if the last token was a comma
+                if let Some(last_token) = &self.last_token {
+                    if matches!(last_token.token_type, TokenType::Comma) {
+                        return Err(ParseError::InvalidSyntax {
+                            message: "Trailing comma in parameter list".to_string(),
+                            line: last_token.line,
+                            column: last_token.column,
+                        });
+                    }
+                }
+            }
+    
             if self.match_token(TokenType::Divide) {
                 has_pos_only_separator = true;
-
+    
                 if !self.check(TokenType::Comma) && !self.check(TokenType::RightParen) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected comma or closing parenthesis after '/'".to_string(),
@@ -384,7 +399,7 @@ impl StmtParser for Parser {
                         column: self.current.as_ref().map_or(0, |t| t.column),
                     });
                 }
-
+    
                 if self.match_token(TokenType::Comma) {
                     if self.check(TokenType::RightParen) {
                         break;
@@ -394,7 +409,7 @@ impl StmtParser for Parser {
                     break;
                 }
             }
-
+    
             if has_kwarg {
                 return Err(ParseError::InvalidSyntax {
                     message: "Parameter after **kwargs is not allowed".to_string(),
@@ -402,7 +417,7 @@ impl StmtParser for Parser {
                     column: self.current.as_ref().map_or(0, |t| t.column),
                 });
             }
-
+    
             if self.match_token(TokenType::Multiply) {
                 if self.check(TokenType::Comma) || self.check(TokenType::RightParen) {
                     has_vararg = true;
@@ -414,15 +429,15 @@ impl StmtParser for Parser {
                     }
                     break;
                 }
-
+    
                 let name = self.consume_identifier("parameter name after *")?;
-
+    
                 let typ = if self.match_token(TokenType::Colon) {
                     Some(Box::new(self.parse_type_annotation(false)?))
                 } else {
                     None
                 };
-
+    
                 if self.check(TokenType::Assign) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Variadic argument cannot have default value".to_string(),
@@ -430,9 +445,9 @@ impl StmtParser for Parser {
                         column: self.current.as_ref().map_or(0, |t| t.column),
                     });
                 }
-
+    
                 has_vararg = true;
-
+    
                 params.push(Parameter {
                     name,
                     typ,
@@ -442,13 +457,13 @@ impl StmtParser for Parser {
                 });
             } else if self.match_token(TokenType::Power) {
                 let name = self.consume_identifier("parameter name after **")?;
-
+    
                 let typ = if self.match_token(TokenType::Colon) {
                     Some(Box::new(self.parse_type_annotation(false)?))
                 } else {
                     None
                 };
-
+    
                 if self.check(TokenType::Assign) {
                     return Err(ParseError::InvalidSyntax {
                         message: "Keyword argument cannot have default value".to_string(),
@@ -456,9 +471,9 @@ impl StmtParser for Parser {
                         column: self.current.as_ref().map_or(0, |t| t.column),
                     });
                 }
-
+    
                 has_kwarg = true;
-
+    
                 params.push(Parameter {
                     name,
                     typ,
@@ -472,7 +487,7 @@ impl StmtParser for Parser {
                     self.current.as_ref().map_or(0, |t| t.column),
                 );
                 let param_name = self.consume_identifier("parameter name")?;
-
+    
                 if self.check_identifier() {
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected comma between parameters".to_string(),
@@ -480,18 +495,18 @@ impl StmtParser for Parser {
                         column: param_pos.1 + param_name.len(),
                     });
                 }
-
+    
                 let typ = if self.match_token(TokenType::Colon) {
                     Some(Box::new(self.parse_type_annotation(false)?))
                 } else {
                     None
                 };
-
+    
                 let default = if self.match_token(TokenType::Assign) {
                     has_seen_default = true;
-
+    
                     let default_expr = self.parse_or_test()?;
-
+    
                     Some(Box::new(default_expr))
                 } else {
                     if has_seen_default && !has_kwarg && !has_vararg && !has_pos_only_separator {
@@ -502,7 +517,7 @@ impl StmtParser for Parser {
                     }
                     None
                 };
-
+    
                 params.push(Parameter {
                     name: param_name,
                     typ,
@@ -512,14 +527,14 @@ impl StmtParser for Parser {
                 });
             } else {
                 let token = self.current.clone().unwrap_or_else(|| panic!("Expected token"));
-
+    
                 return Err(ParseError::InvalidSyntax {
                     message: "Expected parameter name, * or **".to_string(),
                     line: token.line,
                     column: token.column,
                 });
             }
-
+    
             if self.match_token(TokenType::Comma) {
                 if self.check(TokenType::RightParen) {
                     break;
@@ -527,7 +542,7 @@ impl StmtParser for Parser {
             } else {
                 if !self.check(TokenType::RightParen) {
                     let token = self.current.clone().unwrap_or_else(|| panic!("Expected token"));
-
+    
                     return Err(ParseError::InvalidSyntax {
                         message: "Expected comma or closing parenthesis".to_string(),
                         line: token.line,
@@ -537,7 +552,7 @@ impl StmtParser for Parser {
                 break;
             }
         }
-
+    
         Ok(params)
     }
 
@@ -810,9 +825,9 @@ impl StmtParser for Parser {
         let token = self.current.clone().unwrap();
         let line = token.line;
         let column = token.column;
-
+    
         self.advance();
-
+    
         if self.check(TokenType::Colon) {
             return Err(ParseError::UnexpectedToken {
                 expected: "expression".to_string(),
@@ -821,9 +836,23 @@ impl StmtParser for Parser {
                 column: self.current.as_ref().unwrap().column,
             });
         }
-
+    
+        // Special case: detect assignment in condition
+        if self.check_identifier() && self.peek_matches(TokenType::Assign) {
+            let id_token = self.current.clone().unwrap();
+            self.advance(); // consume the identifier
+            self.advance(); // consume the '=' token
+    
+            // Return the error immediately
+            return Err(ParseError::InvalidSyntax {
+                message: "Cannot use assignment in a condition".to_string(),
+                line: id_token.line,
+                column: id_token.column,
+            });
+        }
+    
         let test = Box::new(self.parse_expression()?);
-
+    
         if !self.check(TokenType::Colon) {
             return Err(ParseError::InvalidSyntax {
                 message: "Expected ':' after if condition".to_string(),
@@ -831,13 +860,13 @@ impl StmtParser for Parser {
                 column: self.current.as_ref().map_or(column + 2, |t| t.column),
             });
         }
-
+    
         self.advance();
-
+    
         let body = self.parse_suite()?;
-
+    
         let mut orelse = Vec::new();
-
+    
         if self.check(TokenType::Elif) {
             let elif_stmt = self.parse_if()?;
             orelse.push(Box::new(elif_stmt));
@@ -845,7 +874,7 @@ impl StmtParser for Parser {
             self.consume(TokenType::Colon, ":")?;
             orelse = self.parse_suite()?;
         }
-
+    
         Ok(Stmt::If {
             test,
             body,
