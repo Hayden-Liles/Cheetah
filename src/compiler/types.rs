@@ -365,7 +365,7 @@ impl Type {
                 .map(|ty| ty.to_llvm_type(context).into())
                 .collect();
                 
-            let ret_type = if let Type::Void = **return_type {
+            let _ret_type = if let Type::Void = **return_type {
                 context.void_type().fn_type(&param_llvm_types, false)
             } else {
                 return_type.to_llvm_type(context).fn_type(&param_llvm_types, false)
@@ -656,49 +656,6 @@ impl Type {
             id_value.into(),
             name_value.into(),
             base_value.into(),
-        ])
-    }
-
-    // Add this function to handle the tuple case specifically:
-    pub fn create_tuple_type_info<'ctx>(
-        &self,
-        context: &'ctx Context,
-        items: &Vec<Type>
-    ) -> inkwell::values::StructValue<'ctx> {
-        let i32_type = context.i32_type();
-        let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
-        
-        // Create type name (e.g., "tuple[int, str]")
-        let mut type_name = String::from("tuple[");
-        
-        for (i, elem_type) in items.iter().enumerate() {
-            if i > 0 {
-                type_name.push_str(", ");
-            }
-            type_name.push_str(&format!("{}", elem_type));
-        }
-        
-        type_name.push(']');
-        
-        // Create struct type (id, name, element_count, elements[])
-        let struct_type = context.struct_type(&[
-            i32_type.into(),              // type id
-            ptr_type.into(),              // type name
-            i32_type.into(),              // element count
-            ptr_type.into(),              // element types array
-        ], false);
-        
-        // Create values for the struct fields
-        let id_value = i32_type.const_int(8, false);  // Tuple type ID
-        let name_value = context.const_string(type_name.as_bytes(), true);
-        let count_value = i32_type.const_int(items.len() as u64, false);
-        let elements_value = ptr_type.const_null();
-        
-        struct_type.const_named_struct(&[
-            id_value.into(),
-            name_value.into(),
-            count_value.into(),
-            elements_value.into(),
         ])
     }
     

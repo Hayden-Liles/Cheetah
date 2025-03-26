@@ -1,7 +1,7 @@
 use crate::ast::{Expr, Number, NameConstant};
 use crate::compiler::context::CompilationContext;
 use crate::compiler::types::Type;
-use inkwell::values::{BasicValueEnum, FloatValue, IntValue, PointerValue};
+use inkwell::values::BasicValueEnum;
 
 /// Extension trait for handling expression code generation
 pub trait ExprCompiler<'ctx> {
@@ -22,7 +22,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             Expr::NameConstant { value, .. } => self.compile_name_constant(value),
             Expr::Name { id, .. } => {
                 // Look up variable type and value
-                if let Some(ty) = self.lookup_variable_type(id) {
+                if let Some(_ty) = self.lookup_variable_type(id) {
                     // This would require storing variable values in the context
                     // Implementation depends on how you store variables during compilation
                     Err(format!("Variable lookup not yet implemented for: {}", id))

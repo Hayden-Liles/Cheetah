@@ -1,6 +1,7 @@
 use crate::ast;
 pub mod types;
 pub mod context;
+pub mod expr;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;
