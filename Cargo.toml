@@ -18,6 +18,7 @@ colored = "2.0.0"
 unicode-segmentation = "1.10"
 # Benchmarking (for development use)
 criterion = { version = "0.5", optional = true }
+inkwell = { version = "0.5.0", features = ["llvm18-0"] }
 
 [lib]
 name = "cheetah"

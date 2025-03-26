@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use clap::{Parser as ClapParser, Subcommand};
 use anyhow::{Result, Context};
 use colored::Colorize;
@@ -9,7 +10,12 @@ use cheetah::lexer::{Lexer, Token, TokenType, LexerConfig};
 use cheetah::parser::{self, ParseError};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
+use cheetah::compiler::Compiler;
+use cheetah::parse;
 
+use inkwell::context;
+// Import LLVM context
+use inkwell::targets::{InitializationConfig, Target};
 
 #[derive(ClapParser)]
 #[command(name = "cheetah")]
@@ -26,9 +32,17 @@ enum Commands {
     Run {
         /// The source file to run
         file: String,
+        
+        /// Use LLVM JIT compilation instead of interpreter
+        #[arg(short = 'j', long)]
+        jit: bool,
     },
     /// Start a REPL session
-    Repl,
+    Repl {
+        /// Use LLVM JIT compilation in REPL
+        #[arg(short = 'j', long)]
+        jit: bool,
+    },
     /// Lex a file and print the tokens (for debugging)
     Lex {
         /// The source file to lex
@@ -77,17 +91,49 @@ enum Commands {
         #[arg(short, long, default_value = "4")]
         indent: usize,
     },
+    /// Compile a Cheetah source file to LLVM IR
+    Compile {
+        /// The source file to compile
+        file: String,
+        
+        /// Output path (defaults to input file name with .ll extension)
+        #[arg(short, long)]
+        output: Option<String>,
+        
+        /// Optimization level (0-3)
+        #[arg(short, long, default_value = "0")]
+        opt: u8,
+        
+        /// Compile to object file instead of LLVM IR
+        #[arg(short, long)]
+        object: bool,
+        
+        /// Target triple (default: host target)
+        #[arg(short, long)]
+        target: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
+    // Initialize LLVM targets for cross-compilation support
+    initialize_llvm_targets();
+    
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { file } => {
-            run_file(&file)?;
+        Commands::Run { file, jit } => {
+            if jit {
+                run_file_jit(&file)?;
+            } else {
+                run_file(&file)?;
+            }
         }
-        Commands::Repl => {
-            run_repl()?;
+        Commands::Repl { jit } => {
+            if jit {
+                run_repl_jit()?;
+            } else {
+                run_repl()?;
+            }
         }
         Commands::Lex { file, verbose, color, line_numbers } => {
             lex_file(&file, verbose, color, line_numbers)?;
@@ -101,9 +147,25 @@ fn main() -> Result<()> {
         Commands::Format { file, write, indent } => {
             format_file(&file, write, indent)?;
         }
+        Commands::Compile { file, output, opt, object, target } => {
+            compile_file(&file, output, opt, object, target)?;
+        }
     }
 
     Ok(())
+}
+
+fn initialize_llvm_targets() {
+    let config = InitializationConfig {
+        asm_parser: true,
+        asm_printer: true,
+        base: true,
+        disassembler: true,
+        info: true,
+        machine_code: true,
+    };
+    
+    Target::initialize_all(&config);
 }
 
 fn run_file(filename: &str) -> Result<()> {
@@ -139,6 +201,42 @@ fn run_file(filename: &str) -> Result<()> {
     }
     
     Ok(())
+}
+
+fn run_file_jit(filename: &str) -> Result<()> {
+    println!("{}", format!("JIT compiling and executing {}", filename).bright_green());
+    
+    let source = fs::read_to_string(filename)
+        .with_context(|| format!("Failed to read file: {}", filename))?;
+    
+    // Parse the source code
+    match parse(&source) {
+        Ok(module) => {
+            // Create LLVM context and compiler
+            let context = context::Context::create();
+            let compiler = Compiler::new(&context, filename);
+            
+            // Compile the AST
+            match compiler.compile_module(&module) {
+                Ok(_) => {
+                    println!("Successfully compiled module");
+                    
+                    // TODO: JIT execution will be implemented here
+                    println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
+                    println!("{}", compiler.get_ir());
+                    
+                    Ok(())
+                },
+                Err(e) => Err(anyhow::anyhow!("Compilation failed: {}", e)),
+            }
+        },
+        Err(errors) => {
+            for error in &errors {
+                eprintln!("{}", error.get_message().bright_red());
+            }
+            Err(anyhow::anyhow!("Parsing failed"))
+        }
+    }
 }
 
 fn run_repl() -> Result<()> {
@@ -214,6 +312,96 @@ fn run_repl() -> Result<()> {
                             for error in errors {
                                 eprintln!("{}", error.get_message().bright_red());
                             }
+                        }
+                    }
+                }
+            }
+            
+            input_buffer.clear();
+            paren_level = 0;
+            bracket_level = 0;
+            brace_level = 0;
+            in_multiline_block = false;
+        }
+    }
+    
+    println!("Goodbye!");
+    Ok(())
+}
+
+fn run_repl_jit() -> Result<()> {
+    println!("{}", "Cheetah Programming Language REPL (JIT Mode)".bright_green());
+    println!("Type 'exit' or press Ctrl+D to exit");
+    
+    let mut input_buffer = String::new();
+    let mut paren_level = 0;
+    let mut bracket_level = 0;
+    let mut brace_level = 0;
+    let mut in_multiline_block = false;
+    
+    // Create LLVM context once for the entire REPL session
+    let context = context::Context::create();
+    let mut repl_count = 0;
+    
+    loop {
+        let prompt = if !input_buffer.is_empty() {
+            "... ".bright_yellow().to_string()
+        } else {
+            ">>> ".bright_green().to_string()
+        };
+        
+        print!("{}", prompt);
+        io::stdout().flush()?;
+        
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input)? == 0 {
+            break;
+        }
+        
+        let input = input.trim_end();
+        
+        if input_buffer.is_empty() && input == "exit" {
+            break;
+        }
+        
+        input_buffer.push_str(input);
+        input_buffer.push('\n');
+        
+        update_repl_state(&input, &mut paren_level, &mut bracket_level, &mut brace_level, &mut in_multiline_block);
+        
+        let should_execute = !in_multiline_block && paren_level == 0 && bracket_level == 0 && brace_level == 0 && 
+                                    (input.trim().is_empty() || !input.trim().ends_with(':'));
+        
+        if should_execute {
+            let complete_input = input_buffer.trim();
+            
+            if !complete_input.is_empty() {
+                repl_count += 1;
+                let module_name = format!("repl_{}", repl_count);
+                
+                // Parse the input
+                match parse(complete_input) {
+                    Ok(module) => {
+                        // Create compiler for this REPL entry
+                        let compiler = Compiler::new(&context, &module_name);
+                        
+                        // Compile the AST
+                        match compiler.compile_module(&module) {
+                            Ok(_) => {
+                                println!("{}", "✓ Compiled successfully".bright_green());
+                                
+                                // TODO: JIT execution will be implemented here
+                                println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
+                                println!("{}", compiler.get_ir());
+                            },
+                            Err(e) => {
+                                eprintln!("{}", format!("Compilation error: {}", e).bright_red());
+                            }
+                        }
+                    },
+                    Err(errors) => {
+                        for error in errors {
+                            eprintln!("{}", error.get_message().bright_red());
                         }
                     }
                 }
@@ -508,6 +696,70 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
     }
     
     Ok(())
+}
+
+fn compile_file(
+    filename: &str,
+    output: Option<String>,
+    opt_level: u8,
+    output_object: bool,
+    target_triple: Option<String>
+) -> Result<()> {
+    let _ = target_triple;
+    println!("{}", format!("Compiling {} with optimization level {}", filename, opt_level).bright_green());
+    
+    let source = fs::read_to_string(filename)
+        .with_context(|| format!("Failed to read file: {}", filename))?;
+    
+    // Parse the source code
+    match parse(&source) {
+        Ok(module) => {
+            // Create LLVM context and compiler
+            let context = context::Context::create();
+            let compiler = Compiler::new(&context, filename);
+            
+            // Set optimization level
+            // We'll implement this in the Compiler later
+            
+            // Compile the AST
+            match compiler.compile_module(&module) {
+                Ok(_) => {
+                    // Determine output path and extension
+                    let mut output_path = match output {
+                        Some(path) => PathBuf::from(path),
+                        None => {
+                            let mut path = PathBuf::from(filename);
+                            path.set_extension(if output_object { "o" } else { "ll" });
+                            path
+                        }
+                    };
+                    
+                    // If output_object is true, we would compile to an object file
+                    // For now, we'll just write the LLVM IR
+                    if output_object {
+                        println!("{}", "Object file output not yet implemented, defaulting to LLVM IR".bright_yellow());
+                        if output_path.extension().unwrap_or_default() == "o" {
+                            output_path.set_extension("ll");
+                        }
+                    }
+                    
+                    // Write LLVM IR to file
+                    compiler.write_to_file(&output_path)
+                        .map_err(|e| anyhow::anyhow!("Failed to write IR to file: {}", e))?;
+                    
+                    println!("Successfully compiled to {}", output_path.display());
+                    Ok(())
+                },
+                Err(e) => Err(anyhow::anyhow!("Compilation failed: {}", e)),
+            }
+        },
+        Err(errors) => {
+            for error in &errors {
+                eprintln!("{}", error.get_message().bright_red());
+            }
+            Err(anyhow::anyhow!("Parsing failed"))
+        }
+    }
 }
 
 /// Format the token output based on token type

@@ -5,6 +5,7 @@ pub mod parser;
 pub mod symtable;
 pub mod visitor;
 pub mod formatter;
+pub mod compiler;
 
 // Import the Visitor trait so it's in scope
 use crate::visitor::Visitor;
