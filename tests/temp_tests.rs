@@ -1,130 +1,70 @@
-#[allow(dead_code)]
-#[cfg(test)]
-mod advanced_parser_tests {
-    use cheetah::ast::Module;
-    use cheetah::lexer::Lexer;
-    use cheetah::parser::{ParseError, Parser};
-    use std::fmt;
-    // Custom formatter for error types
-    struct ErrorFormatter<'a>(pub &'a ParseError);
+// tests/compiler_tests.rs
+use cheetah::compiler::Compiler;
+use cheetah::parse;
+use inkwell::context::Context;
 
-    impl<'a> fmt::Display for ErrorFormatter<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self.0 {
-                ParseError::UnexpectedToken { expected, found, line, column } => {
-                    write!(f, "Unexpected token at line {}, column {}: expected '{}', found '{:?}'", 
-                           line, column, expected, found)
-                },
-                ParseError::InvalidSyntax { message, line, column } => {
-                    write!(f, "Invalid syntax at line {}, column {}: {}", 
-                           line, column, message)
-                },
-                ParseError::EOF { expected, line, column } => {
-                    write!(f, "Unexpected EOF at line {}, column {}: expected '{}'", 
-                           line, column, expected)
-                },
-            }
+// Helper function to compile source code to IR and return the IR string
+fn compile_to_ir(source: &str, module_name: &str) -> Result<String, String> {
+    // Parse the source code
+    let ast = match parse(source) {
+        Ok(module) => module,
+        Err(errors) => {
+            let error_messages = errors.iter()
+                .map(|e| e.get_message())
+                .collect::<Vec<String>>()
+                .join("\n");
+            return Err(format!("Parsing failed: {}", error_messages));
         }
-    }
-
-    // Helper functions to test parsing, similar to the ones in temp_tests.rs
-    fn check_error_quality(source: &str) -> String {
-        match parse_code(source) {
-            Ok(_) => {
-                panic!("Expected parsing to fail, but it succeeded: {}", source);
-            },
-            Err(errors) => {
-                assert!(!errors.is_empty(), "Expected at least one error to be reported");
-                let error_message = format!("{}", ErrorFormatter(&errors[0]));
-                
-                // Verify that error message contains useful information
-                assert!(!error_message.is_empty(), "Error message should not be empty");
-                assert!(error_message.contains("line"), "Error message should contain line number");
-                assert!(error_message.contains("column"), "Error message should contain column number");
-                
-                error_message
-            },
-        }
-    }
-
-    fn parse_code(source: &str) -> Result<Module, Vec<ParseError>> {
-        let mut lexer = Lexer::new(source);
-        let tokens = lexer.tokenize();
-
-        if !lexer.get_errors().is_empty() {
-            let parse_errors: Vec<ParseError> = lexer
-                .get_errors()
-                .iter()
-                .map(|e| ParseError::InvalidSyntax {
-                    message: e.message.clone(),
-                    line: e.line,
-                    column: e.column,
-                })
-                .collect();
-            return Err(parse_errors);
-        }
-
-        let mut parser = Parser::new(tokens);
-        parser.parse()
-    }
-
-    fn assert_parses(source: &str) -> Module {
-        match parse_code(source) {
-            Ok(module) => module,
-            Err(errors) => {
-                println!("\n================================");
-                println!("PARSING FAILED FOR CODE SNIPPET:");
-                println!("================================");
-                println!("{}", source);
-                println!("\nERRORS:");
-                
-                for error in &errors {
-                    // Print detailed error information
-                    println!("- {}", ErrorFormatter(error));
-                }
-                
-                panic!("Parsing failed with {} errors", errors.len());
-            },
-        }
-    }
-
-    fn assert_parse_fails(source: &str) {
-        match parse_code(source) {
-            Ok(_) => {
-                println!("\n=============================");
-                println!("EXPECTED FAILURE BUT SUCCEEDED:");
-                println!("=============================");
-                println!("{}", source);
-                panic!("Expected parsing to fail, but it succeeded");
-            },
-            Err(_) => (), // Pass if there's any error
-        }
-    }
-
-    fn assert_parse_fails_with(source: &str, expected_error_substr: &str) {
-        match parse_code(source) {
-            Ok(_) => {
-                println!("\n=============================");
-                println!("EXPECTED FAILURE BUT SUCCEEDED:");
-                println!("=============================");
-                println!("{}", source);
-                println!("\nExpected error containing: '{}'", expected_error_substr);
-                panic!("Expected parsing to fail, but it succeeded");
-            },
-            Err(errors) => {
-                let error_message = format!("{}", ErrorFormatter(&errors[0]));
-                if !error_message.contains(expected_error_substr) {
-                    println!("\n==========================");
-                    println!("WRONG ERROR TYPE DETECTED:");
-                    println!("==========================");
-                    println!("Code: {}", source);
-                    println!("\nExpected error containing: '{}'", expected_error_substr);
-                    println!("Actual error: '{}'", error_message);
-                    
-                    panic!("Error message doesn't match expected substring");
-                }
-            },
-        }
-    }
+    };
     
+    // Create LLVM context and compiler
+    let context = Context::create();
+    let mut compiler = Compiler::new(&context, module_name);
+    
+    // Compile the AST
+    match compiler.compile_module(&ast) {
+        Ok(_) => Ok(compiler.get_ir()),
+        Err(e) => Err(format!("Compilation failed: {}", e)),
+    }
+}
+
+// Print the IR for debugging
+fn debug_ir(ir: &str) {
+    println!("Generated IR:\n{}", ir);
+}
+
+#[test]
+fn test_annotated_assignment() {
+    let source = r#"
+def func_with_ann_assignment():
+    x: int = 42
+    return x
+    "#;
+    
+    let ir = compile_to_ir(source, "ann_assignment_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for alloca and store instructions for the variable
+    assert!(ir.contains("alloca"), "Should contain 'alloca' instruction");
+    assert!(ir.contains("store"), "Should contain 'store' instruction for assignment");
+}
+
+#[test]
+fn test_augmented_assignment() {
+    let source = r#"
+def func_with_aug_assignment():
+    x = 10
+    x += 5
+    y = 20
+    y *= 2
+    return x + y
+    "#;
+    
+    let ir = compile_to_ir(source, "aug_assignment_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for load, add/mul, and store operations
+    assert!(ir.contains("load"), "Should contain 'load' instructions");
+    assert!(ir.contains("add") || ir.contains("fadd"), "Should contain addition operations");
+    assert!(ir.contains("mul") || ir.contains("fmul"), "Should contain multiplication operations");
 }
