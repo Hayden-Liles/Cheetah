@@ -3,8 +3,15 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::builder::Builder;
 use inkwell::values::BasicValueEnum;
+use inkwell::basic_block::BasicBlock;
 use crate::compiler::types::Type;
 use crate::compiler::types::is_reference_type;
+
+/// Loop context for managing break and continue statements
+pub struct LoopContext<'ctx> {
+    pub continue_block: BasicBlock<'ctx>,
+    pub break_block: BasicBlock<'ctx>,
+}
 
 /// Compilation context that manages types and values during code generation
 pub struct CompilationContext<'ctx> {
@@ -28,6 +35,9 @@ pub struct CompilationContext<'ctx> {
 
     /// Map of variable names to their LLVM pointer values (storage locations)
     pub variables: HashMap<String, inkwell::values::PointerValue<'ctx>>,
+    
+    /// Stack of loop contexts for break/continue statements
+    pub loop_stack: Vec<LoopContext<'ctx>>,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -44,6 +54,7 @@ impl<'ctx> CompilationContext<'ctx> {
             functions: HashMap::new(),
             class_types: HashMap::new(),
             variables: HashMap::new(),
+            loop_stack: Vec::new(),
         }
     }
     
@@ -124,6 +135,29 @@ impl<'ctx> CompilationContext<'ctx> {
     /// Get the storage location for a variable
     pub fn get_variable_ptr(&self, name: &str) -> Option<inkwell::values::PointerValue<'ctx>> {
         self.variables.get(name).copied()
+    }
+    
+    /// Push a new loop context onto the stack
+    pub fn push_loop(&mut self, continue_block: BasicBlock<'ctx>, break_block: BasicBlock<'ctx>) {
+        self.loop_stack.push(LoopContext {
+            continue_block,
+            break_block,
+        });
+    }
+    
+    /// Pop the top loop context off the stack
+    pub fn pop_loop(&mut self) -> Option<LoopContext<'ctx>> {
+        self.loop_stack.pop()
+    }
+    
+    /// Get the current loop's continue block
+    pub fn current_continue_block(&self) -> Option<BasicBlock<'ctx>> {
+        self.loop_stack.last().map(|ctx| ctx.continue_block)
+    }
+    
+    /// Get the current loop's break block
+    pub fn current_break_block(&self) -> Option<BasicBlock<'ctx>> {
+        self.loop_stack.last().map(|ctx| ctx.break_block)
     }
     
     /// Convert a value from one type to another

@@ -8,7 +8,7 @@ pub enum Stmt {
         body: Vec<Box<Stmt>>,
         decorator_list: Vec<Box<Expr>>,
         returns: Option<Box<Expr>>,
-        is_async: bool, // For async functions
+        is_async: bool,
         line: usize,
         column: usize,
     },

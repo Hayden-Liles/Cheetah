@@ -7,39 +7,39 @@ use inkwell::values::BasicValueEnum;
 /// Extension trait for handling expression code generation
 pub trait ExprCompiler<'ctx> {
     /// Compile an expression and return the resulting LLVM value with its type
-    fn compile_expr(&self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+    fn compile_expr(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String>;
     
     /// Compile a numeric literal
-    fn compile_number(&self, num: &Number) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+    fn compile_number(&mut self, num: &Number) -> Result<(BasicValueEnum<'ctx>, Type), String>;
     
     /// Compile a name constant (True, False, None)
-    fn compile_name_constant(&self, constant: &NameConstant) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+    fn compile_name_constant(&mut self, constant: &NameConstant) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 }
 
 pub trait AssignmentCompiler<'ctx> {
     /// Compile an assignment expression
-    fn compile_assignment(&self, target: &Expr, value: BasicValueEnum<'ctx>, 
-                         value_type: &Type) -> Result<(), String>;
+    fn compile_assignment(&mut self, target: &Expr, value: BasicValueEnum<'ctx>, 
+                        value_type: &Type) -> Result<(), String>;
 }
 
 /// Extension trait for handling binary operations with type conversions
 pub trait BinaryOpCompiler<'ctx> {
     /// Compile a binary operation with type conversion if needed
-    fn compile_binary_op(&self, left: inkwell::values::BasicValueEnum<'ctx>, left_type: &Type,
-                         op: Operator, right: inkwell::values::BasicValueEnum<'ctx>, right_type: &Type)
-                         -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String>;
+    fn compile_binary_op(&mut self, left: inkwell::values::BasicValueEnum<'ctx>, left_type: &Type,
+                       op: Operator, right: inkwell::values::BasicValueEnum<'ctx>, right_type: &Type)
+                       -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String>;
 }
 
 /// Extension trait for handling comparison operations with type conversions
 pub trait ComparisonCompiler<'ctx> {
     /// Compile a comparison operation with type conversion if needed
-    fn compile_comparison(&self, left: inkwell::values::BasicValueEnum<'ctx>, left_type: &Type,
-                         op: CmpOperator, right: inkwell::values::BasicValueEnum<'ctx>, right_type: &Type)
-                         -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String>;
+    fn compile_comparison(&mut self, left: inkwell::values::BasicValueEnum<'ctx>, left_type: &Type,
+                        op: CmpOperator, right: inkwell::values::BasicValueEnum<'ctx>, right_type: &Type)
+                        -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String>;
 }
 
 impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
-    fn compile_expr(&self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    fn compile_expr(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         match expr {
             Expr::Num { value, .. } => self.compile_number(value),
             Expr::NameConstant { value, .. } => self.compile_name_constant(value),
@@ -164,7 +164,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         }
     }
     
-    fn compile_number(&self, num: &Number) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    fn compile_number(&mut self, num: &Number) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         match num {
             Number::Integer(value) => {
                 let int_type = self.llvm_context.i64_type();
@@ -197,7 +197,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         }
     }
     
-    fn compile_name_constant(&self, constant: &NameConstant) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    fn compile_name_constant(&mut self, constant: &NameConstant) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         match constant {
             NameConstant::True => {
                 let bool_type = self.llvm_context.bool_type();
@@ -219,9 +219,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 }
 
 impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
-    fn compile_binary_op(&self, left: inkwell::values::BasicValueEnum<'ctx>, left_type: &Type,
-                         op: Operator, right: inkwell::values::BasicValueEnum<'ctx>, right_type: &Type)
-                         -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
+    fn compile_binary_op(&mut self, left: inkwell::values::BasicValueEnum<'ctx>, left_type: &Type,
+        op: Operator, right: inkwell::values::BasicValueEnum<'ctx>, right_type: &Type)
+        -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
         // Get the common type for this operation
         let common_type = self.get_common_type(left_type, right_type)?;
         
@@ -632,9 +632,9 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
 }
 
 impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
-    fn compile_comparison(&self, left: inkwell::values::BasicValueEnum<'ctx>, left_type: &Type,
-                         op: CmpOperator, right: inkwell::values::BasicValueEnum<'ctx>, right_type: &Type)
-                         -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
+    fn compile_comparison(&mut self, left: inkwell::values::BasicValueEnum<'ctx>, left_type: &Type,
+                        op: CmpOperator, right: inkwell::values::BasicValueEnum<'ctx>, right_type: &Type)
+                        -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
         // Special cases for identity comparisons (is, is not)
         if matches!(op, CmpOperator::Is) || matches!(op, CmpOperator::IsNot) {
             // For reference types, compare pointers
@@ -784,8 +784,8 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
 }
 
 impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
-    fn compile_assignment(&self, target: &Expr, value: BasicValueEnum<'ctx>, 
-                         value_type: &Type) -> Result<(), String> {
+    fn compile_assignment(&mut self, target: &Expr, value: BasicValueEnum<'ctx>, 
+        value_type: &Type) -> Result<(), String> {
         match target {
             Expr::Name { id, .. } => {
                 // Look up variable storage

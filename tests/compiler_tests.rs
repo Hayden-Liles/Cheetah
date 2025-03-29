@@ -1,4 +1,4 @@
-// tests/minimal_compiler_tests.rs
+// tests/compiler_tests.rs
 use cheetah::compiler::Compiler;
 use cheetah::parse;
 use inkwell::context::Context;
@@ -19,7 +19,7 @@ fn compile_to_ir(source: &str, module_name: &str) -> Result<String, String> {
     
     // Create LLVM context and compiler
     let context = Context::create();
-    let compiler = Compiler::new(&context, module_name);
+    let mut compiler = Compiler::new(&context, module_name);
     
     // Compile the AST
     match compiler.compile_module(&ast) {
@@ -160,6 +160,324 @@ def literal_func():
     // Eventually check for "store i64 42" or similar
 }
 
+// Stage 6: Control Flow Statement Tests
+// These tests verify the if/else, while, and for statements
+
+#[test]
+fn test_if_statement() {
+    let source = r#"
+def func_with_if():
+    x = 10
+    if x > 5:
+        y = 20
+    else:
+        y = 30
+    return y
+    "#;
+    
+    let ir = compile_to_ir(source, "if_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for the basic blocks used in if/else structure
+    assert!(ir.contains("then"), "Should contain 'then' basic block");
+    assert!(ir.contains("else"), "Should contain 'else' basic block");
+    assert!(ir.contains("if.end"), "Should contain 'if.end' basic block");
+    assert!(ir.contains("br i1"), "Should contain conditional branch instruction");
+}
+
+#[test]
+fn test_nested_if_statements() {
+    let source = r#"
+def func_with_nested_if():
+    x = 10
+    y = 20
+    if x > 5:
+        if y > 15:
+            z = 30
+        else:
+            z = 40
+    else:
+        z = 50
+    return z
+    "#;
+    
+    let ir = compile_to_ir(source, "nested_if_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Multiple instances of conditional branches for nested ifs
+    let branches = ir.matches("br i1").count();
+    assert!(branches >= 2, "Should contain at least 2 conditional branches for nested ifs");
+}
+
+#[test]
+fn test_while_loop() {
+    let source = r#"
+def func_with_while():
+    x = 0
+    while x < 10:
+        x = x + 1
+    return x
+    "#;
+    
+    let ir = compile_to_ir(source, "while_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for the basic blocks used in while loop structure
+    assert!(ir.contains("while.cond"), "Should contain 'while.cond' basic block");
+    assert!(ir.contains("while.body"), "Should contain 'while.body' basic block");
+    assert!(ir.contains("while.end"), "Should contain 'while.end' basic block");
+    assert!(ir.contains("br i1"), "Should contain conditional branch instruction");
+}
+
+#[test]
+fn test_while_loop_with_else() {
+    let source = r#"
+def func_with_while_else():
+    x = 0
+    while x < 0:  # Never enters the loop
+        x = x + 1
+    else:
+        x = 42
+    return x
+    "#;
+    
+    let ir = compile_to_ir(source, "while_else_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for the else block in while loop
+    assert!(ir.contains("while.else"), "Should contain 'while.else' basic block");
+}
+
+#[test]
+fn test_for_loop() {
+    let source = r#"
+def func_with_for():
+    sum = 0
+    for i in [1, 2, 3, 4, 5]:
+        sum = sum + i
+    return sum
+    "#;
+    
+    let ir = compile_to_ir(source, "for_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for the basic blocks used in for loop structure
+    assert!(ir.contains("for.init"), "Should contain 'for.init' basic block");
+    assert!(ir.contains("for.cond"), "Should contain 'for.cond' basic block");
+    assert!(ir.contains("for.body"), "Should contain 'for.body' basic block");
+    assert!(ir.contains("for.inc"), "Should contain 'for.inc' basic block");
+    assert!(ir.contains("for.end"), "Should contain 'for.end' basic block");
+}
+
+#[test]
+fn test_for_loop_with_else() {
+    let source = r#"
+def func_with_for_else():
+    sum = 0
+    for i in []:  # Empty list, never enters the loop
+        sum = sum + i
+    else:
+        sum = 42
+    return sum
+    "#;
+    
+    let ir = compile_to_ir(source, "for_else_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for the else block in for loop
+    assert!(ir.contains("for.else"), "Should contain 'for.else' basic block");
+}
+
+#[test]
+fn test_break_statement() {
+    let source = r#"
+def func_with_break():
+    x = 0
+    while x < 10:
+        x = x + 1
+        if x == 5:
+            break
+    return x
+    "#;
+    
+    let ir = compile_to_ir(source, "break_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // There should be an unconditional branch in the loop body for the break statement
+    // that jumps to the loop end
+    assert!(ir.contains("while.end"), "Should contain 'while.end' basic block");
+    assert!(ir.contains("br label"), "Should contain unconditional branch instruction");
+}
+
+#[test]
+fn test_continue_statement() {
+    let source = r#"
+def func_with_continue():
+    x = 0
+    sum = 0
+    while x < 10:
+        x = x + 1
+        if x % 2 == 0:
+            continue
+        sum = sum + x
+    return sum
+    "#;
+    
+    let ir = compile_to_ir(source, "continue_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // There should be an unconditional branch in the loop body for the continue statement
+    // that jumps to the loop condition
+    assert!(ir.contains("while.cond"), "Should contain 'while.cond' basic block");
+    assert!(ir.contains("br label"), "Should contain unconditional branch instruction");
+}
+
+#[test]
+fn test_nested_loops_with_break() {
+    let source = r#"
+def func_with_nested_loops():
+    x = 0
+    y = 0
+    while x < 5:
+        x = x + 1
+        while y < 5:
+            y = y + 1
+            if y == 3:
+                break
+    return x + y
+    "#;
+    
+    let ir = compile_to_ir(source, "nested_loops_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Verify the presence of nested loop blocks and break functionality
+    assert!(ir.contains("while.cond"), "Should contain 'while.cond' basic block");
+}
+
+// Stage 7: Assignment Statement Tests
+// These tests verify different types of assignments
+
+#[test]
+fn test_simple_assignment() {
+    let source = r#"
+def func_with_assignment():
+    x = 42
+    y = 3.14
+    z = True
+    return x
+    "#;
+    
+    let ir = compile_to_ir(source, "assignment_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for alloca and store instructions for variables
+    assert!(ir.contains("alloca"), "Should contain 'alloca' instructions for variables");
+    assert!(ir.contains("store"), "Should contain 'store' instructions for assignments");
+}
+
+#[test]
+fn test_augmented_assignment() {
+    let source = r#"
+def func_with_aug_assignment():
+    x = 10
+    x += 5
+    y = 20
+    y *= 2
+    return x + y
+    "#;
+    
+    let ir = compile_to_ir(source, "aug_assignment_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for load, add/mul, and store operations
+    assert!(ir.contains("load"), "Should contain 'load' instructions");
+    assert!(ir.contains("add") || ir.contains("fadd"), "Should contain addition operations");
+    assert!(ir.contains("mul") || ir.contains("fmul"), "Should contain multiplication operations");
+}
+
+#[test]
+fn test_annotated_assignment() {
+    let source = r#"
+def func_with_ann_assignment():
+    x: int = 42
+    return x
+    "#;
+    
+    let ir = compile_to_ir(source, "ann_assignment_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for alloca and store instructions for the variable
+    assert!(ir.contains("alloca"), "Should contain 'alloca' instruction");
+    assert!(ir.contains("store"), "Should contain 'store' instruction for assignment");
+}
+
+// Stage 8: Expression Statement Tests
+// These tests verify expression statements are compiled correctly
+
+#[test]
+fn test_binary_operations() {
+    let source = r#"
+def func_with_binary_ops():
+    a = 10
+    b = 20
+    c = a + b
+    d = a - b
+    e = a * b
+    f = a / b
+    g = a % b
+    return c + d + e + f + g
+    "#;
+    
+    let ir = compile_to_ir(source, "binary_ops_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for arithmetic operations
+    assert!(ir.contains("add") || ir.contains("fadd"), "Should contain addition operations");
+    assert!(ir.contains("sub") || ir.contains("fsub"), "Should contain subtraction operations");
+    assert!(ir.contains("mul") || ir.contains("fmul"), "Should contain multiplication operations");
+}
+
+#[test]
+fn test_comparison_operations() {
+    let source = r#"
+def func_with_comparisons():
+    a = 10
+    b = 20
+    c = a == b
+    d = a != b
+    e = a < b
+    f = a <= b
+    g = a > b
+    h = a >= b
+    return c or d or e or f or g or h
+    "#;
+    
+    let ir = compile_to_ir(source, "comparison_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for comparison operations
+    assert!(ir.contains("icmp") || ir.contains("fcmp"), "Should contain comparison operations");
+}
+
+#[test]
+fn test_unary_operations() {
+    let source = r#"
+def func_with_unary_ops():
+    a = 10
+    b = -a
+    c = +a
+    d = not True
+    return b + c
+    "#;
+    
+    let ir = compile_to_ir(source, "unary_ops_module").expect("Compilation failed");
+    debug_ir(&ir);
+    
+    // Check for negation operation
+    assert!(ir.contains("sub") || ir.contains("fsub") || ir.contains("neg"), 
+            "Should contain negation operation");
+}
+
 // Error Handling Test
 
 #[test]
@@ -177,5 +495,3 @@ fn test_compile_error_handling() {
         }
     }
 }
-
-// More advanced tests can be added as your compiler implementation progresses

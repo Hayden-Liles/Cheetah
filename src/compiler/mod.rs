@@ -24,7 +24,7 @@ impl<'ctx> Compiler<'ctx> {
     }
     
     /// Compile an AST module to LLVM IR
-    pub fn compile_module(&self, module: &ast::Module) -> Result<(), String> {
+    pub fn compile_module(&mut self, module: &ast::Module) -> Result<(), String> {
         // Get types for function signature
         let void_type = Type::get_void_type(self.context.llvm_context);
         let fn_type = void_type.fn_type(&[], false);
@@ -64,7 +64,7 @@ impl<'ctx> Compiler<'ctx> {
     }
     
     /// Compile a function definition
-    fn compile_function(&self, name: &str, params: &[ast::Parameter], body: &[Box<ast::Stmt>]) -> Result<(), String> {
+    fn compile_function(&mut self, name: &str, params: &[ast::Parameter], body: &[Box<ast::Stmt>]) -> Result<(), String> {
         let _ = body;
         let _ = params;
         let _ = name;
@@ -74,8 +74,8 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
     
-    /// Compile a class defi_nameon
-    fn compile_class(&self, name: &str, bases: &[Box<ast::Expr>], body: &[Box<ast::Stmt>]) -> Result<(), String> {
+    /// Compile a class definition
+    fn compile_class(&mut self, name: &str, bases: &[Box<ast::Expr>], body: &[Box<ast::Stmt>]) -> Result<(), String> {
         let _ = body;
         let _ = bases;
         let _ = name;
@@ -84,8 +84,8 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
     
-    /// Compile a statement_stmt
-    fn compile_stmt(&self, stmt: &Box<ast::Stmt>) -> Result<(), String> {
+    /// Compile a statement
+    fn compile_stmt(&mut self, stmt: &Box<ast::Stmt>) -> Result<(), String> {
         // Use our new StmtCompiler trait
         self.context.compile_stmt(stmt.as_ref())
     }

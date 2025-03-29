@@ -214,7 +214,7 @@ fn run_file_jit(filename: &str) -> Result<()> {
         Ok(module) => {
             // Create LLVM context and compiler
             let context = context::Context::create();
-            let compiler = Compiler::new(&context, filename);
+            let mut compiler = Compiler::new(&context, filename);
             
             // Compile the AST
             match compiler.compile_module(&module) {
@@ -383,7 +383,7 @@ fn run_repl_jit() -> Result<()> {
                 match parse(complete_input) {
                     Ok(module) => {
                         // Create compiler for this REPL entry
-                        let compiler = Compiler::new(&context, &module_name);
+                        let mut compiler = Compiler::new(&context, &module_name);
                         
                         // Compile the AST
                         match compiler.compile_module(&module) {
@@ -716,7 +716,7 @@ fn compile_file(
         Ok(module) => {
             // Create LLVM context and compiler
             let context = context::Context::create();
-            let compiler = Compiler::new(&context, filename);
+            let mut compiler = Compiler::new(&context, filename);
             
             // Set optimization level
             // We'll implement this in the Compiler later
