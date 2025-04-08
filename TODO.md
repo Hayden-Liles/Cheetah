@@ -3,8 +3,8 @@
 This document tracks tasks, features, and improvements for the Cheetah Python compiler project.
 
 ## How to Use This List
-- [x] Completed tasks are marked with `[x]`
-- [ ] Incomplete tasks are marked with `[ ]`
+- Completed tasks are marked with `[x]`
+- Incomplete tasks are marked with `[ ]`
 - Tasks are organized by priority and category
 - Add new tasks at the bottom of the appropriate section
 
