@@ -15,15 +15,15 @@ mod parser_specialized_tests {
     impl<'a> fmt::Display for ErrorFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self.0 {
-                ParseError::UnexpectedToken { expected, found, line, column } => {
+                ParseError::UnexpectedToken { expected, found, line, column, suggestion: _ } => {
                     write!(f, "Unexpected token at line {}, column {}: expected '{}', found '{:?}'",
                            line, column, expected, found)
                 },
-                ParseError::InvalidSyntax { message, line, column } => {
+                ParseError::InvalidSyntax { message, line, column, suggestion: _ } => {
                     write!(f, "Invalid syntax at line {}, column {}: {}",
                            line, column, message)
                 },
-                ParseError::EOF { expected, line, column } => {
+                ParseError::EOF { expected, line, column, suggestion: _ } => {
                     write!(f, "Unexpected EOF at line {}, column {}: expected '{}'",
                            line, column, expected)
                 },
@@ -109,6 +109,7 @@ mod parser_specialized_tests {
                     message: e.message.clone(),
                     line: e.line,
                     column: e.column,
+                    suggestion: None,
                 })
                 .collect();
             return Err(parse_errors);

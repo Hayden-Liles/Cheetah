@@ -11,16 +11,16 @@ mod ast_verification_tests {
     impl<'a> fmt::Display for ErrorFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self.0 {
-                ParseError::UnexpectedToken { expected, found, line, column } => {
-                    write!(f, "Unexpected token at line {}, column {}: expected '{}', found '{:?}'", 
+                ParseError::UnexpectedToken { expected, found, line, column, suggestion: _ } => {
+                    write!(f, "Unexpected token at line {}, column {}: expected '{}', found '{:?}'",
                            line, column, expected, found)
                 },
-                ParseError::InvalidSyntax { message, line, column } => {
-                    write!(f, "Invalid syntax at line {}, column {}: {}", 
+                ParseError::InvalidSyntax { message, line, column, suggestion: _ } => {
+                    write!(f, "Invalid syntax at line {}, column {}: {}",
                            line, column, message)
                 },
-                ParseError::EOF { expected, line, column } => {
-                    write!(f, "Unexpected EOF at line {}, column {}: expected '{}'", 
+                ParseError::EOF { expected, line, column, suggestion: _ } => {
+                    write!(f, "Unexpected EOF at line {}, column {}: expected '{}'",
                            line, column, expected)
                 },
             }
@@ -39,6 +39,7 @@ mod ast_verification_tests {
                     message: e.message.clone(),
                     line: e.line,
                     column: e.column,
+                    suggestion: None,
                 })
                 .collect();
             return Err(parse_errors);
@@ -58,11 +59,11 @@ mod ast_verification_tests {
                 println!("================================");
                 println!("{}", source);
                 println!("\nERRORS:");
-                
+
                 for error in &errors {
                     println!("- {}", ErrorFormatter(error));
                 }
-                
+
                 panic!("Parsing failed with {} errors", errors.len());
             },
         }
@@ -72,7 +73,7 @@ mod ast_verification_tests {
     fn test_binary_operation_ast() {
         // Test addition
         let module = assert_parses("a + b");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::BinOp { left, op, right, .. } = &**value {
@@ -83,10 +84,10 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected left operand to be a name, got: {:?}", left);
                     }
-                    
+
                     // Verify operator
                     assert_eq!(*op, Operator::Add);
-                    
+
                     // Verify right operand
                     if let Expr::Name { id, ctx, .. } = &**right {
                         assert_eq!(id, "b");
@@ -334,13 +335,13 @@ mod ast_verification_tests {
                 if let Expr::BoolOp { op, values, .. } = &**value {
                     assert_eq!(*op, BoolOperator::And);
                     assert_eq!(values.len(), 2);
-                    
+
                     if let Expr::Name { id, .. } = &*values[0] {
                         assert_eq!(id, "a");
                     } else {
                         panic!("Expected first operand to be a name, got: {:?}", values[0]);
                     }
-                    
+
                     if let Expr::Name { id, .. } = &*values[1] {
                         assert_eq!(id, "b");
                     } else {
@@ -420,10 +421,10 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected left operand to be a name, got: {:?}", left);
                     }
-                    
+
                     assert_eq!(ops.len(), 1);
                     assert_eq!(ops[0], CmpOperator::Eq);
-                    
+
                     assert_eq!(comparators.len(), 1);
                     if let Expr::Name { id, .. } = &*comparators[0] {
                         assert_eq!(id, "b");
@@ -603,19 +604,19 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected left operand to be a name, got: {:?}", left);
                     }
-                    
+
                     assert_eq!(ops.len(), 2);
                     assert_eq!(ops[0], CmpOperator::Lt);
                     assert_eq!(ops[1], CmpOperator::Lt);
-                    
+
                     assert_eq!(comparators.len(), 2);
-                    
+
                     if let Expr::Name { id, .. } = &*comparators[0] {
                         assert_eq!(id, "b");
                     } else {
                         panic!("Expected first comparator to be a name, got: {:?}", comparators[0]);
                     }
-                    
+
                     if let Expr::Name { id, .. } = &*comparators[1] {
                         assert_eq!(id, "c");
                     } else {
@@ -636,7 +637,7 @@ mod ast_verification_tests {
     fn test_if_statement() {
         // Simple if statement
         let module = assert_parses("if a > b:\n    c = d");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::If { test, body, orelse, .. } = &**stmt {
                 // Verify condition
@@ -646,10 +647,10 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected left operand to be a name, got: {:?}", left);
                     }
-                    
+
                     assert_eq!(ops.len(), 1);
                     assert_eq!(ops[0], CmpOperator::Gt);
-                    
+
                     assert_eq!(comparators.len(), 1);
                     if let Expr::Name { id, .. } = &*comparators[0] {
                         assert_eq!(id, "b");
@@ -659,7 +660,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected comparison, got: {:?}", test);
                 }
-                
+
                 // Verify body
                 assert_eq!(body.len(), 1);
                 if let Stmt::Assign { targets, value, .. } = &*body[0] {
@@ -669,7 +670,7 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected target to be a name, got: {:?}", targets[0]);
                     }
-                    
+
                     if let Expr::Name { id, .. } = &**value {
                         assert_eq!(id, "d");
                     } else {
@@ -678,7 +679,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected assignment statement, got: {:?}", body[0]);
                 }
-                
+
                 // Verify no else clause
                 assert!(orelse.is_empty());
             } else {
@@ -687,10 +688,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // If-else statement
         let module = assert_parses("if a > b:\n    c = d\nelse:\n    e = f");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::If { test: _, body: _, orelse, .. } = &**stmt {
                 // Verify else clause
@@ -702,7 +703,7 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected target to be a name, got: {:?}", targets[0]);
                     }
-                    
+
                     if let Expr::Name { id, .. } = &**value {
                         assert_eq!(id, "f");
                     } else {
@@ -717,10 +718,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // If-elif-else statement
         let module = assert_parses("if a > b:\n    c = d\nelif a < b:\n    e = f\nelse:\n    g = h");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::If { test: _, body: _, orelse, .. } = &**stmt {
                 // Verify elif clause (which is actually an if statement in the orelse list)
@@ -733,10 +734,10 @@ mod ast_verification_tests {
                         } else {
                             panic!("Expected left operand to be a name, got: {:?}", left);
                         }
-                        
+
                         assert_eq!(ops.len(), 1);
                         assert_eq!(ops[0], CmpOperator::Lt);
-                        
+
                         assert_eq!(comparators.len(), 1);
                         if let Expr::Name { id, .. } = &*comparators[0] {
                             assert_eq!(id, "b");
@@ -746,7 +747,7 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected comparison, got: {:?}", test);
                     }
-                    
+
                     // Verify elif body
                     assert_eq!(body.len(), 1);
                     if let Stmt::Assign { targets, value, .. } = &*body[0] {
@@ -756,7 +757,7 @@ mod ast_verification_tests {
                         } else {
                             panic!("Expected target to be a name, got: {:?}", targets[0]);
                         }
-                        
+
                         if let Expr::Name { id, .. } = &**value {
                             assert_eq!(id, "f");
                         } else {
@@ -765,7 +766,7 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected assignment statement, got: {:?}", body[0]);
                     }
-                    
+
                     // Verify else clause
                     assert_eq!(elif_orelse.len(), 1);
                     if let Stmt::Assign { targets, value, .. } = &*elif_orelse[0] {
@@ -775,7 +776,7 @@ mod ast_verification_tests {
                         } else {
                             panic!("Expected target to be a name, got: {:?}", targets[0]);
                         }
-                        
+
                         if let Expr::Name { id, .. } = &**value {
                             assert_eq!(id, "h");
                         } else {
@@ -799,7 +800,7 @@ mod ast_verification_tests {
     fn test_for_loop() {
         // Simple for loop
         let module = assert_parses("for i in range(10):\n    print(i)");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::For { target, iter, body, orelse, is_async, .. } = &**stmt {
                 // Verify target
@@ -809,7 +810,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected target to be a name, got: {:?}", target);
                 }
-                
+
                 // Verify iterator
                 if let Expr::Call { func, args, .. } = &**iter {
                     if let Expr::Name { id, .. } = &**func {
@@ -817,7 +818,7 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected function name to be 'range', got: {:?}", func);
                     }
-                    
+
                     assert_eq!(args.len(), 1);
                     if let Expr::Num { value, .. } = &*args[0] {
                         assert_eq!(*value, Number::Integer(10));
@@ -827,7 +828,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected call expression, got: {:?}", iter);
                 }
-                
+
                 // Verify body
                 assert_eq!(body.len(), 1);
                 if let Stmt::Expr { value, .. } = &*body[0] {
@@ -837,7 +838,7 @@ mod ast_verification_tests {
                         } else {
                             panic!("Expected function name to be 'print', got: {:?}", func);
                         }
-                        
+
                         assert_eq!(args.len(), 1);
                         if let Expr::Name { id, .. } = &*args[0] {
                             assert_eq!(id, "i");
@@ -850,10 +851,10 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected expression statement, got: {:?}", body[0]);
                 }
-                
+
                 // Verify no else clause
                 assert!(orelse.is_empty());
-                
+
                 // Verify not async
                 assert!(!is_async);
             } else {
@@ -862,23 +863,23 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // For loop with tuple unpacking
         let module = assert_parses("for k, v in items.items():\n    print(k, v)");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::For { target, .. } = &**stmt {
                 // Verify target is a tuple
                 if let Expr::Tuple { elts, ctx, .. } = &**target {
                     assert_eq!(elts.len(), 2);
                     assert!(matches!(ctx, ExprContext::Store));
-                    
+
                     if let Expr::Name { id, .. } = &*elts[0] {
                         assert_eq!(id, "k");
                     } else {
                         panic!("Expected first element to be a name, got: {:?}", elts[0]);
                     }
-                    
+
                     if let Expr::Name { id, .. } = &*elts[1] {
                         assert_eq!(id, "v");
                     } else {
@@ -893,10 +894,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // For loop with else clause
         let module = assert_parses("for i in range(10):\n    print(i)\nelse:\n    print('Done')");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::For { orelse, .. } = &**stmt {
                 // Verify else clause
@@ -908,7 +909,7 @@ mod ast_verification_tests {
                         } else {
                             panic!("Expected function name to be 'print', got: {:?}", func);
                         }
-                        
+
                         assert_eq!(args.len(), 1);
                         if let Expr::Str { value, .. } = &*args[0] {
                             assert_eq!(value, "Done");
@@ -933,7 +934,7 @@ mod ast_verification_tests {
     fn test_while_loop() {
         // Simple while loop
         let module = assert_parses("while condition:\n    action()");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::While { test, body, orelse, .. } = &**stmt {
                 // Verify condition
@@ -943,7 +944,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected condition to be a name, got: {:?}", test);
                 }
-                
+
                 // Verify body
                 assert_eq!(body.len(), 1);
                 if let Stmt::Expr { value, .. } = &*body[0] {
@@ -953,7 +954,7 @@ mod ast_verification_tests {
                         } else {
                             panic!("Expected function name to be 'action', got: {:?}", func);
                         }
-                        
+
                         assert_eq!(args.len(), 0);
                     } else {
                         panic!("Expected call expression, got: {:?}", value);
@@ -961,7 +962,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected expression statement, got: {:?}", body[0]);
                 }
-                
+
                 // Verify no else clause
                 assert!(orelse.is_empty());
             } else {
@@ -970,10 +971,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // While loop with else clause
         let module = assert_parses("while condition:\n    action()\nelse:\n    cleanup()");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::While { orelse, .. } = &**stmt {
                 // Verify else clause
@@ -985,7 +986,7 @@ mod ast_verification_tests {
                         } else {
                             panic!("Expected function name to be 'cleanup', got: {:?}", func);
                         }
-                        
+
                         assert_eq!(args.len(), 0);
                     } else {
                         panic!("Expected call expression, got: {:?}", value);
@@ -1005,17 +1006,17 @@ mod ast_verification_tests {
     fn test_function_def() {
         // Simple function definition
         let module = assert_parses("def greet(name):\n    return 'Hello, ' + name");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::FunctionDef { name, params, body, returns, decorator_list, is_async, .. } = &**stmt {
                 // Verify function name
                 assert_eq!(name, "greet");
-                
+
                 // Verify parameters
                 assert_eq!(params.len(), 1);
                 assert_eq!(params[0].name, "name");
                 assert!(params[0].default.is_none());
-                
+
                 // Verify body
                 assert_eq!(body.len(), 1);
                 if let Stmt::Return { value, .. } = &*body[0] {
@@ -1027,9 +1028,9 @@ mod ast_verification_tests {
                             } else {
                                 panic!("Expected left operand to be a string, got: {:?}", left);
                             }
-                            
+
                             assert_eq!(*op, Operator::Add);
-                            
+
                             if let Expr::Name { id, .. } = &**right {
                                 assert_eq!(id, "name");
                             } else {
@@ -1042,13 +1043,13 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected return statement, got: {:?}", body[0]);
                 }
-                
+
                 // Verify no return type annotation
                 assert!(returns.is_none());
-                
+
                 // Verify no decorators
                 assert!(decorator_list.is_empty());
-                
+
                 // Verify not async
                 assert!(!is_async);
             } else {
@@ -1057,10 +1058,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Function with default parameter
         let module = assert_parses("def greet(name, greeting='Hello'):\n    return greeting + ', ' + name");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::FunctionDef { params, .. } = &**stmt {
                 // Verify parameters
@@ -1069,7 +1070,7 @@ mod ast_verification_tests {
                 assert!(params[0].default.is_none());
                 assert_eq!(params[1].name, "greeting");
                 assert!(params[1].default.is_some());
-                
+
                 // Verify default value
                 if let Some(default) = &params[1].default {
                     if let Expr::Str { value, .. } = &**default {
@@ -1084,17 +1085,17 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Function with type annotations
         let module = assert_parses("def add(a: int, b: int) -> int:\n    return a + b");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::FunctionDef { params, returns, .. } = &**stmt {
                 // Verify parameter type annotations
                 assert_eq!(params.len(), 2);
                 assert!(params[0].typ.is_some());
                 assert!(params[1].typ.is_some());
-                
+
                 if let Some(typ) = &params[0].typ {
                     if let Expr::Name { id, .. } = &**typ {
                         assert_eq!(id, "int");
@@ -1102,7 +1103,7 @@ mod ast_verification_tests {
                         panic!("Expected type to be a name, got: {:?}", typ);
                     }
                 }
-                
+
                 // Verify return type annotation
                 assert!(returns.is_some());
                 if let Some(ret_type) = returns {
@@ -1118,10 +1119,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Async function
         let module = assert_parses("async def fetch():\n    pass");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::FunctionDef { is_async, .. } = &**stmt {
                 // Verify async
@@ -1132,10 +1133,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Function with decorators
         let module = assert_parses("@decorator\ndef func():\n    pass");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::FunctionDef { decorator_list, .. } = &**stmt {
                 // Verify decorators
@@ -1157,32 +1158,32 @@ mod ast_verification_tests {
     fn test_class_def() {
         // Simple class definition
         let module = assert_parses("class Point:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ClassDef { name, bases, keywords, body, decorator_list, .. } = &**stmt {
                 // Verify class name
                 assert_eq!(name, "Point");
-                
+
                 // Verify no base classes
                 assert!(bases.is_empty());
-                
+
                 // Verify no keywords
                 assert!(keywords.is_empty());
-                
+
                 // Verify body (should have one method: __init__)
                 assert_eq!(body.len(), 1);
                 if let Stmt::FunctionDef { name, params, body: method_body, .. } = &*body[0] {
                     assert_eq!(name, "__init__");
-                    
+
                     // Verify method parameters (self, x, y)
                     assert_eq!(params.len(), 3);
                     assert_eq!(params[0].name, "self");
                     assert_eq!(params[1].name, "x");
                     assert_eq!(params[2].name, "y");
-                    
+
                     // Verify method body (two assignments: self.x = x, self.y = y)
                     assert_eq!(method_body.len(), 2);
-                    
+
                     if let Stmt::Assign { targets, value, .. } = &*method_body[0] {
                         assert_eq!(targets.len(), 1);
                         if let Expr::Attribute { value: obj, attr, .. } = &*targets[0] {
@@ -1191,12 +1192,12 @@ mod ast_verification_tests {
                             } else {
                                 panic!("Expected object to be 'self', got: {:?}", obj);
                             }
-                            
+
                             assert_eq!(attr, "x");
                         } else {
                             panic!("Expected target to be an attribute, got: {:?}", targets[0]);
                         }
-                        
+
                         if let Expr::Name { id, .. } = &**value {
                             assert_eq!(id, "x");
                         } else {
@@ -1205,7 +1206,7 @@ mod ast_verification_tests {
                     } else {
                         panic!("Expected assignment statement, got: {:?}", method_body[0]);
                     }
-                    
+
                     if let Stmt::Assign { targets, value, .. } = &*method_body[1] {
                         assert_eq!(targets.len(), 1);
                         if let Expr::Attribute { value: obj, attr, .. } = &*targets[0] {
@@ -1214,12 +1215,12 @@ mod ast_verification_tests {
                             } else {
                                 panic!("Expected object to be 'self', got: {:?}", obj);
                             }
-                            
+
                             assert_eq!(attr, "y");
                         } else {
                             panic!("Expected target to be an attribute, got: {:?}", targets[0]);
                         }
-                        
+
                         if let Expr::Name { id, .. } = &**value {
                             assert_eq!(id, "y");
                         } else {
@@ -1231,7 +1232,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected function definition, got: {:?}", body[0]);
                 }
-                
+
                 // Verify no decorators
                 assert!(decorator_list.is_empty());
             } else {
@@ -1240,10 +1241,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Class with inheritance
         let module = assert_parses("class Rectangle(Shape):\n    pass");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ClassDef { bases, .. } = &**stmt {
                 // Verify base classes
@@ -1259,10 +1260,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Class with multiple inheritance
         let module = assert_parses("class Child(Mother, Father):\n    pass");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ClassDef { bases, .. } = &**stmt {
                 // Verify base classes
@@ -1272,7 +1273,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected first base class to be a name, got: {:?}", bases[0]);
                 }
-                
+
                 if let Expr::Name { id, .. } = &*bases[1] {
                     assert_eq!(id, "Father");
                 } else {
@@ -1284,10 +1285,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Class with keyword arguments
         let module = assert_parses("class Meta(type, metaclass=ABCMeta):\n    pass");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ClassDef { bases, keywords, .. } = &**stmt {
                 // Verify base classes
@@ -1297,13 +1298,13 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected base class to be a name, got: {:?}", bases[0]);
                 }
-                
+
                 // Verify keywords
                 assert_eq!(keywords.len(), 1);
                 let (key, value) = &keywords[0];
                 assert!(key.is_some());
                 assert_eq!(key.as_ref().unwrap(), "metaclass");
-                
+
                 if let Expr::Name { id, .. } = &**value {
                     assert_eq!(id, "ABCMeta");
                 } else {
@@ -1321,7 +1322,7 @@ mod ast_verification_tests {
     fn test_import_statements() {
         // Simple import
         let module = assert_parses("import module");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Import { names, .. } = &**stmt {
                 assert_eq!(names.len(), 1);
@@ -1333,10 +1334,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Import with alias
         let module = assert_parses("import module as mod");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Import { names, .. } = &**stmt {
                 assert_eq!(names.len(), 1);
@@ -1349,10 +1350,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Multiple imports
         let module = assert_parses("import module1, module2");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Import { names, .. } = &**stmt {
                 assert_eq!(names.len(), 2);
@@ -1364,19 +1365,19 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // From import
         let module = assert_parses("from module import item");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ImportFrom { module, names, level, .. } = &**stmt {
                 assert!(module.is_some());
                 assert_eq!(module.as_ref().unwrap(), "module");
-                
+
                 assert_eq!(names.len(), 1);
                 assert_eq!(names[0].name, "item");
                 assert!(names[0].asname.is_none());
-                
+
                 assert_eq!(*level, 0);
             } else {
                 panic!("Expected import from statement, got: {:?}", stmt);
@@ -1384,10 +1385,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // From import with multiple items
         let module = assert_parses("from module import item1, item2");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ImportFrom { names, .. } = &**stmt {
                 assert_eq!(names.len(), 2);
@@ -1399,17 +1400,17 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // From import with aliases
         let module = assert_parses("from module import item1 as alias1, item2 as alias2");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ImportFrom { names, .. } = &**stmt {
                 assert_eq!(names.len(), 2);
                 assert_eq!(names[0].name, "item1");
                 assert!(names[0].asname.is_some());
                 assert_eq!(names[0].asname.as_ref().unwrap(), "alias1");
-                
+
                 assert_eq!(names[1].name, "item2");
                 assert!(names[1].asname.is_some());
                 assert_eq!(names[1].asname.as_ref().unwrap(), "alias2");
@@ -1419,15 +1420,15 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // From import with relative imports
         let module = assert_parses("from ..module import item");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ImportFrom { module, level, .. } = &**stmt {
                 assert!(module.is_some());
                 assert_eq!(module.as_ref().unwrap(), "module");
-                
+
                 assert_eq!(*level, 2);
             } else {
                 panic!("Expected import from statement, got: {:?}", stmt);
@@ -1435,10 +1436,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // From import with wildcard
         let module = assert_parses("from module import *");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::ImportFrom { names, .. } = &**stmt {
                 assert_eq!(names.len(), 1);
@@ -1456,7 +1457,7 @@ mod ast_verification_tests {
     fn test_try_except_statements() {
         // Simple try-except
         let module = assert_parses("try:\n    risky()\nexcept:\n    handle()");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Try { body, handlers, orelse, finalbody, .. } = &**stmt {
                 // Verify try body
@@ -1474,13 +1475,13 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected expression statement, got: {:?}", body[0]);
                 }
-                
+
                 // Verify except handler
                 assert_eq!(handlers.len(), 1);
                 let handler = &handlers[0];
                 assert!(handler.typ.is_none());
                 assert!(handler.name.is_none());
-                
+
                 assert_eq!(handler.body.len(), 1);
                 if let Stmt::Expr { value, .. } = &*handler.body[0] {
                     if let Expr::Call { func, .. } = &**value {
@@ -1495,7 +1496,7 @@ mod ast_verification_tests {
                 } else {
                     panic!("Expected expression statement, got: {:?}", handler.body[0]);
                 }
-                
+
                 // Verify no else or finally
                 assert!(orelse.is_empty());
                 assert!(finalbody.is_empty());
@@ -1505,10 +1506,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Try-except with exception type
         let module = assert_parses("try:\n    risky()\nexcept Exception:\n    handle()");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Try { handlers, .. } = &**stmt {
                 // Verify except handler
@@ -1516,7 +1517,7 @@ mod ast_verification_tests {
                 let handler = &handlers[0];
                 assert!(handler.typ.is_some());
                 assert!(handler.name.is_none());
-                
+
                 if let Some(typ) = &handler.typ {
                     if let Expr::Name { id, .. } = &**typ {
                         assert_eq!(id, "Exception");
@@ -1530,10 +1531,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Try-except with exception type and alias
         let module = assert_parses("try:\n    risky()\nexcept Exception as e:\n    handle(e)");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Try { handlers, .. } = &**stmt {
                 // Verify except handler
@@ -1541,7 +1542,7 @@ mod ast_verification_tests {
                 let handler = &handlers[0];
                 assert!(handler.typ.is_some());
                 assert!(handler.name.is_some());
-                
+
                 assert_eq!(handler.name.as_ref().unwrap(), "e");
             } else {
                 panic!("Expected try statement, got: {:?}", stmt);
@@ -1549,10 +1550,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Try-except-else
         let module = assert_parses("try:\n    risky()\nexcept:\n    handle()\nelse:\n    success()");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Try { orelse, .. } = &**stmt {
                 // Verify else clause
@@ -1576,10 +1577,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Try-except-finally
         let module = assert_parses("try:\n    risky()\nexcept:\n    handle()\nfinally:\n    cleanup()");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Try { finalbody, .. } = &**stmt {
                 // Verify finally clause
@@ -1603,10 +1604,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Try-except-else-finally
         let module = assert_parses("try:\n    risky()\nexcept:\n    handle()\nelse:\n    success()\nfinally:\n    cleanup()");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Try { orelse, finalbody, .. } = &**stmt {
                 // Verify both else and finally clauses are present
@@ -1618,15 +1619,15 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Multiple except handlers
         let module = assert_parses("try:\n    risky()\nexcept ValueError:\n    handle_value()\nexcept TypeError:\n    handle_type()\nexcept:\n    handle_other()");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Try { handlers, .. } = &**stmt {
                 // Verify multiple handlers
                 assert_eq!(handlers.len(), 3);
-                
+
                 // First handler: ValueError
                 assert!(handlers[0].typ.is_some());
                 if let Some(typ) = &handlers[0].typ {
@@ -1636,7 +1637,7 @@ mod ast_verification_tests {
                         panic!("Expected exception type to be 'ValueError', got: {:?}", typ);
                     }
                 }
-                
+
                 // Second handler: TypeError
                 assert!(handlers[1].typ.is_some());
                 if let Some(typ) = &handlers[1].typ {
@@ -1646,7 +1647,7 @@ mod ast_verification_tests {
                         panic!("Expected exception type to be 'TypeError', got: {:?}", typ);
                     }
                 }
-                
+
                 // Third handler: catch-all
                 assert!(handlers[2].typ.is_none());
             } else {
@@ -1661,7 +1662,7 @@ mod ast_verification_tests {
     fn test_literals() {
         // Integer literal
         let module = assert_parses("42");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::Num { value: num, .. } = &**value {
@@ -1675,10 +1676,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Float literal
         let module = assert_parses("3.14");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::Num { value: num, .. } = &**value {
@@ -1695,10 +1696,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // String literal
         let module = assert_parses("\"hello\"");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::Str { value: s, .. } = &**value {
@@ -1712,10 +1713,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // True literal
         let module = assert_parses("True");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::NameConstant { value: constant, .. } = &**value {
@@ -1729,10 +1730,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // False literal
         let module = assert_parses("False");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::NameConstant { value: constant, .. } = &**value {
@@ -1746,10 +1747,10 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // None literal
         let module = assert_parses("None");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::NameConstant { value: constant, .. } = &**value {
@@ -1763,12 +1764,12 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // List literal
         println!("\n==== TESTING SET LITERAL ====");
         let source = "{1, 2, 3}";
         println!("Source code: {}", source);
-        
+
         let module = parse_code(source).unwrap_or_else(|errors| {
             println!("PARSING FAILED:");
             for error in &errors {
@@ -1776,29 +1777,29 @@ mod ast_verification_tests {
             }
             panic!("Failed to parse set literal");
         });
-        
+
         println!("Successfully parsed into module");
-        
+
         if let Some(stmt) = module.body.first() {
             println!("Found first statement: {:?}", stmt);
-            
+
             if let Stmt::Expr { value, .. } = &**stmt {
                 println!("Statement is an expression: {:?}", value);
-                
+
                 if let Expr::Set { elts, .. } = &**value {
                     println!("Expression is a set with {} elements", elts.len());
-                    
+
                     // Dump each element
                     for (i, elt) in elts.iter().enumerate() {
                         println!("Element {}: {:?}", i, elt);
-                        
+
                         if let Expr::Num { value: num, .. } = &**elt {
                             println!("  - Number value: {:?}", num);
                         } else {
                             println!("  - Not a number: {:?}", elt);
                         }
                     }
-                    
+
                     // Try a different approach: collect all numbers without assuming order
                     let mut values = Vec::new();
                     for elt in elts.iter() {
@@ -1815,12 +1816,12 @@ mod ast_verification_tests {
                             panic!("Expected number, got: {:?}", elt);
                         }
                     }
-                    
+
                     println!("Collected values: {:?}", values);
                     values.sort();
                     println!("Sorted values: {:?}", values);
                     println!("Expected values: [1, 2, 3]");
-                    
+
                     assert_eq!(values.len(), 3, "Expected 3 elements, got {}", values.len());
                     assert_eq!(values, vec![1, 2, 3], "Values don't match expected [1, 2, 3]");
                 } else {
@@ -1835,18 +1836,18 @@ mod ast_verification_tests {
             println!("No statements in module");
             panic!("Expected at least one statement");
         }
-        
+
         println!("Set literal test passed!");
-        
+
         // Tuple literal
         let module = assert_parses("(1, 2, 3)");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::Tuple { elts, ctx, .. } = &**value {
                     assert_eq!(elts.len(), 3);
                     assert!(matches!(ctx, ExprContext::Load));
-                    
+
                     for (i, elt) in elts.iter().enumerate() {
                         if let Expr::Num { value: num, .. } = &**elt {
                             assert_eq!(*num, Number::Integer(i as i64 + 1));
@@ -1863,16 +1864,16 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Dict literal
         let module = assert_parses("{1: 'one', 2: 'two'}");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::Dict { keys, values, .. } = &**value {
                     assert_eq!(keys.len(), 2);
                     assert_eq!(values.len(), 2);
-                    
+
                     // Check first key-value pair
                     assert!(keys[0].is_some());
                     if let Some(key) = &keys[0] {
@@ -1882,13 +1883,13 @@ mod ast_verification_tests {
                             panic!("Expected number for key, got: {:?}", key);
                         }
                     }
-                    
+
                     if let Expr::Str { value: s, .. } = &*values[0] {
                         assert_eq!(s, "one");
                     } else {
                         panic!("Expected string for value, got: {:?}", values[0]);
                     }
-                    
+
                     // Check second key-value pair
                     assert!(keys[1].is_some());
                     if let Some(key) = &keys[1] {
@@ -1898,7 +1899,7 @@ mod ast_verification_tests {
                             panic!("Expected number for key, got: {:?}", key);
                         }
                     }
-                    
+
                     if let Expr::Str { value: s, .. } = &*values[1] {
                         assert_eq!(s, "two");
                     } else {
@@ -1913,15 +1914,15 @@ mod ast_verification_tests {
         } else {
             panic!("Expected at least one statement");
         }
-        
+
         // Set literal
         let module = assert_parses("{1, 2, 3}");
-        
+
         if let Some(stmt) = module.body.first() {
             if let Stmt::Expr { value, .. } = &**stmt {
                 if let Expr::Set { elts, .. } = &**value {
                     assert_eq!(elts.len(), 3);
-                    
+
                     for (i, elt) in elts.iter().enumerate() {
                         if let Expr::Num { value: num, .. } = &**elt {
                             assert_eq!(*num, Number::Integer(i as i64 + 1));

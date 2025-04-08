@@ -9,7 +9,7 @@ use std::os::raw::c_char;
 
 // Import modules from lib.rs
 use cheetah::lexer::{Lexer, Token, TokenType, LexerConfig};
-use cheetah::parser::{self, ParseError};
+use cheetah::parser::{self, ParseError, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
@@ -198,7 +198,8 @@ fn run_file(filename: &str) -> Result<()> {
         Err(errors) => {
             eprintln!("Syntax errors found in '{}':", filename);
             for error in errors {
-                eprintln!("  {}", error.get_message());
+                let formatter = ParseErrorFormatter::new(&error, Some(&source), true);
+                eprintln!("  {}", formatter);
             }
         }
     }
@@ -246,7 +247,8 @@ fn run_file_jit(filename: &str) -> Result<()> {
         },
         Err(errors) => {
             for error in &errors {
-                eprintln!("{}", error.get_message().bright_red());
+                let formatter = ParseErrorFormatter::new(error, Some(&source), true);
+                eprintln!("{}", formatter.format().bright_red());
             }
             Err(anyhow::anyhow!("Parsing failed"))
         }
@@ -324,7 +326,8 @@ fn run_repl() -> Result<()> {
                         },
                         Err(errors) => {
                             for error in errors {
-                                eprintln!("{}", error.get_message().bright_red());
+                                let formatter = ParseErrorFormatter::new(&error, Some(complete_input), true);
+                                eprintln!("{}", formatter.format().bright_red());
                             }
                         }
                     }
@@ -590,7 +593,8 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
         Err(errors) => {
             eprintln!("Syntax errors found in '{}':", filename);
             for error in errors {
-                eprintln!("  {}", error.get_message());
+                let formatter = ParseErrorFormatter::new(&error, Some(&source), true);
+                eprintln!("  {}", formatter);
             }
         }
     }
@@ -642,24 +646,9 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
             eprintln!("✗ Syntax errors found in '{}':", filename);
             for error in errors {
                 if verbose {
-                    // Get error details and display with context
-                    let (line, column, message) = match &error {
-                        ParseError::UnexpectedToken { expected, found, line, column } =>
-                            (*line, *column, format!("Expected {}, found {:?}", expected, found)),
-                        ParseError::InvalidSyntax { message, line, column } =>
-                            (*line, *column, message.clone()),
-                        ParseError::EOF { expected, line, column } =>
-                            (*line, *column, format!("Unexpected end of file, expected {}", expected)),
-                    };
-
-                    eprintln!("  Line {}, Col {}: {}", line, column, message);
-
-                    // Trying to extract line from source for context
-                    if let Some(context) = get_line_context(&source, line) {
-                        eprintln!("  {}", context);
-                        eprintln!("  {}^", " ".repeat(column + 1));
-                    }
-                    eprintln!();
+                    // Use the new ParseErrorFormatter for better error messages
+                    let formatter = ParseErrorFormatter::new(&error, Some(&source), true);
+                    eprintln!("  {}", formatter);
                 } else {
                     eprintln!("  {}", error.get_message());
                 }
@@ -720,7 +709,8 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
         Err(errors) => {
             eprintln!("Cannot format file with syntax errors:");
             for error in errors {
-                eprintln!("  {}", error.get_message());
+                let formatter = ParseErrorFormatter::new(&error, Some(&source), true);
+                eprintln!("  {}", formatter);
             }
         }
     }
@@ -785,7 +775,8 @@ fn compile_file(
         },
         Err(errors) => {
             for error in &errors {
-                eprintln!("{}", error.get_message().bright_red());
+                let formatter = ParseErrorFormatter::new(error, Some(&source), true);
+                eprintln!("{}", formatter.format().bright_red());
             }
             Err(anyhow::anyhow!("Parsing failed"))
         }

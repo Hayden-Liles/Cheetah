@@ -4,7 +4,7 @@ mod stmt;
 mod types;
 mod helpers;
 
-pub use error::ParseError;
+pub use error::{ParseError, ParseErrorFormatter};
 use stmt::StmtParser;
 use types::ParserContext;
 use helpers::TokenMatching;
@@ -15,25 +15,25 @@ use crate::lexer::{Token, TokenType};
 use std::collections::VecDeque;
 
 /// Parser for Python source code
-/// 
+///
 /// This parser implements a recursive descent parser for Python syntax,
 /// producing an AST (Abstract Syntax Tree) conforming to Python's ast module.
 pub struct Parser {
     /// Queue of tokens to be processed
     tokens: VecDeque<Token>,
-    
+
     /// Current token being processed
     current: Option<Token>,
-    
+
     /// Last token that was processed
     last_token: Option<Token>,
-    
+
     /// Errors encountered during parsing
     errors: Vec<ParseError>,
-    
+
     /// Current indentation level
     current_indent_level: usize,
-    
+
     /// Stack of parser contexts
     context_stack: Vec<ParserContext>,
 }
@@ -91,7 +91,7 @@ impl Parser {
     pub fn push_context(&mut self, context: ParserContext) {
         self.context_stack.push(context);
     }
-    
+
     /// Pop a context from the stack
     pub fn pop_context(&mut self) -> Option<ParserContext> {
         if self.context_stack.len() > 1 {
@@ -101,12 +101,12 @@ impl Parser {
             None
         }
     }
-    
+
     /// Check if any context in the stack matches the given context
     pub fn is_in_context(&self, context: ParserContext) -> bool {
         self.context_stack.contains(&context)
     }
-    
+
     /// Execute a function with a temporary context
     pub fn with_context<F, T>(&mut self, context: ParserContext, f: F) -> T
     where
@@ -117,7 +117,7 @@ impl Parser {
         self.pop_context();
         result
     }
-    
+
     /// Get the current token position or a default if no token exists
     pub fn current_position(&self) -> (usize, usize) {
         match &self.current {
@@ -125,7 +125,7 @@ impl Parser {
             None => self.last_position(),
         }
     }
-    
+
     /// Get the position of the last token or (0,0) if no last token
     pub fn last_position(&self) -> (usize, usize) {
         match &self.last_token {
@@ -133,7 +133,7 @@ impl Parser {
             None => (0, 0),
         }
     }
-    
+
     /// Advance to the next token, returning the current one
     pub fn advance(&mut self) -> Option<Token> {
         let current = self.current.take();
@@ -141,7 +141,7 @@ impl Parser {
             self.last_token = Some(token.clone());
         }
         self.current = self.tokens.pop_front();
-        
+
         // Update indentation level if we encounter an INDENT or DEDENT token
         if let Some(token) = &self.current {
             match token.token_type {
@@ -156,17 +156,17 @@ impl Parser {
                 _ => {}
             }
         }
-        
+
         current
     }
-    
+
     /// Return the previous token (the last one that was consumed)
     pub fn previous_token(&self) -> Token {
         self.last_token
             .clone()
             .expect("No previous token available")
     }
-    
+
     /// Check if the current token is an identifier
     pub fn check_identifier(&self) -> bool {
         matches!(
@@ -174,7 +174,7 @@ impl Parser {
             Some(TokenType::Identifier(_))
         )
     }
-    
+
     /// Print the stack trace of errors
     pub fn print_errors(&self) {
         for (i, error) in self.errors.iter().enumerate() {

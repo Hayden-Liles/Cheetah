@@ -2,6 +2,7 @@
 pub mod lexer;
 pub mod ast;
 pub mod parser;
+pub use parser::{ParseError, ParseErrorFormatter};
 pub mod symtable;
 pub mod visitor;
 pub mod formatter;
@@ -14,17 +15,17 @@ use crate::visitor::Visitor;
 pub fn parse(source: &str) -> Result<ast::Module, Vec<parser::ParseError>> {
     let mut lexer = lexer::Lexer::new(source);
     let tokens = lexer.tokenize();
-    
+
     // Check for lexer errors
     if !lexer.get_errors().is_empty() {
         // Convert lexer errors to parser errors
         let errors = lexer.get_errors().iter().map(|e| {
             parser::ParseError::invalid_syntax(&e.message, e.line, e.column)
         }).collect();
-        
+
         return Err(errors);
     }
-    
+
     // Parse tokens into AST using the new parser interface
     parser::parse(tokens)
 }
@@ -81,7 +82,7 @@ pub fn analyze_code(source: &str) -> Result<(), String> {
         Ok(module) => {
             let symbol_table = build_symbol_table(&module);
             symbol_table.print_symbol_table();
-            
+
             let undefined = symbol_table.get_undefined_names();
             if !undefined.is_empty() {
                 println!("\nUndefined names:");
@@ -89,7 +90,7 @@ pub fn analyze_code(source: &str) -> Result<(), String> {
                     println!("  {}", name);
                 }
             }
-            
+
             Ok(())
         },
         Err(errors) => {
