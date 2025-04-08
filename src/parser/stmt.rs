@@ -836,19 +836,24 @@ impl StmtParser for Parser {
             self.advance(); // consume the identifier
             self.advance(); // consume the '=' token
 
-            // Return the error immediately
-            return Err(ParseError::invalid_syntax("Cannot use assignment in a condition", id_token.line, id_token.column));
+            // Return the error immediately with a helpful suggestion
+            return Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot use assignment in a condition",
+                id_token.line,
+                id_token.column,
+                "Did you mean to use '==' (equality) instead of '=' (assignment)?"
+            ));
         }
 
         let test = Box::new(self.parse_expression()?);
 
         if !self.check(TokenType::Colon) {
-            return Err(ParseError::InvalidSyntax {
-                message: "Expected ':' after if condition".to_string(),
-                line: self.current.as_ref().map_or(line, |t| t.line),
-                column: self.current.as_ref().map_or(column + 2, |t| t.column),
-                suggestion: None
-            });
+            return Err(ParseError::invalid_syntax_with_suggestion(
+                "Expected ':' after if condition",
+                self.current.as_ref().map_or(line, |t| t.line),
+                self.current.as_ref().map_or(column + 2, |t| t.column),
+                "Add a colon ':' after the condition"
+            ));
         }
 
         self.advance();
@@ -1739,15 +1744,60 @@ impl StmtParser for Parser {
                 Ok(())
             }
             Expr::Starred { value, .. } => self.validate_assignment_target(value),
-            Expr::Num { line, column, .. }
-            | Expr::Str { line, column, .. }
-            | Expr::Bytes { line, column, .. }
-            | Expr::NameConstant { line, column, .. } => Err(ParseError::invalid_syntax("Cannot assign to literal", *line, *column)),
-            Expr::BoolOp { line, column, .. }
-            | Expr::BinOp { line, column, .. }
-            | Expr::UnaryOp { line, column, .. } => Err(ParseError::invalid_syntax("Cannot assign to expression", *line, *column)),
-            Expr::Call { line, column, .. } => Err(ParseError::invalid_syntax("Cannot assign to function call", *line, *column)),
-            _ => Err(ParseError::invalid_syntax("Invalid assignment target", expr.get_line(), expr.get_column())),
+            Expr::Num { line, column, .. } => Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot assign to literal",
+                *line,
+                *column,
+                "Numbers cannot be used as assignment targets. Did you mean to assign to a variable instead?"
+            )),
+            Expr::Str { line, column, .. } => Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot assign to literal",
+                *line,
+                *column,
+                "Strings cannot be used as assignment targets. Did you mean to assign to a variable instead?"
+            )),
+            Expr::Bytes { line, column, .. } => Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot assign to literal",
+                *line,
+                *column,
+                "Byte literals cannot be used as assignment targets. Did you mean to assign to a variable instead?"
+            )),
+            Expr::NameConstant { line, column, .. } => Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot assign to literal",
+                *line,
+                *column,
+                "Constants like True, False, or None cannot be used as assignment targets"
+            )),
+            Expr::BoolOp { line, column, .. } => Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot assign to expression",
+                *line,
+                *column,
+                "Boolean operations (and, or) cannot be used as assignment targets"
+            )),
+            Expr::BinOp { line, column, .. } => Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot assign to expression",
+                *line,
+                *column,
+                "Expressions with operators cannot be used as assignment targets. Try assigning to a variable first."
+            )),
+            Expr::UnaryOp { line, column, .. } => Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot assign to expression",
+                *line,
+                *column,
+                "Unary operations cannot be used as assignment targets"
+            )),
+            Expr::Call { line, column, .. } => Err(ParseError::invalid_syntax_with_suggestion(
+                "Cannot assign to function call",
+                *line,
+                *column,
+                "Function calls cannot be used as assignment targets. Store the result in a variable first."
+            )),
+            _ => Err(ParseError::invalid_syntax_with_suggestion(
+                "Invalid assignment target",
+                expr.get_line(),
+                expr.get_column(),
+                "Only variables, attributes, subscripts, or tuples/lists of these can be assignment targets"
+            )),
         }
     }
 

@@ -13,7 +13,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 ### Parser Improvements
 - [x] Fix list comprehension parsing issues
 - [x] Enable large input parser tests
-- [ ] Improve error messages for syntax errors
+- [x] Improve error messages for syntax errors
 - [ ] Fix nested parentheses parsing in expressions
 - [ ] Add better recovery from parsing errors
 

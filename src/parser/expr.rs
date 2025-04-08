@@ -471,20 +471,20 @@ impl ExprParser for Parser {
                 if self.match_token(TokenType::In) {
                     Ok(CmpOperator::NotIn)
                 } else {
-                    Err(ParseError::InvalidSyntax {
-                        message: "Expected 'in' after 'not' in comparison".to_string(),
+                    Err(ParseError::invalid_syntax_with_suggestion(
+                        "Expected 'in' after 'not' in comparison",
                         line,
                         column,
-                        suggestion: None
-                    })
+                        "'not' in a comparison should be followed by 'in' to form 'not in'"
+                    ))
                 }
             }
-            _ => Err(ParseError::InvalidSyntax {
-                message: "Expected comparison operator".to_string(),
+            _ => Err(ParseError::invalid_syntax_with_suggestion(
+                "Expected comparison operator",
                 line,
                 column,
-                suggestion: None
-            }),
+                "Valid comparison operators are: <, >, <=, >=, ==, !=, in, not in, is, is not"
+            )),
         }
     }
 
@@ -596,12 +596,12 @@ impl ExprParser for Parser {
                 TokenType::Plus => Operator::Add,
                 TokenType::Minus => Operator::Sub,
                 _ => {
-                    return Err(ParseError::InvalidSyntax {
-                        message: format!("Unexpected token in arithmetic: {:?}", token.token_type),
-                        line: token.line,
-                        column: token.column,
-                        suggestion: None
-                    });
+                    return Err(ParseError::invalid_syntax_with_suggestion(
+                        &format!("Unexpected token in arithmetic: {:?}", token.token_type),
+                        token.line,
+                        token.column,
+                        "Only '+' and '-' operators are valid here"
+                    ));
                 }
             };
 
@@ -638,12 +638,22 @@ impl ExprParser for Parser {
                 || self.check(TokenType::Minus)
                 || self.check(TokenType::At)
             {
-                return Err(ParseError::invalid_syntax("Invalid syntax: consecutive operators", token.line, token.column + token.lexeme.len()));
+                return Err(ParseError::invalid_syntax_with_suggestion(
+                    "Invalid syntax: consecutive operators",
+                    token.line,
+                    token.column + token.lexeme.len(),
+                    "Operators cannot be used consecutively. Did you forget an operand between them?"
+                ));
             }
 
             // Also check for EOF or newline
             if self.check(TokenType::EOF) || self.check_newline() {
-                return Err(ParseError::invalid_syntax("Incomplete expression", token.line, token.column + 1));
+                return Err(ParseError::invalid_syntax_with_suggestion(
+                    "Incomplete expression",
+                    token.line,
+                    token.column + 1,
+                    "This operator is missing its right operand. Add a value after the operator."
+                ));
             }
 
             // Rest of the method unchanged...
@@ -654,12 +664,12 @@ impl ExprParser for Parser {
                 TokenType::Modulo => Operator::Mod,
                 TokenType::At => Operator::MatMult,
                 _ => {
-                    return Err(ParseError::InvalidSyntax {
-                        message: format!("Unexpected token in term: {:?}", token.token_type),
-                        line: token.line,
-                        column: token.column,
-                        suggestion: None
-                    });
+                    return Err(ParseError::invalid_syntax_with_suggestion(
+                        &format!("Unexpected token in term: {:?}", token.token_type),
+                        token.line,
+                        token.column,
+                        "Only '*', '/', '//', '%', and '@' operators are valid here"
+                    ));
                 }
             };
 
@@ -748,12 +758,12 @@ impl ExprParser for Parser {
             let column = token.column;
 
             if !self.is_in_context(ParserContext::Function) {
-                return Err(ParseError::InvalidSyntax {
-                    message: "Yield statement outside of function".to_string(),
+                return Err(ParseError::invalid_syntax_with_suggestion(
+                    "Yield statement outside of function",
                     line,
                     column,
-                    suggestion: None
-                });
+                    "'yield' can only be used inside a function definition"
+                ));
             }
 
             if self.match_token(TokenType::From) {
@@ -783,12 +793,12 @@ impl ExprParser for Parser {
                 column,
             })
         } else {
-            Err(ParseError::InvalidSyntax {
-                message: "Expected 'yield' keyword".to_string(),
-                line: self.current.as_ref().map_or(0, |t| t.line),
-                column: self.current.as_ref().map_or(0, |t| t.column),
-                suggestion: None
-            })
+            Err(ParseError::invalid_syntax_with_suggestion(
+                "Expected 'yield' keyword",
+                self.current.as_ref().map_or(0, |t| t.line),
+                self.current.as_ref().map_or(0, |t| t.column),
+                "A yield expression must start with the 'yield' keyword"
+            ))
         }
     }
 
@@ -1257,12 +1267,12 @@ impl ExprParser for Parser {
                 column,
             })
         } else {
-            start_expr.ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Expected expression in subscription".to_string(),
+            start_expr.ok_or_else(|| ParseError::invalid_syntax_with_suggestion(
+                "Expected expression in subscription",
                 line,
                 column,
-                suggestion: None
-            })
+                "Subscript operations require an index expression between the brackets"
+            ))
         }
     }
 
@@ -1353,22 +1363,22 @@ impl ExprParser for Parser {
                 is_kwarg: false,
             });
         } else {
-            return Err(ParseError::InvalidSyntax {
-                message: "Expected parameter name".to_string(),
-                line: self.current.as_ref().map_or(0, |t| t.line),
-                column: self.current.as_ref().map_or(0, |t| t.column),
-                suggestion: None
-            });
+            return Err(ParseError::invalid_syntax_with_suggestion(
+                "Expected parameter name",
+                self.current.as_ref().map_or(0, |t| t.line),
+                self.current.as_ref().map_or(0, |t| t.column),
+                "Function parameters must be valid identifiers"
+            ));
         }
 
         while self.match_token(TokenType::Comma) {
             if self.check(TokenType::Colon) {
-                return Err(ParseError::InvalidSyntax {
-                    message: "Expected parameter after comma".to_string(),
-                    line: self.current.as_ref().map_or(0, |t| t.line),
-                    column: self.current.as_ref().map_or(0, |t| t.column),
-                    suggestion: None
-                });
+                return Err(ParseError::invalid_syntax_with_suggestion(
+                    "Expected parameter after comma",
+                    self.current.as_ref().map_or(0, |t| t.line),
+                    self.current.as_ref().map_or(0, |t| t.column),
+                    "A comma in a parameter list must be followed by another parameter"
+                ));
             }
 
             if self.match_token(TokenType::Multiply) {
@@ -1419,12 +1429,12 @@ impl ExprParser for Parser {
                     is_kwarg: false,
                 });
             } else {
-                return Err(ParseError::InvalidSyntax {
-                    message: "Expected parameter name".to_string(),
-                    line: self.current.as_ref().map_or(0, |t| t.line),
-                    column: self.current.as_ref().map_or(0, |t| t.column),
-                    suggestion: None
-                });
+                return Err(ParseError::invalid_syntax_with_suggestion(
+                    "Expected parameter name",
+                    self.current.as_ref().map_or(0, |t| t.line),
+                    self.current.as_ref().map_or(0, |t| t.column),
+                    "Function parameters must be valid identifiers"
+                ));
             }
         }
 
@@ -1458,12 +1468,12 @@ impl ExprParser for Parser {
                 self.advance();
 
                 if self.check(TokenType::EOF) || self.check_newline() {
-                    return Err(ParseError::InvalidSyntax {
-                        message: "Unclosed parenthesis".to_string(),
+                    return Err(ParseError::invalid_syntax_with_suggestion(
+                        "Unclosed parenthesis",
                         line,
                         column,
-                        suggestion: None
-                    });
+                        "Add a closing parenthesis ')' to match the opening one"
+                    ));
                 }
 
                 if self.match_token(TokenType::RightParen) {
@@ -1632,12 +1642,12 @@ impl ExprParser for Parser {
                 self.advance();
 
                 if self.check(TokenType::EOF) || self.check_newline() {
-                    return Err(ParseError::InvalidSyntax {
-                        message: "Unclosed bracket".to_string(),
+                    return Err(ParseError::invalid_syntax_with_suggestion(
+                        "Unclosed bracket",
                         line,
                         column,
-                        suggestion: None
-                    });
+                        "Add a closing bracket ']' to match the opening one"
+                    ));
                 }
 
                 if self.match_token(TokenType::RightBracket) {
@@ -1829,12 +1839,12 @@ impl ExprParser for Parser {
                 self.advance();
 
                 if self.check(TokenType::EOF) || self.check_newline() {
-                    return Err(ParseError::InvalidSyntax {
-                        message: "Unclosed brace".to_string(),
+                    return Err(ParseError::invalid_syntax_with_suggestion(
+                        "Unclosed brace",
                         line,
                         column,
-                        suggestion: None
-                    });
+                        "Add a closing brace '}' to match the opening one"
+                    ));
                 }
 
                 self.parse_dict_literal(line, column)
@@ -1985,12 +1995,12 @@ impl ExprParser for Parser {
             }
 
             if self.check(TokenType::Comma) {
-                return Err(ParseError::InvalidSyntax {
-                    message: "Expected expression after comma".to_string(),
-                    line: self.current.as_ref().map_or(0, |t| t.line),
-                    column: self.current.as_ref().map_or(0, |t| t.column),
-                    suggestion: None
-                });
+                return Err(ParseError::invalid_syntax_with_suggestion(
+                    "Expected expression after comma",
+                    self.current.as_ref().map_or(0, |t| t.line),
+                    self.current.as_ref().map_or(0, |t| t.column),
+                    "Consecutive commas are not allowed. Add an expression between commas."
+                ));
             }
 
             if self.match_token(TokenType::Multiply) {
