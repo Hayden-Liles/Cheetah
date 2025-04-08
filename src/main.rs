@@ -9,7 +9,7 @@ use std::os::raw::c_char;
 
 // Import modules from lib.rs
 use cheetah::lexer::{Lexer, Token, TokenType, LexerConfig};
-use cheetah::parser::{self, ParseError, ParseErrorFormatter};
+use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
@@ -657,20 +657,6 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-// Helper function to get a line of context from source code
-fn get_line_context(source: &str, line_num: usize) -> Option<String> {
-    if line_num == 0 {
-        return None;
-    }
-
-    let lines: Vec<&str> = source.lines().collect();
-    if line_num <= lines.len() {
-        Some(lines[line_num - 1].to_string())
-    } else {
-        None
-    }
 }
 
 fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {

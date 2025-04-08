@@ -2,6 +2,7 @@ use crate::lexer::{Token, TokenType};
 use crate::parser::error::ParseError;
 use crate::parser::Parser;
 
+
 /// Common error messages
 #[allow(dead_code)]
 pub const ERR_EXPECTED_IDENTIFIER: &str = "Expected identifier";
@@ -171,19 +172,10 @@ impl TokenMatching for Parser {
                         self.advance();
                         Ok(keyword_name)
                     },
-                    _ => Err(ParseError::UnexpectedToken {
-                        expected: expected.to_string(),
-                        found: token.token_type.clone(),
-                        line: token.line,
-                        column: token.column,
-                    }),
+                    _ => Err(ParseError::unexpected_token(expected, token.token_type.clone(), token.line, token.column)),
                 }
             },
-            None => Err(ParseError::EOF {
-                expected: expected.to_string(),
-                line: self.last_position().0,
-                column: self.last_position().1,
-            }),
+            None => Err(ParseError::eof(expected, self.last_position().0, self.last_position().1)),
         }
     }
     
@@ -213,12 +205,7 @@ impl TokenMatching for Parser {
                         _ => error_message,
                     };
 
-                    Err(ParseError::UnexpectedToken {
-                        expected: expected_str.to_string(),
-                        found: token.token_type.clone(),
-                        line: token.line,
-                        column: token.column,
-                    })
+                    Err(ParseError::unexpected_token(expected_str, token.token_type.clone(), token.line, token.column))
                 }
             }
             None => {
@@ -258,28 +245,13 @@ impl TokenMatching for Parser {
             if let Some(token) = &self.current {
                 match token.token_type {
                     TokenType::RightParen => {
-                        return Err(ParseError::UnexpectedToken {
-                            expected: "newline".to_string(),
-                            found: TokenType::RightParen,
-                            line: token.line,
-                            column: token.column,
-                        });
+                        return Err(ParseError::unexpected_token("newline", TokenType::RightParen, token.line, token.column));
                     },
                     TokenType::RightBracket => {
-                        return Err(ParseError::UnexpectedToken {
-                            expected: "newline".to_string(), 
-                            found: TokenType::RightBracket,
-                            line: token.line,
-                            column: token.column,
-                        });
+                        return Err(ParseError::unexpected_token("newline", TokenType::RightBracket, token.line, token.column));
                     },
                     TokenType::RightBrace => {
-                        return Err(ParseError::UnexpectedToken {
-                            expected: "newline".to_string(),
-                            found: TokenType::RightBrace,
-                            line: token.line,
-                            column: token.column,
-                        });
+                        return Err(ParseError::unexpected_token("newline", TokenType::RightBrace, token.line, token.column));
                     },
                     _ => {}
                 }
@@ -289,6 +261,7 @@ impl TokenMatching for Parser {
                 message: "Expected newline after statement".to_string(),
                 line: self.current.as_ref().map_or(0, |t| t.line),
                 column: self.current.as_ref().map_or(0, |t| t.column),
+                suggestion: None
             });
         }
         
@@ -312,18 +285,9 @@ impl TokenMatching for Parser {
                     self.advance();
                     Ok(result)
                 }
-                _ => Err(ParseError::UnexpectedToken {
-                    expected: expected.to_string(),
-                    found: token.token_type.clone(),
-                    line: token.line,
-                    column: token.column,
-                }),
+                _ => Err(ParseError::unexpected_token(expected, token.token_type.clone(), token.line, token.column)),
             },
-            None => Err(ParseError::EOF {
-                expected: expected.to_string(),
-                line: self.last_position().0,
-                column: self.last_position().1,
-            }),
+            None => Err(ParseError::eof(expected, self.last_position().0, self.last_position().1)),
         }
     }
     
@@ -345,6 +309,7 @@ impl TokenMatching for Parser {
             message: message.to_string(),
             line,
             column,
+            suggestion: None
         })
     }
     
@@ -355,6 +320,7 @@ impl TokenMatching for Parser {
             expected: expected.to_string(),
             line,
             column,
+            suggestion: None
         })
     }
     
