@@ -795,7 +795,7 @@ impl Type {
             (Type::Int, Type::Bool) => true,
             (Type::Bool, Type::Int) => true,
             (Type::Bool, Type::Float) => true,
-            (Type::Float, Type::Int) => true, // This might lose precision
+            (Type::Float, Type::Int) => false,
             (Type::Float, Type::Bool) => true,
             
             // String conversions
