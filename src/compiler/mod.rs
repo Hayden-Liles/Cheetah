@@ -33,26 +33,33 @@ impl<'ctx> Compiler<'ctx> {
         let function = self.context.module.add_function("main", fn_type, None);
         let basic_block = self.context.llvm_context.append_basic_block(function, "entry");
         
-        // Position builder at end of the entry block
+        // Position builder at the end of the entry block
         self.context.builder.position_at_end(basic_block);
         
-        // Add a return void instruction
-        let _ = self.context.builder.build_return(None);
-        
-        // For each function in the AST, process it
+        // Process all top-level statements
         for stmt in &module.body {
             match stmt.as_ref() {
                 ast::Stmt::FunctionDef { name, params, body, .. } => {
+                    // Function definitions are handled separately
                     self.compile_function(name, params, body)?;
-                }
+                },
                 ast::Stmt::ClassDef { name, bases, body, .. } => {
+                    // Class definitions are handled separately
                     self.compile_class(name, bases, body)?;
-                }
+                },
                 _ => {
-                    // Handle other statement types
-                    self.compile_stmt(stmt)?;
+                    // All other statements are compiled in the main function
+                    self.context.compile_stmt(stmt.as_ref())?;
                 }
             }
+        }
+        
+        // Check if the current block already has a terminator
+        // (this could happen if the last statement was a return or an unconditional branch)
+        let current_block = self.context.builder.get_insert_block().unwrap();
+        if current_block.get_terminator().is_none() {
+            // Add a return void instruction only if there's no terminator
+            self.context.builder.build_return(None).unwrap();
         }
         
         // Verify the module
@@ -83,12 +90,7 @@ impl<'ctx> Compiler<'ctx> {
         
         Ok(())
     }
-    
-    /// Compile a statement
-    fn compile_stmt(&mut self, stmt: &Box<ast::Stmt>) -> Result<(), String> {
-        // Use our new StmtCompiler trait
-        self.context.compile_stmt(stmt.as_ref())
-    }
+
     
     /// Save the compiled module to a file
     pub fn write_to_file(&self, path: &Path) -> Result<(), String> {

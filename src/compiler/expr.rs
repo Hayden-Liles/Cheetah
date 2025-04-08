@@ -788,7 +788,7 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
         value_type: &Type) -> Result<(), String> {
         match target {
             Expr::Name { id, .. } => {
-                // Look up variable storage
+                // Check if variable already exists
                 if let Some(ptr) = self.get_variable_ptr(id) {
                     // Check if types are compatible
                     if let Some(target_type) = self.lookup_variable_type(id) {
@@ -806,7 +806,12 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                         Err(format!("Variable '{}' has unknown type", id))
                     }
                 } else {
-                    Err(format!("Variable '{}' has no allocated storage", id))
+                    // Variable doesn't exist yet, allocate storage for it
+                    let ptr = self.allocate_variable(id.clone(), value_type);
+                    
+                    // Store the value to the newly created variable
+                    self.builder.build_store(ptr, value).unwrap();
+                    Ok(())
                 }
             },
             
