@@ -787,23 +787,33 @@ impl Type {
         
         // Define type coercion rules
         match (self, target_type) {
-            // Int can be coerced to Float
+            // Any type can be coerced to Any
+            (_, Type::Any) => true,
+            
+            // Numeric type conversions
             (Type::Int, Type::Float) => true,
-            
-            // Bool can be coerced to Int
+            (Type::Int, Type::Bool) => true,
             (Type::Bool, Type::Int) => true,
-            
-            // Bool can be coerced to Float
             (Type::Bool, Type::Float) => true,
+            (Type::Float, Type::Int) => true, // This might lose precision
+            (Type::Float, Type::Bool) => true,
             
-            // Any numeric type can be coerced to String
-            (Type::Int, Type::String) | (Type::Float, Type::String) | (Type::Bool, Type::String) => true,
+            // String conversions
+            (Type::Int, Type::String) => true,
+            (Type::Float, Type::String) => true,
+            (Type::Bool, Type::String) => true,
             
-            // Coerce elements in containers
+            // String to numeric types - in Python, this works if the string has the right format
+            (Type::String, Type::Int) => true,
+            (Type::String, Type::Float) => true,
+            (Type::String, Type::Bool) => true,
+            
+            // None can be coerced to any reference type
+            (Type::None, _) if is_reference_type(target_type) => true,
+            
+            // Container type coercions
             (Type::List(from_elem), Type::List(to_elem)) => from_elem.can_coerce_to(to_elem),
-            
             (Type::Set(from_elem), Type::Set(to_elem)) => from_elem.can_coerce_to(to_elem),
-            
             (Type::Dict(from_key, from_val), Type::Dict(to_key, to_val)) => 
                 from_key.can_coerce_to(to_key) && from_val.can_coerce_to(to_val),
             
@@ -812,14 +822,40 @@ impl Type {
                 if from_elems.len() != to_elems.len() {
                     return false;
                 }
-                
                 from_elems.iter().zip(to_elems.iter()).all(|(from, to)| from.can_coerce_to(to))
+            },
+            
+            // Class inheritance coercions (when implemented)
+            (Type::Class { name: from_name, .. }, Type::Class { name: to_name, .. }) => {
+                // A class can be coerced to itself
+                if from_name == to_name {
+                    return true;
+                }
+                
+                // TODO: Check if from_name is a subclass of to_name
+                // This requires tracking class inheritance relationships
+                false
+            },
+            
+            // Function coercions (potentially for functions with compatible signatures)
+            (Type::Function { param_types: from_params, return_type: from_return, .. },
+             Type::Function { param_types: to_params, return_type: to_return, .. }) => {
+                // Check if parameter types and return type are coercible
+                // This is a simplification; real function subtyping is more complex
+                if from_params.len() != to_params.len() {
+                    return false;
+                }
+                
+                // Contravariant parameter types, covariant return type
+                let params_ok = from_params.iter().zip(to_params.iter())
+                    .all(|(to_param, from_param)| to_param.can_coerce_to(from_param));
+                let return_ok = from_return.can_coerce_to(to_return);
+                
+                params_ok && return_ok
             },
             
             // Type parameters can potentially be coerced (need more context)
             (Type::TypeParam(_), _) | (_, Type::TypeParam(_)) => true,
-            
-            // Add other coercion rules here
             
             // Default is no coercion
             _ => false,

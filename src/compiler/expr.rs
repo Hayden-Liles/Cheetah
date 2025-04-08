@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Number, NameConstant, Operator, UnaryOperator, CmpOperator};
+use crate::ast::{BoolOperator, CmpOperator, Expr, ExprContext, NameConstant, Number, Operator, UnaryOperator};
 use crate::compiler::context::CompilationContext;
 use crate::compiler::types::Type;
 use crate::compiler::types::is_reference_type;
@@ -6,6 +6,17 @@ use inkwell::values::BasicValueEnum;
 
 /// Extension trait for handling expression code generation
 pub trait ExprCompiler<'ctx> {
+    fn build_empty_list(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_list(&self, elements: Vec<BasicValueEnum<'ctx>>, element_type: &Type) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_tuple(&self, elements: Vec<BasicValueEnum<'ctx>>, element_types: &[Type]) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_empty_dict(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_dict(&self, keys: Vec<BasicValueEnum<'ctx>>, values: Vec<BasicValueEnum<'ctx>>, key_type: &Type, value_type: &Type) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_empty_set(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_set(&self, elements: Vec<BasicValueEnum<'ctx>>, element_type: &Type) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_list_get_item(&self, list_ptr: inkwell::values::PointerValue<'ctx>, index: inkwell::values::IntValue<'ctx>) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_dict_get_item(&self, dict_ptr: inkwell::values::PointerValue<'ctx>, key: BasicValueEnum<'ctx>, key_type: &Type) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_string_get_char(&self, str_ptr: inkwell::values::PointerValue<'ctx>, index: inkwell::values::IntValue<'ctx>) -> Result<BasicValueEnum<'ctx>, String>;
     /// Compile an expression and return the resulting LLVM value with its type
     fn compile_expr(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String>;
     
@@ -43,6 +54,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         match expr {
             Expr::Num { value, .. } => self.compile_number(value),
             Expr::NameConstant { value, .. } => self.compile_name_constant(value),
+            
             Expr::BinOp { left, op, right, .. } => {
                 // Compile both operands
                 let (left_val, left_type) = self.compile_expr(left)?;
@@ -51,6 +63,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Use our binary operation compiler
                 self.compile_binary_op(left_val, &left_type, op.clone(), right_val, &right_type)
             },
+            
             Expr::UnaryOp { op, operand, .. } => {
                 // Compile the operand
                 let (operand_val, operand_type) = self.compile_expr(operand)?;
@@ -100,6 +113,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     },
                 }
             },
+            
             Expr::Compare { left, ops, comparators, .. } => {
                 if ops.is_empty() || comparators.is_empty() {
                     return Err("Empty comparison".to_string());
@@ -140,6 +154,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 
                 Ok((result_val.unwrap(), Type::Bool))
             },
+            
             Expr::Name { id, .. } => {
                 // Look up variable type
                 if let Some(var_type) = self.lookup_variable_type(id) {
@@ -149,7 +164,6 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         let llvm_type = self.get_llvm_type(var_type);
                         
                         // Load the variable's value with the correct method signature
-                        // Note the three arguments: type, pointer, name
                         let value = self.builder.build_load(llvm_type, ptr, id).unwrap();
                         Ok((value, var_type.clone()))
                     } else {
@@ -159,9 +173,358 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     Err(format!("Undefined variable: {}", id))
                 }
             },
-            // Handle other expression types
+            
+            Expr::Str { value, .. } => {
+                // Create a global string constant
+                let str_type = self.llvm_context.i8_type().array_type(value.len() as u32 + 1);
+                
+                // Create the string constant (null-terminated)
+                let mut chars: Vec<u8> = value.bytes().collect();
+                chars.push(0); // Null terminator
+                
+                // Create a global variable to hold the string constant
+                let global_str = self.module.add_global(str_type, None, "str_const");
+                global_str.set_constant(true);
+                global_str.set_initializer(&self.llvm_context.const_string(&chars, true));
+                
+                // Get a pointer to the string (fixed deprecated method)
+                let str_ptr = self.builder.build_pointer_cast(
+                    global_str.as_pointer_value(),
+                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                    "str_ptr"
+                ).unwrap();
+                
+                // Return the string pointer and String type
+                Ok((str_ptr.into(), Type::String))
+            },
+            
+            Expr::BoolOp { op, values, .. } => {
+                if values.is_empty() {
+                    return Err("Empty boolean operation".to_string());
+                }
+                
+                // Compile the first value
+                let (first_val, first_type) = self.compile_expr(&values[0])?;
+                
+                // Convert to boolean if needed
+                let bool_type = Type::Bool;
+                let mut current_val = if first_type != bool_type {
+                    self.convert_type(first_val, &first_type, &bool_type)?.into_int_value()
+                } else {
+                    first_val.into_int_value()
+                };
+                
+                // If there's only one value, just return it as a boolean
+                if values.len() == 1 {
+                    return Ok((current_val.into(), bool_type));
+                }
+                
+                // Current function
+                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                
+                // Create a phi node to gather results from different paths
+                let result_ptr = self.builder.build_alloca(self.llvm_context.bool_type(), "bool_result").unwrap();
+                
+                // Store the initial value
+                self.builder.build_store(result_ptr, current_val).unwrap();
+                
+                // Create merge block where all paths will converge
+                let mut merge_block = self.llvm_context.append_basic_block(current_function, "bool_merge");
+                
+                // Process the rest of the values with short-circuit evaluation
+                for (i, value_expr) in values.iter().skip(1).enumerate() {
+                    // Create blocks for short-circuit and next value evaluation
+                    let next_value_block = self.llvm_context.append_basic_block(current_function, &format!("next_value_{}", i));
+                    let short_circuit_block = self.llvm_context.append_basic_block(current_function, &format!("short_circuit_{}", i));
+                    
+                    // Branch based on the boolean operator
+                    match op {
+                        BoolOperator::And => {
+                            // For AND, if current value is false, short-circuit
+                            self.builder.build_conditional_branch(current_val, next_value_block, short_circuit_block).unwrap();
+                        },
+                        BoolOperator::Or => {
+                            // For OR, if current value is true, short-circuit
+                            self.builder.build_conditional_branch(current_val, short_circuit_block, next_value_block).unwrap();
+                        },
+                    }
+                    
+                    // Compile the next value
+                    self.builder.position_at_end(next_value_block);
+                    let (next_val, next_type) = self.compile_expr(value_expr)?;
+                    
+                    // Convert to boolean if needed
+                    let next_bool = if next_type != bool_type {
+                        self.convert_type(next_val, &next_type, &bool_type)?.into_int_value()
+                    } else {
+                        next_val.into_int_value()
+                    };
+                    
+                    // Store the result and branch to merge
+                    self.builder.build_store(result_ptr, next_bool).unwrap();
+                    self.builder.build_unconditional_branch(merge_block).unwrap();
+                    
+                    // Handle short-circuit case
+                    self.builder.position_at_end(short_circuit_block);
+                    
+                    // In short-circuit case, value remains the same (false for AND, true for OR)
+                    // We already stored the value at the beginning, so no need to store again
+                    self.builder.build_unconditional_branch(merge_block).unwrap();
+                    
+                    // Continue at the merge block for the next iteration
+                    self.builder.position_at_end(merge_block);
+                    
+                    // Load the result for the next iteration
+                    current_val = self.builder.build_load(self.llvm_context.bool_type(), result_ptr, "bool_op_result").unwrap().into_int_value();
+                    
+                    // Create a new merge block for the next iteration (if not the last one)
+                    if i < values.len() - 2 {
+                        let new_merge_block = self.llvm_context.append_basic_block(current_function, &format!("bool_merge_{}", i+1));
+                        merge_block = new_merge_block;
+                    }
+                }
+                
+                // The final value is our result
+                Ok((current_val.into(), bool_type))
+            },
+            
+            Expr::Call { func, args, keywords, .. } => {
+                // For function calls, we need to handle various cases:
+                // 1. Direct function references
+                // 2. Function pointers
+                // 3. Method calls
+    
+                // Different handling based on the function expression
+                match func.as_ref() {
+                    Expr::Name { id, .. } => {
+                        // Direct function reference by name
+                        if let Some(func_value) = self.functions.get(id) {
+                            // Compile all argument expressions
+                            let mut arg_values = Vec::with_capacity(args.len());
+                            let mut arg_types = Vec::with_capacity(args.len());
+                            
+                            for arg in args {
+                                let (arg_val, arg_type) = self.compile_expr(arg)?;
+                                arg_values.push(arg_val);
+                                arg_types.push(arg_type);
+                            }
+                            
+                            // Handle keyword arguments
+                            if !keywords.is_empty() {
+                                return Err("Keyword arguments not yet implemented".to_string());
+                            }
+                            
+                            // Convert to inkwell's BasicMetadataValueEnum
+                            let call_args: Vec<_> = arg_values
+                                .iter()
+                                .map(|&v| v.into())
+                                .collect();
+                            
+                            // Build the call instruction
+                            let call = self.builder.build_call(*func_value, &call_args, "call").unwrap();
+                            
+                            // Get the return value if there is one
+                            if let Some(ret_val) = call.try_as_basic_value().left() {
+                                // Look up the function's return type
+                                // For now, we'll just return the value with a placeholder type
+                                Ok((ret_val, Type::Int)) // Simplified; should get actual return type
+                            } else {
+                                // Function returns void
+                                Ok((self.llvm_context.i32_type().const_zero().into(), Type::Void))
+                            }
+                        } else {
+                            Err(format!("Undefined function: {}", id))
+                        }
+                    },
+                    _ => {
+                        // For now, only support direct function references
+                        Err("Indirect function calls not yet implemented".to_string())
+                    }
+                }
+            },
+            
+            Expr::IfExp { test, body, orelse, .. } => {
+                // Compile the test expression
+                let (test_val, test_type) = self.compile_expr(test)?;
+                
+                // Convert to boolean if needed
+                let cond_val = if test_type != Type::Bool {
+                    self.convert_type(test_val, &test_type, &Type::Bool)?.into_int_value()
+                } else {
+                    test_val.into_int_value()
+                };
+                
+                // Create basic blocks for then, else, and merge
+                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                let then_block = self.llvm_context.append_basic_block(current_function, "if_then");
+                let else_block = self.llvm_context.append_basic_block(current_function, "if_else");
+                let merge_block = self.llvm_context.append_basic_block(current_function, "if_merge");
+                
+                // Branch based on the condition
+                self.builder.build_conditional_branch(cond_val, then_block, else_block).unwrap();
+                
+                // Compile the then expression
+                self.builder.position_at_end(then_block);
+                let (then_val, then_type) = self.compile_expr(body)?;
+                let then_block = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_block).unwrap();
+                
+                // Compile the else expression
+                self.builder.position_at_end(else_block);
+                let (else_val, else_type) = self.compile_expr(orelse)?;
+                let else_block = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_block).unwrap();
+                
+                // Determine the result type
+                let result_type = if then_type == else_type {
+                    then_type.clone()
+                } else {
+                    // Try to find a common type that both can be converted to
+                    match self.get_common_type(&then_type, &else_type) {
+                        Ok(common_type) => common_type,
+                        Err(_) => return Err(format!("Incompatible types in if expression: {:?} and {:?}", then_type, else_type)),
+                    }
+                };
+                
+                // Convert both values to the result type if needed
+                let then_val = if then_type != result_type {
+                    self.convert_type(then_val, &then_type, &result_type)?
+                } else {
+                    then_val
+                };
+                
+                let else_val = if else_type != result_type {
+                    self.convert_type(else_val, &else_type, &result_type)?
+                } else {
+                    else_val
+                };
+                
+                // Create a merge block with phi node
+                self.builder.position_at_end(merge_block);
+                
+                // Create the phi node - fixed error by using llvm_type directly
+                let llvm_type = self.get_llvm_type(&result_type);
+                let phi = self.builder.build_phi(llvm_type, "if_result").unwrap();
+                
+                // Add the incoming values
+                phi.add_incoming(&[
+                    (&then_val, then_block),
+                    (&else_val, else_block),
+                ]);
+                
+                Ok((phi.as_basic_value(), result_type))
+            },
+            
+            // For the remaining expressions, we'll return a placeholder error since they're not yet implemented
+            Expr::List { .. } => Err("List expressions not yet implemented".to_string()),
+            Expr::Tuple { .. } => Err("Tuple expressions not yet implemented".to_string()),
+            Expr::Dict { .. } => Err("Dictionary expressions not yet implemented".to_string()),
+            Expr::Set { .. } => Err("Set expressions not yet implemented".to_string()),
+            Expr::Attribute { .. } => Err("Attribute access not yet implemented".to_string()),
+            Expr::Subscript { .. } => Err("Subscript expressions not yet implemented".to_string()),
+            
+            // Handle other expression types with appropriate placeholder errors
             _ => Err(format!("Unsupported expression type: {:?}", expr)),
         }
+    }
+    
+    // Placeholder methods for collection operations (to be implemented with runtime support)
+    // These would be defined in your CompilationContext impl block
+    
+    fn build_empty_list(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = name;
+        Err("List operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_list(
+        &self, 
+        elements: Vec<BasicValueEnum<'ctx>>, 
+        element_type: &Type
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = elements;
+        let _ = element_type;
+        Err("List operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = name;
+        Err("Tuple operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_tuple(
+        &self, 
+        elements: Vec<BasicValueEnum<'ctx>>, 
+        element_types: &[Type]
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = elements;
+        let _ = element_types;
+        Err("Tuple operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_empty_dict(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = name;
+        Err("Dict operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_dict(
+        &self,
+        keys: Vec<BasicValueEnum<'ctx>>,
+        values: Vec<BasicValueEnum<'ctx>>,
+        key_type: &Type,
+        value_type: &Type
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = keys;
+        let _ = values;
+        let _ = key_type;
+        let _ = value_type;
+        Err("Dict operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_empty_set(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = name;
+        Err("Set operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_set(
+        &self,
+        elements: Vec<BasicValueEnum<'ctx>>,
+        element_type: &Type
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = elements;
+        let _ = element_type;
+        Err("Set operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_list_get_item(
+        &self,
+        list_ptr: inkwell::values::PointerValue<'ctx>,
+        index: inkwell::values::IntValue<'ctx>
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = list_ptr;
+        let _ = index;
+        Err("List operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_dict_get_item(
+        &self,
+        dict_ptr: inkwell::values::PointerValue<'ctx>,
+        key: BasicValueEnum<'ctx>,
+        key_type: &Type
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let _ = dict_ptr;
+        let _ = key;
+        let _ = key_type;
+        Err("Dict operations require runtime support (not yet implemented)".to_string())
+    }
+    
+    fn build_string_get_char(
+        &self,
+        str_ptr: inkwell::values::PointerValue<'ctx>,
+        index: inkwell::values::IntValue<'ctx>
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let _ = str_ptr;
+        let _ = index;
+        Err("String operations require runtime support (not yet implemented)".to_string())
     }
     
     fn compile_number(&mut self, num: &Number) -> Result<(BasicValueEnum<'ctx>, Type), String> {
