@@ -17,27 +17,30 @@ pub struct LoopContext<'ctx> {
 pub struct CompilationContext<'ctx> {
     /// LLVM context
     pub llvm_context: &'ctx Context,
-    
+
     /// LLVM module being built
     pub module: Module<'ctx>,
-    
+
     /// LLVM IR builder
     pub builder: Builder<'ctx>,
-    
+
     /// Type environment mapping variable names to their types
     pub type_env: HashMap<String, Type>,
-    
+
     /// Map of function names to their LLVM function values
     pub functions: HashMap<String, inkwell::values::FunctionValue<'ctx>>,
-    
+
     /// Map of class names to their LLVM struct types
     pub class_types: HashMap<String, inkwell::types::StructType<'ctx>>,
 
     /// Map of variable names to their LLVM pointer values (storage locations)
     pub variables: HashMap<String, inkwell::values::PointerValue<'ctx>>,
-    
+
     /// Stack of loop contexts for break/continue statements
     pub loop_stack: Vec<LoopContext<'ctx>>,
+
+    /// Map of polymorphic function names to their implementation variants by argument type
+    pub polymorphic_functions: HashMap<String, HashMap<Type, inkwell::values::FunctionValue<'ctx>>>,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -45,7 +48,7 @@ impl<'ctx> CompilationContext<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
-        
+
         Self {
             llvm_context: context,
             module,
@@ -55,57 +58,58 @@ impl<'ctx> CompilationContext<'ctx> {
             class_types: HashMap::new(),
             variables: HashMap::new(),
             loop_stack: Vec::new(),
+            polymorphic_functions: HashMap::new(),
         }
     }
-    
+
     /// Get or create a type in the LLVM context
     pub fn get_llvm_type(&self, ty: &Type) -> inkwell::types::BasicTypeEnum<'ctx> {
         ty.to_llvm_type(self.llvm_context)
     }
-    
+
     /// Register a variable with its type
     pub fn register_variable(&mut self, name: String, ty: Type) {
         self.type_env.insert(name, ty);
     }
-    
+
     /// Look up a variable's type
     pub fn lookup_variable_type(&self, name: &str) -> Option<&Type> {
         self.type_env.get(name)
     }
-    
+
     /// Register a class type
     pub fn register_class(&mut self, name: String, fields: HashMap<String, Type>) {
-        let ty = Type::Class { 
-            name: name.clone(), 
-            base_classes: vec![], 
-            methods: HashMap::new(), 
-            fields: fields.clone() 
+        let ty = Type::Class {
+            name: name.clone(),
+            base_classes: vec![],
+            methods: HashMap::new(),
+            fields: fields.clone()
         };
-        
+
         // Create the LLVM struct type for this class
         if let Type::Class { ref name, .. } = ty {
             let struct_type = ty.create_class_type(self.llvm_context, name, &fields);
             self.class_types.insert(name.clone(), struct_type);
         }
-        
+
         self.type_env.insert(name, ty);
     }
 
-    pub fn declare_variable(&mut self, name: String, init_value: BasicValueEnum<'ctx>, 
+    pub fn declare_variable(&mut self, name: String, init_value: BasicValueEnum<'ctx>,
                            value_type: &Type) -> Result<(), String> {
         // Allocate storage for the variable
         let ptr = self.allocate_variable(name, value_type);
-        
+
         // Store the initial value
         self.builder.build_store(ptr, init_value).unwrap();
-        
+
         Ok(())
     }
 
     pub fn allocate_variable(&mut self, name: String, ty: &Type) -> inkwell::values::PointerValue<'ctx> {
         let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
         let entry_bb = current_function.get_first_basic_block().unwrap();
-        
+
         // Position at the beginning of the function for allocations
         let current_position = self.builder.get_insert_block().unwrap();
         if let Some(first_instr) = entry_bb.get_first_instruction() {
@@ -113,30 +117,30 @@ impl<'ctx> CompilationContext<'ctx> {
         } else {
             self.builder.position_at_end(entry_bb);
         }
-        
+
         // Create the alloca instruction
         let llvm_type = self.get_llvm_type(ty);
         let ptr = self.builder.build_alloca(llvm_type, &name).unwrap();
-        
+
         // Restore the original position
         self.builder.position_at_end(current_position);
-        
+
         // Store the variable's storage location
         self.variables.insert(name.clone(), ptr);
-        
+
         // Register the variable type if not already present
         if !self.type_env.contains_key(&name) {
             self.register_variable(name, ty.clone());
         }
-        
+
         ptr
     }
-    
+
     /// Get the storage location for a variable
     pub fn get_variable_ptr(&self, name: &str) -> Option<inkwell::values::PointerValue<'ctx>> {
         self.variables.get(name).copied()
     }
-    
+
     /// Push a new loop context onto the stack
     pub fn push_loop(&mut self, continue_block: BasicBlock<'ctx>, break_block: BasicBlock<'ctx>) {
         self.loop_stack.push(LoopContext {
@@ -144,25 +148,25 @@ impl<'ctx> CompilationContext<'ctx> {
             break_block,
         });
     }
-    
+
     /// Pop the top loop context off the stack
     pub fn pop_loop(&mut self) -> Option<LoopContext<'ctx>> {
         self.loop_stack.pop()
     }
-    
+
     /// Get the current loop's continue block
     pub fn current_continue_block(&self) -> Option<BasicBlock<'ctx>> {
         self.loop_stack.last().map(|ctx| ctx.continue_block)
     }
-    
+
     /// Get the current loop's break block
     pub fn current_break_block(&self) -> Option<BasicBlock<'ctx>> {
         self.loop_stack.last().map(|ctx| ctx.break_block)
     }
-    
+
     /// Convert a value from one type to another
-    pub fn convert_type(&self, value: inkwell::values::BasicValueEnum<'ctx>, 
-                        from_type: &Type, to_type: &Type) 
+    pub fn convert_type(&self, value: inkwell::values::BasicValueEnum<'ctx>,
+                        from_type: &Type, to_type: &Type)
                         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
         // If types are the same, no conversion needed
         if from_type == to_type {
@@ -232,7 +236,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     self.llvm_context.i64_type(),
                     "bool_to_int"
                 ).unwrap();
-                
+
                 // Then convert int to float
                 let float_val = self.builder.build_signed_int_to_float(
                     int_val,
@@ -268,12 +272,12 @@ impl<'ctx> CompilationContext<'ctx> {
                 // Call a runtime function to convert int to string
                 self.build_int_to_string_call(value.into_int_value())
             },
-            
+
             (Type::Float, Type::String) => {
                 // Call a runtime function to convert float to string
                 self.build_float_to_string_call(value.into_float_value())
             },
-            
+
             (Type::Bool, Type::String) => {
                 // Call a runtime function to convert bool to string
                 self.build_bool_to_string_call(value.into_int_value())
@@ -284,12 +288,12 @@ impl<'ctx> CompilationContext<'ctx> {
                 // Call a runtime function to parse string as int
                 self.build_string_to_int_call(value.into_pointer_value())
             },
-            
+
             (Type::String, Type::Float) => {
                 // Call a runtime function to parse string as float
                 self.build_string_to_float_call(value.into_pointer_value())
             },
-            
+
             (Type::String, Type::Bool) => {
                 // Call a runtime function to parse string as bool
                 self.build_string_to_bool_call(value.into_pointer_value())
@@ -323,12 +327,12 @@ impl<'ctx> CompilationContext<'ctx> {
             _ => Err(format!("No common type for {:?} and {:?}", type1, type2)),
         }
     }
-    
+
     // Placeholder methods for string conversions (to be implemented with runtime support)
-    
-    fn build_int_to_string_call(&self, int_val: inkwell::values::IntValue<'ctx>) 
+
+    fn build_int_to_string_call(&self, int_val: inkwell::values::IntValue<'ctx>)
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        
+
         // Get or create the int_to_string function
         let int_to_string_fn = self.module.get_function("int_to_string").unwrap_or_else(|| {
             // Define the function signature: int_to_string(int) -> string*
@@ -336,14 +340,14 @@ impl<'ctx> CompilationContext<'ctx> {
             let fn_type = str_ptr_type.fn_type(&[self.llvm_context.i64_type().into()], false);
             self.module.add_function("int_to_string", fn_type, None)
         });
-        
+
         // Build the function call
         let result = self.builder.build_call(
             int_to_string_fn,
             &[int_val.into()],
             "int_to_string_result"
         ).unwrap();
-        
+
         // Extract the return value (string pointer)
         if let Some(ret_val) = result.try_as_basic_value().left() {
             Ok(ret_val)
@@ -351,10 +355,10 @@ impl<'ctx> CompilationContext<'ctx> {
             Err("Failed to call int_to_string function".to_string())
         }
     }
-    
-    fn build_float_to_string_call(&self, float_val: inkwell::values::FloatValue<'ctx>) 
+
+    fn build_float_to_string_call(&self, float_val: inkwell::values::FloatValue<'ctx>)
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-    
+
         // Get or create the float_to_string function
         let float_to_string_fn = self.module.get_function("float_to_string").unwrap_or_else(|| {
             // Define the function signature: float_to_string(float) -> string*
@@ -362,14 +366,14 @@ impl<'ctx> CompilationContext<'ctx> {
             let fn_type = str_ptr_type.fn_type(&[self.llvm_context.f64_type().into()], false);
             self.module.add_function("float_to_string", fn_type, None)
         });
-        
+
         // Build the function call
         let result = self.builder.build_call(
             float_to_string_fn,
             &[float_val.into()],
             "float_to_string_result"
         ).unwrap();
-        
+
         // Extract the return value
         if let Some(ret_val) = result.try_as_basic_value().left() {
             Ok(ret_val)
@@ -377,25 +381,26 @@ impl<'ctx> CompilationContext<'ctx> {
             Err("Failed to call float_to_string function".to_string())
         }
     }
-    
-    fn build_bool_to_string_call(&self, bool_val: inkwell::values::IntValue<'ctx>) 
+
+    fn build_bool_to_string_call(&self, bool_val: inkwell::values::IntValue<'ctx>)
     -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-    
+
         // Get or create the bool_to_string function
         let bool_to_string_fn = self.module.get_function("bool_to_string").unwrap_or_else(|| {
-            // Define the function signature: bool_to_string(bool) -> string*
+            // Define the function signature: bool_to_string(i64) -> string*
+            // We'll use i64 instead of bool to avoid type conversion issues
             let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-            let fn_type = str_ptr_type.fn_type(&[self.llvm_context.bool_type().into()], false);
+            let fn_type = str_ptr_type.fn_type(&[self.llvm_context.i64_type().into()], false);
             self.module.add_function("bool_to_string", fn_type, None)
         });
-        
+
         // Build the function call
         let result = self.builder.build_call(
             bool_to_string_fn,
             &[bool_val.into()],
             "bool_to_string_result"
         ).unwrap();
-        
+
         // Extract the return value
         if let Some(ret_val) = result.try_as_basic_value().left() {
             Ok(ret_val)
@@ -404,10 +409,10 @@ impl<'ctx> CompilationContext<'ctx> {
         }
     }
 
-    
-    fn build_string_to_int_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>) 
+
+    fn build_string_to_int_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>)
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        
+
         // Get or create the string_to_int function
         let string_to_int_fn = self.module.get_function("string_to_int").unwrap_or_else(|| {
             // Define the function signature: string_to_int(string*) -> int
@@ -416,14 +421,14 @@ impl<'ctx> CompilationContext<'ctx> {
             let fn_type = i64_type.fn_type(&[str_ptr_type.into()], false);
             self.module.add_function("string_to_int", fn_type, None)
         });
-        
+
         // Build the function call
         let result = self.builder.build_call(
             string_to_int_fn,
             &[string_ptr.into()],
             "string_to_int_result"
         ).unwrap();
-        
+
         // Extract the return value
         if let Some(ret_val) = result.try_as_basic_value().left() {
             Ok(ret_val)
@@ -431,10 +436,10 @@ impl<'ctx> CompilationContext<'ctx> {
             Err("Failed to call string_to_int function".to_string())
         }
     }
-    
-    fn build_string_to_float_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>) 
+
+    fn build_string_to_float_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>)
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        
+
         // Get or create the string_to_float function
         let string_to_float_fn = self.module.get_function("string_to_float").unwrap_or_else(|| {
             // Define the function signature: string_to_float(string*) -> float
@@ -443,14 +448,14 @@ impl<'ctx> CompilationContext<'ctx> {
             let fn_type = f64_type.fn_type(&[str_ptr_type.into()], false);
             self.module.add_function("string_to_float", fn_type, None)
         });
-        
+
         // Build the function call
         let result = self.builder.build_call(
             string_to_float_fn,
             &[string_ptr.into()],
             "string_to_float_result"
         ).unwrap();
-        
+
         // Extract the return value
         if let Some(ret_val) = result.try_as_basic_value().left() {
             Ok(ret_val)
@@ -459,9 +464,9 @@ impl<'ctx> CompilationContext<'ctx> {
         }
     }
 
-    fn build_string_to_bool_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>) 
+    fn build_string_to_bool_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>)
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        
+
         // Get or create the string_to_bool function
         let string_to_bool_fn = self.module.get_function("string_to_bool").unwrap_or_else(|| {
             // Define the function signature: string_to_bool(string*) -> bool
@@ -470,19 +475,36 @@ impl<'ctx> CompilationContext<'ctx> {
             let fn_type = bool_type.fn_type(&[str_ptr_type.into()], false);
             self.module.add_function("string_to_bool", fn_type, None)
         });
-        
+
         // Build the function call
         let result = self.builder.build_call(
             string_to_bool_fn,
             &[string_ptr.into()],
             "string_to_bool_result"
         ).unwrap();
-        
+
         // Extract the return value
         if let Some(ret_val) = result.try_as_basic_value().left() {
             Ok(ret_val)
         } else {
             Err("Failed to call string_to_bool function".to_string())
         }
+    }
+
+    pub fn get_polymorphic_function(&self, name: &str, arg_type: &Type) -> Option<inkwell::values::FunctionValue<'ctx>> {
+        if let Some(variants) = self.polymorphic_functions.get(name) {
+            // Try to get exact match first
+            if let Some(&func) = variants.get(arg_type) {
+                return Some(func);
+            }
+
+            // If no exact match, try to find a compatible type
+            for (type_key, &func) in variants.iter() {
+                if arg_type.can_coerce_to(type_key) {
+                    return Some(func);
+                }
+            }
+        }
+        None
     }
 }

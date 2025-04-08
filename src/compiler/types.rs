@@ -4,6 +4,7 @@ use inkwell::AddressSpace;
 use crate::ast::{Expr, Number, NameConstant};
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 /// Represents type errors that can occur during type checking
 #[derive(Debug, Clone)]
@@ -14,17 +15,17 @@ pub enum TypeError {
         got: Type,
         operation: String,
     },
-    
+
     /// When a variable is used without being defined
     UndefinedVariable(String),
-    
+
     /// When an invalid operator is used with specific types
     InvalidOperator {
         operator: String,
         left_type: Type,
         right_type: Option<Type>,
     },
-    
+
     /// When a function is called with wrong argument types
     InvalidArgument {
         function: String,
@@ -32,32 +33,32 @@ pub enum TypeError {
         expected: Type,
         got: Type,
     },
-    
+
     /// When a function is called with wrong number of arguments
     WrongArgumentCount {
         function: String,
         expected: usize,
         got: usize,
     },
-    
+
     /// When a member is accessed on a non-class type
     NotAClass {
         expr_type: Type,
         member: String,
     },
-    
+
     /// When an undefined member is accessed
     UndefinedMember {
         class_name: String,
         member: String,
     },
-    
+
     /// When a type cannot be inferred
     CannotInferType(String),
-    
+
     /// When a type is not callable
     NotCallable(Type),
-    
+
     /// When a type is not indexable
     NotIndexable(Type),
 }
@@ -78,11 +79,11 @@ impl fmt::Display for TypeError {
                 }
             },
             TypeError::InvalidArgument { function, param_index, expected, got } => {
-                write!(f, "In call to '{}', argument {} has incompatible type: expected {}, got {}", 
+                write!(f, "In call to '{}', argument {} has incompatible type: expected {}, got {}",
                       function, param_index, expected, got)
             },
             TypeError::WrongArgumentCount { function, expected, got } => {
-                write!(f, "Wrong number of arguments in call to '{}': expected {}, got {}", 
+                write!(f, "Wrong number of arguments in call to '{}': expected {}, got {}",
                       function, expected, got)
             },
             TypeError::NotAClass { expr_type, member } => {
@@ -105,14 +106,14 @@ impl fmt::Display for TypeError {
 }
 
 /// Represents the types in the Cheetah language
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     // Primitive types
     Int,
     Float,
     Bool,
     None,
-    
+
     // Collection types
     String,
     Bytes,
@@ -120,7 +121,7 @@ pub enum Type {
     Tuple(Vec<Type>),
     Dict(Box<Type>, Box<Type>),
     Set(Box<Type>),
-    
+
     // Function type
     Function {
         param_types: Vec<Type>,
@@ -130,7 +131,7 @@ pub enum Type {
         default_values: Vec<bool>,
         return_type: Box<Type>,
     },
-    
+
     // Class type
     Class {
         name: String,
@@ -138,20 +139,99 @@ pub enum Type {
         methods: HashMap<String, Box<Type>>,
         fields: HashMap<String, Type>,
     },
-    
+
     // Special types
     Any,
     Void,
     Unknown,
-    
+
     // Type parameter for generics
     TypeParam(String),
-    
+
     // Generic type
     Generic {
         base_type: Box<Type>,
         type_args: Vec<Type>,
     },
+}
+
+// Custom implementation of Hash for Type that skips HashMap fields
+impl Hash for Type {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Type::Int => {
+                0.hash(state); // Use a tag to identify the variant
+            },
+            Type::Float => {
+                1.hash(state);
+            },
+            Type::Bool => {
+                2.hash(state);
+            },
+            Type::None => {
+                3.hash(state);
+            },
+            Type::String => {
+                4.hash(state);
+            },
+            Type::Bytes => {
+                5.hash(state);
+            },
+            Type::List(elem_type) => {
+                6.hash(state);
+                elem_type.hash(state);
+            },
+            Type::Tuple(elem_types) => {
+                7.hash(state);
+                elem_types.len().hash(state);
+                for elem in elem_types {
+                    elem.hash(state);
+                }
+            },
+            Type::Dict(key_type, val_type) => {
+                8.hash(state);
+                key_type.hash(state);
+                val_type.hash(state);
+            },
+            Type::Set(elem_type) => {
+                9.hash(state);
+                elem_type.hash(state);
+            },
+            Type::Function { param_types, param_names, has_varargs, has_kwargs, default_values, return_type } => {
+                10.hash(state);
+                param_types.hash(state);
+                param_names.hash(state);
+                has_varargs.hash(state);
+                has_kwargs.hash(state);
+                default_values.hash(state);
+                return_type.hash(state);
+            },
+            Type::Class { name, base_classes, .. } => {
+                // Only hash the name and base_classes, skip the HashMap fields
+                11.hash(state);
+                name.hash(state);
+                base_classes.hash(state);
+            },
+            Type::Any => {
+                12.hash(state);
+            },
+            Type::Void => {
+                13.hash(state);
+            },
+            Type::Unknown => {
+                14.hash(state);
+            },
+            Type::TypeParam(name) => {
+                15.hash(state);
+                name.hash(state);
+            },
+            Type::Generic { base_type, type_args } => {
+                16.hash(state);
+                base_type.hash(state);
+                type_args.hash(state);
+            },
+        }
+    }
 }
 
 impl fmt::Display for Type {
@@ -329,14 +409,14 @@ impl Type {
             .values()
             .map(|ty| ty.to_llvm_type(context))
             .collect();
-        
+
         // Create named struct type for the class
         let struct_type = context.opaque_struct_type(name);
         struct_type.set_body(&field_types, false);
-        
+
         struct_type
     }
-    
+
     /// Create an LLVM function type with given parameter and return types
     pub fn get_function_type<'ctx>(
         context: &'ctx Context,
@@ -347,7 +427,7 @@ impl Type {
             .iter()
             .map(|ty| ty.to_llvm_type(context).into())
             .collect();
-        
+
         match return_type {
             Type::Void => context.void_type().fn_type(&param_llvm_types, false),
             _ => return_type.to_llvm_type(context).fn_type(&param_llvm_types, false),
@@ -356,7 +436,7 @@ impl Type {
 
     // Add to the Type impl block
     pub fn get_function_pointer_type<'ctx>(
-        &self, 
+        &self,
         context: &'ctx Context
     ) -> inkwell::types::PointerType<'ctx> {
         if let Type::Function { param_types, return_type, .. } = self {
@@ -364,13 +444,13 @@ impl Type {
                 .iter()
                 .map(|ty| ty.to_llvm_type(context).into())
                 .collect();
-                
+
             let _ret_type = if let Type::Void = **return_type {
                 context.void_type().fn_type(&param_llvm_types, false)
             } else {
                 return_type.to_llvm_type(context).fn_type(&param_llvm_types, false)
             };
-            
+
             context.ptr_type(inkwell::AddressSpace::default())
         } else {
             panic!("Not a function type")
@@ -401,7 +481,7 @@ impl Type {
             Type::TypeParam(_) => 16,
             Type::Generic { .. } => 17,
         };
-        
+
         let type_name = match self {
             Type::Int => "int",
             Type::Float => "float",
@@ -421,25 +501,25 @@ impl Type {
             Type::TypeParam(name) => return self.create_named_type_info(context, "TypeParam", name),
             Type::Generic { base_type, .. } => return self.create_generic_type_info(context, base_type),
         };
-        
+
         let i32_type = context.i32_type();
         let str_type = context.ptr_type(inkwell::AddressSpace::default());
-        
+
         let struct_type = context.struct_type(&[
             i32_type.into(),
             str_type.into()
         ], false);
-        
+
         // Create values for the type info fields
         let id_value = i32_type.const_int(type_id as u64, false);
         let name_value = context.const_string(type_name.as_bytes(), true);
-        
+
         struct_type.const_named_struct(&[
             id_value.into(),
             name_value.into()
         ])
     }
-    
+
     // New function to handle tuple types specifically
     pub fn create_tuple_type_info<'ctx>(
         &self,
@@ -449,19 +529,19 @@ impl Type {
         let i32_type = context.i32_type();
         let str_type = context.ptr_type(inkwell::AddressSpace::default());
         let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
-        
+
         // Create type name (e.g., "tuple[int, str]")
         let mut type_name = String::from("tuple[");
-        
+
         for (i, elem_type) in items.iter().enumerate() {
             if i > 0 {
                 type_name.push_str(", ");
             }
             type_name.push_str(&format!("{}", elem_type));
         }
-        
+
         type_name.push(']');
-        
+
         // Create struct type (id, name, element_count, elements[])
         let struct_type = context.struct_type(&[
             i32_type.into(),              // type id
@@ -469,13 +549,13 @@ impl Type {
             i32_type.into(),              // element count
             ptr_type.into(),              // element types array
         ], false);
-        
+
         // Create values for the struct fields
         let id_value = i32_type.const_int(8, false);  // Tuple type ID
         let name_value = context.const_string(type_name.as_bytes(), true);
         let count_value = i32_type.const_int(items.len() as u64, false);
         let elements_value = ptr_type.const_null();
-        
+
         struct_type.const_named_struct(&[
             id_value.into(),
             name_value.into(),
@@ -493,7 +573,7 @@ impl Type {
         let i32_type = context.i32_type();
         let str_type = context.ptr_type(inkwell::AddressSpace::default());
         let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
-        
+
         // Type ID based on container type
         let type_id = match container_type {
             "list" => 7,
@@ -502,20 +582,20 @@ impl Type {
             "set" => 10,
             _ => 0,
         };
-        
+
         // Create type name string (e.g., "list[int]", "tuple[int, str]")
         let mut type_name = String::from(container_type);
         type_name.push('[');
-        
+
         for (i, elem_type) in element_types.iter().enumerate() {
             if i > 0 {
                 type_name.push_str(", ");
             }
             type_name.push_str(&format!("{}", elem_type));
         }
-        
+
         type_name.push(']');
-        
+
         // Create struct type (id, name, element_count, elements[])
         let struct_type = context.struct_type(&[
             i32_type.into(),              // type id
@@ -523,16 +603,16 @@ impl Type {
             i32_type.into(),              // element count
             ptr_type.into(),              // element types array
         ], false);
-        
+
         // Create values for the struct fields
         let id_value = i32_type.const_int(type_id as u64, false);
         let name_value = context.const_string(type_name.as_bytes(), true);
         let count_value = i32_type.const_int(element_types.len() as u64, false);
-        
+
         // We'd need to create an array of element type infos here
         // For simplicity, we'll just use a null pointer and handle this in a more complete implementation
         let elements_value = ptr_type.const_null();
-        
+
         struct_type.const_named_struct(&[
             id_value.into(),
             name_value.into(),
@@ -549,29 +629,29 @@ impl Type {
         let i32_type = context.i32_type();
         let str_type = context.ptr_type(inkwell::AddressSpace::default());
         let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
-        
+
         // Create function type name (e.g., "function() -> int")
         let type_name = format!("function() -> {}", return_type);
-        
+
         // Create struct type (id, name, return_type)
         let struct_type = context.struct_type(&[
             i32_type.into(),              // type id
             str_type.into(),              // type name
             ptr_type.into(),              // return type (would be a type_info in a real implementation)
         ], false);
-        
+
         // Create values for the struct fields
         let id_value = i32_type.const_int(11 as u64, false);  // Function type ID
         let name_value = context.const_string(type_name.as_bytes(), true);
         let return_value = ptr_type.const_null();  // In a complete implementation, this would be a pointer to return type's type_info
-        
+
         struct_type.const_named_struct(&[
             id_value.into(),
             name_value.into(),
             return_value.into(),
         ])
     }
-    
+
     pub fn create_class_type_info<'ctx>(
         &self,
         context: &'ctx Context,
@@ -579,27 +659,27 @@ impl Type {
     ) -> inkwell::values::StructValue<'ctx> {
         let i32_type = context.i32_type();
         let str_type = context.ptr_type(inkwell::AddressSpace::default());
-        
+
         // Create struct type (id, name, class_name)
         let struct_type = context.struct_type(&[
             i32_type.into(),              // type id
-            str_type.into(),              // type name 
+            str_type.into(),              // type name
             str_type.into(),              // class name
         ], false);
-        
+
         // Create values for the struct fields
         let id_value = i32_type.const_int(12 as u64, false);  // Class type ID
         let type_name = format!("class {}", class_name);
         let name_value = context.const_string(type_name.as_bytes(), true);
         let class_name_value = context.const_string(class_name.as_bytes(), true);
-        
+
         struct_type.const_named_struct(&[
             id_value.into(),
             name_value.into(),
             class_name_value.into(),
         ])
     }
-    
+
     pub fn create_named_type_info<'ctx>(
         &self,
         context: &'ctx Context,
@@ -608,26 +688,26 @@ impl Type {
     ) -> inkwell::values::StructValue<'ctx> {
         let i32_type = context.i32_type();
         let str_type = context.ptr_type(inkwell::AddressSpace::default());
-        
+
         // Create type name (e.g., "TypeParam<T>")
         let type_name = format!("{}<{}>", prefix, name);
-        
+
         // Create struct type (id, name)
         let struct_type = context.struct_type(&[
             i32_type.into(),              // type id
             str_type.into(),              // type name
         ], false);
-        
+
         // Create values for the struct fields
         let id_value = i32_type.const_int(16 as u64, false);  // TypeParam type ID
         let name_value = context.const_string(type_name.as_bytes(), true);
-        
+
         struct_type.const_named_struct(&[
             id_value.into(),
             name_value.into(),
         ])
     }
-    
+
     pub fn create_generic_type_info<'ctx>(
         &self,
         context: &'ctx Context,
@@ -636,29 +716,29 @@ impl Type {
         let i32_type = context.i32_type();
         let str_type = context.ptr_type(inkwell::AddressSpace::default());
         let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
-        
+
         // Create generic type name (e.g., "Generic<list>")
         let type_name = format!("Generic<{}>", base_type);
-        
+
         // Create struct type (id, name, base_type)
         let struct_type = context.struct_type(&[
             i32_type.into(),              // type id
             str_type.into(),              // type name
             ptr_type.into(),              // base type (would be a type_info in a real implementation)
         ], false);
-        
+
         // Create values for the struct fields
         let id_value = i32_type.const_int(17 as u64, false);  // Generic type ID
         let name_value = context.const_string(type_name.as_bytes(), true);
         let base_value = ptr_type.const_null();  // In a complete implementation, this would be a pointer to base type's type_info
-        
+
         struct_type.const_named_struct(&[
             id_value.into(),
             name_value.into(),
             base_value.into(),
         ])
     }
-    
+
     /// Infer the type of an AST expression
     pub fn from_expr(expr: &Expr) -> Self {
         match expr {
@@ -716,7 +796,7 @@ impl Type {
                 let param_names = args.iter().map(|param| param.name.clone()).collect();
                 let default_values = args.iter().map(|param| param.default.is_some()).collect();
                 let return_type = Type::from_expr(body);
-                
+
                 Type::Function {
                     param_types,
                     param_names,
@@ -730,7 +810,7 @@ impl Type {
             _ => Type::Unknown,
         }
     }
-    
+
     /// Check if this type is compatible with another type
     pub fn is_compatible_with(&self, other: &Type) -> bool {
         // Any type is compatible with itself
@@ -772,24 +852,24 @@ impl Type {
             _ => false,
         }
     }
-    
+
     /// Check if this type can be automatically coerced to another type
     pub fn can_coerce_to(&self, target_type: &Type) -> bool {
         // Same type - no coercion needed
         if self == target_type {
             return true;
         }
-        
+
         // Already compatible
         if self.is_compatible_with(target_type) {
             return true;
         }
-        
+
         // Define type coercion rules
         match (self, target_type) {
             // Any type can be coerced to Any
             (_, Type::Any) => true,
-            
+
             // Numeric type conversions
             (Type::Int, Type::Float) => true,
             (Type::Int, Type::Bool) => true,
@@ -797,26 +877,26 @@ impl Type {
             (Type::Bool, Type::Float) => true,
             (Type::Float, Type::Int) => false,
             (Type::Float, Type::Bool) => true,
-            
+
             // String conversions
             (Type::Int, Type::String) => true,
             (Type::Float, Type::String) => true,
             (Type::Bool, Type::String) => true,
-            
+
             // String to numeric types - in Python, this works if the string has the right format
             (Type::String, Type::Int) => true,
             (Type::String, Type::Float) => true,
             (Type::String, Type::Bool) => true,
-            
+
             // None can be coerced to any reference type
             (Type::None, _) if is_reference_type(target_type) => true,
-            
+
             // Container type coercions
             (Type::List(from_elem), Type::List(to_elem)) => from_elem.can_coerce_to(to_elem),
             (Type::Set(from_elem), Type::Set(to_elem)) => from_elem.can_coerce_to(to_elem),
-            (Type::Dict(from_key, from_val), Type::Dict(to_key, to_val)) => 
+            (Type::Dict(from_key, from_val), Type::Dict(to_key, to_val)) =>
                 from_key.can_coerce_to(to_key) && from_val.can_coerce_to(to_val),
-            
+
             // Tuples need all elements to be coercible
             (Type::Tuple(from_elems), Type::Tuple(to_elems)) => {
                 if from_elems.len() != to_elems.len() {
@@ -824,19 +904,19 @@ impl Type {
                 }
                 from_elems.iter().zip(to_elems.iter()).all(|(from, to)| from.can_coerce_to(to))
             },
-            
+
             // Class inheritance coercions (when implemented)
             (Type::Class { name: from_name, .. }, Type::Class { name: to_name, .. }) => {
                 // A class can be coerced to itself
                 if from_name == to_name {
                     return true;
                 }
-                
+
                 // TODO: Check if from_name is a subclass of to_name
                 // This requires tracking class inheritance relationships
                 false
             },
-            
+
             // Function coercions (potentially for functions with compatible signatures)
             (Type::Function { param_types: from_params, return_type: from_return, .. },
              Type::Function { param_types: to_params, return_type: to_return, .. }) => {
@@ -845,30 +925,30 @@ impl Type {
                 if from_params.len() != to_params.len() {
                     return false;
                 }
-                
+
                 // Contravariant parameter types, covariant return type
                 let params_ok = from_params.iter().zip(to_params.iter())
                     .all(|(to_param, from_param)| to_param.can_coerce_to(from_param));
                 let return_ok = from_return.can_coerce_to(to_return);
-                
+
                 params_ok && return_ok
             },
-            
+
             // Type parameters can potentially be coerced (need more context)
             (Type::TypeParam(_), _) | (_, Type::TypeParam(_)) => true,
-            
+
             // Default is no coercion
             _ => false,
         }
     }
-    
+
     /// Unify two types, if possible
     pub fn unify(type1: &Type, type2: &Type) -> Option<Type> {
         // If types are identical, return either
         if type1 == type2 {
             return Some(type1.clone());
         }
-        
+
         // Handle Any type
         if *type1 == Type::Any {
             return Some(type2.clone());
@@ -876,7 +956,7 @@ impl Type {
         if *type2 == Type::Any {
             return Some(type1.clone());
         }
-        
+
         // Handle Unknown type
         if *type1 == Type::Unknown {
             return Some(type2.clone());
@@ -884,7 +964,7 @@ impl Type {
         if *type2 == Type::Unknown {
             return Some(type1.clone());
         }
-        
+
         // Handle None with reference types
         if *type1 == Type::None && is_reference_type(type2) {
             return Some(type2.clone());
@@ -892,19 +972,19 @@ impl Type {
         if *type2 == Type::None && is_reference_type(type1) {
             return Some(type1.clone());
         }
-        
+
         // Handle collection types
         match (type1, type2) {
             (Type::List(elem1), Type::List(elem2)) => {
                 Type::unify(elem1, elem2)
                     .map(|unified_elem| Type::List(Box::new(unified_elem)))
             },
-            
+
             (Type::Tuple(elems1), Type::Tuple(elems2)) => {
                 if elems1.len() != elems2.len() {
                     return None;
                 }
-                
+
                 let mut unified_elems = Vec::with_capacity(elems1.len());
                 for (e1, e2) in elems1.iter().zip(elems2.iter()) {
                     if let Some(unified) = Type::unify(e1, e2) {
@@ -915,25 +995,25 @@ impl Type {
                 }
                 Some(Type::Tuple(unified_elems))
             },
-            
+
             (Type::Dict(key1, val1), Type::Dict(key2, val2)) => {
                 match (Type::unify(key1, key2), Type::unify(val1, val2)) {
-                    (Some(unified_key), Some(unified_val)) => 
+                    (Some(unified_key), Some(unified_val)) =>
                         Some(Type::Dict(Box::new(unified_key), Box::new(unified_val))),
                     _ => None,
                 }
             },
-            
+
             (Type::Set(elem1), Type::Set(elem2)) => {
                 Type::unify(elem1, elem2)
                     .map(|unified_elem| Type::Set(Box::new(unified_elem)))
             },
-            
+
             // Handle numeric types - prefer more general type
             (Type::Int, Type::Float) | (Type::Float, Type::Int) => Some(Type::Float),
             (Type::Bool, Type::Int) | (Type::Int, Type::Bool) => Some(Type::Int),
             (Type::Bool, Type::Float) | (Type::Float, Type::Bool) => Some(Type::Float),
-            
+
             // Handle type parameters
             (Type::TypeParam(name), other) | (other, Type::TypeParam(name)) => {
                 // In a real type checker, you'd record a constraint on the type parameter
@@ -945,21 +1025,21 @@ impl Type {
                     return Some(Type::TypeParam(name.clone()));
                 }
             },
-            
+
             // Add more unification rules as needed
-            
+
             // Types cannot be unified
             _ => None,
         }
     }
-    
+
     /// Check if this type is indexable (supports [] operator)
     pub fn is_indexable(&self) -> bool {
-        matches!(self, 
+        matches!(self,
             Type::List(_) | Type::Tuple(_) | Type::Dict(_, _) | Type::String | Type::Bytes
         )
     }
-    
+
     /// Get the element type when this type is indexed
     pub fn get_indexed_type(&self, index_type: &Type) -> Result<Type, TypeError> {
         match self {
@@ -1020,12 +1100,12 @@ impl Type {
             _ => Err(TypeError::NotIndexable(self.clone())),
         }
     }
-    
+
     /// Check if this type is callable
     pub fn is_callable(&self) -> bool {
         matches!(self, Type::Function { .. }) || matches!(self, Type::Class { .. })
     }
-    
+
     /// Get the return type when this type is called with the given argument types
     pub fn get_call_return_type(&self, arg_types: &[Type]) -> Result<Type, TypeError> {
         match self {
@@ -1033,7 +1113,7 @@ impl Type {
                 // Check number of arguments
                 let min_args = param_types.len() - default_values.iter().filter(|&&has_default| has_default).count();
                 let max_args = if *has_varargs { usize::MAX } else { param_types.len() };
-                
+
                 if arg_types.len() < min_args || (!has_varargs && arg_types.len() > max_args) {
                     return Err(TypeError::WrongArgumentCount {
                         function: "function".to_string(),  // No name available here
@@ -1041,7 +1121,7 @@ impl Type {
                         got: arg_types.len(),
                     });
                 }
-                
+
                 // Check argument types
                 for (i, (param_type, arg_type)) in param_types.iter().zip(arg_types.iter()).enumerate() {
                     if !arg_type.can_coerce_to(param_type) {
@@ -1053,23 +1133,23 @@ impl Type {
                         });
                     }
                 }
-                
+
                 // Return the function's return type
                 Ok(*return_type.clone())
             },
             Type::Class { name, .. } => {
                 // When a class is called, it creates an instance of that class
-                Ok(Type::Class { 
-                    name: name.clone(), 
-                    base_classes: vec![], 
+                Ok(Type::Class {
+                    name: name.clone(),
+                    base_classes: vec![],
                     methods: HashMap::new(),
-                    fields: HashMap::new() 
+                    fields: HashMap::new()
                 })
             },
             _ => Err(TypeError::NotCallable(self.clone())),
         }
     }
-    
+
     /// Create a simple function type
     pub fn function(param_types: Vec<Type>, return_type: Type) -> Self {
         let param_count = param_types.len();
@@ -1082,7 +1162,7 @@ impl Type {
             return_type: Box::new(return_type),
         }
     }
-    
+
     /// Create a simple class type
     pub fn class(name: &str) -> Self {
         Type::Class {
@@ -1092,15 +1172,23 @@ impl Type {
             fields: HashMap::new(),
         }
     }
-    
+
     /// Create a simple list type
     pub fn list(element_type: Type) -> Self {
         Type::List(Box::new(element_type))
     }
-    
+
     /// Create a simple dict type
     pub fn dict(key_type: Type, value_type: Type) -> Self {
         Type::Dict(Box::new(key_type), Box::new(value_type))
+    }
+
+    /// Returns `true` if the type is [`Class`].
+    ///
+    /// [`Class`]: Type::Class
+    #[must_use]
+    pub fn is_class(&self) -> bool {
+        matches!(self, Self::Class { .. })
     }
 }
 
@@ -1140,7 +1228,7 @@ impl TypeContext {
             parent: None,
         }
     }
-    
+
     /// Create a new type context with a parent scope
     pub fn with_parent(parent: TypeContext) -> Self {
         Self {
@@ -1162,31 +1250,31 @@ impl TypeContext {
     pub fn set_variable_type(&mut self, name: &str, ty: Type) {
         self.variables.insert(name.to_string(), ty);
     }
-    
+
     /// Get the type of a function
     pub fn get_function_type(&self, name: &str) -> Option<&Type> {
         self.functions.get(name).or_else(|| {
             self.parent.as_ref().and_then(|p| p.get_function_type(name))
         })
     }
-    
+
     /// Set the type of a function
     pub fn set_function_type(&mut self, name: &str, ty: Type) {
         self.functions.insert(name.to_string(), ty);
     }
-    
+
     /// Get the type of a class
     pub fn get_class_type(&self, name: &str) -> Option<&Type> {
         self.classes.get(name).or_else(|| {
             self.parent.as_ref().and_then(|p| p.get_class_type(name))
         })
     }
-    
+
     /// Set the type of a class
     pub fn set_class_type(&mut self, name: &str, ty: Type) {
         self.classes.insert(name.to_string(), ty);
     }
-    
+
     /// Look up any symbol (variable, function, or class)
     pub fn lookup(&self, name: &str) -> Option<&Type> {
         self.get_variable_type(name)

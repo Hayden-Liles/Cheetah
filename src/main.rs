@@ -35,7 +35,7 @@ enum Commands {
     Run {
         /// The source file to run
         file: String,
-        
+
         /// Use LLVM JIT compilation instead of interpreter
         #[arg(short = 'j', long)]
         jit: bool,
@@ -50,15 +50,15 @@ enum Commands {
     Lex {
         /// The source file to lex
         file: String,
-        
+
         /// Show detailed token information
         #[arg(short, long)]
         verbose: bool,
-        
+
         /// Highlight token types with colors
         #[arg(short, long)]
         color: bool,
-        
+
         /// Show line numbers in output
         #[arg(short = 'n', long)]
         line_numbers: bool,
@@ -67,7 +67,7 @@ enum Commands {
     Parse {
         /// The source file to parse
         file: String,
-        
+
         /// Show detailed AST information
         #[arg(short, long)]
         verbose: bool,
@@ -76,7 +76,7 @@ enum Commands {
     Check {
         /// The source file to check
         file: String,
-        
+
         /// Show detailed information about errors
         #[arg(short, long)]
         verbose: bool,
@@ -85,11 +85,11 @@ enum Commands {
     Format {
         /// The source file to format
         file: String,
-        
+
         /// Write changes to file instead of stdout
         #[arg(short, long)]
         write: bool,
-        
+
         /// Indentation size (number of spaces)
         #[arg(short, long, default_value = "4")]
         indent: usize,
@@ -98,19 +98,19 @@ enum Commands {
     Compile {
         /// The source file to compile
         file: String,
-        
+
         /// Output path (defaults to input file name with .ll extension)
         #[arg(short, long)]
         output: Option<String>,
-        
+
         /// Optimization level (0-3)
         #[arg(short, long, default_value = "0")]
         opt: u8,
-        
+
         /// Compile to object file instead of LLVM IR
         #[arg(short, long)]
         object: bool,
-        
+
         /// Target triple (default: host target)
         #[arg(short, long)]
         target: Option<String>,
@@ -120,7 +120,7 @@ enum Commands {
 fn main() -> Result<()> {
     // Initialize LLVM targets for cross-compilation support
     initialize_llvm_targets();
-    
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -167,18 +167,18 @@ fn initialize_llvm_targets() {
         info: true,
         machine_code: true,
     };
-    
+
     Target::initialize_all(&config);
 }
 
 fn run_file(filename: &str) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
-    
+
     // First, lex the file
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
-    
+
     let lexer_errors = lexer.get_errors();
     if !lexer_errors.is_empty() {
         eprintln!("Lexical errors found in '{}':", filename);
@@ -187,7 +187,7 @@ fn run_file(filename: &str) -> Result<()> {
         }
         return Ok(());
     }
-    
+
     // Then, parse the tokens with the new parser interface
     match parser::parse(tokens) {
         Ok(module) => {
@@ -202,43 +202,43 @@ fn run_file(filename: &str) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
 fn run_file_jit(filename: &str) -> Result<()> {
     println!("{}", format!("JIT compiling and executing {}", filename).bright_green());
-    
+
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
-    
+
     // Parse the source code
     match parse(&source) {
         Ok(module) => {
             // Create LLVM context and compiler
             let context = context::Context::create();
             let mut compiler = Compiler::new(&context, filename);
-            
+
             // Compile the AST
             match compiler.compile_module(&module) {
                 Ok(_) => {
                     // Get the compiled module using the getter
                     let compiled_module = compiler.get_module();
-                    
+
                     // Create JIT execution engine
                     let execution_engine = compiled_module
                         .create_jit_execution_engine(inkwell::OptimizationLevel::Default)
                         .map_err(|e| anyhow::anyhow!("Failed to create execution engine: {}", e))?;
-                    
+
                     // Register runtime functions with the execution engine
                     if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
                         println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
                     }
-                    
+
                     // TODO: JIT execution of the "main" function would go here
                     println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
                     println!("{}", compiler.get_ir());
-                    
+
                     Ok(())
                 },
                 Err(e) => Err(anyhow::anyhow!("Compilation failed: {}", e)),
@@ -256,50 +256,50 @@ fn run_file_jit(filename: &str) -> Result<()> {
 fn run_repl() -> Result<()> {
     println!("{}", "Cheetah Programming Language REPL".bright_green());
     println!("Type 'exit' or press Ctrl+D to exit");
-    
+
     let mut input_buffer = String::new();
     let mut paren_level = 0;
     let mut bracket_level = 0;
     let mut brace_level = 0;
     let mut in_multiline_block = false;
-    
+
     loop {
         let prompt = if !input_buffer.is_empty() {
             "... ".bright_yellow().to_string()
         } else {
             ">>> ".bright_green().to_string()
         };
-        
+
         print!("{}", prompt);
         io::stdout().flush()?;
-        
+
         let mut input = String::new();
         if io::stdin().read_line(&mut input)? == 0 {
             break;
         }
-        
+
         let input = input.trim_end();
-        
+
         if input_buffer.is_empty() && input == "exit" {
             break;
         }
-        
+
         input_buffer.push_str(input);
         input_buffer.push('\n');
-        
+
         update_repl_state(&input, &mut paren_level, &mut bracket_level, &mut brace_level, &mut in_multiline_block);
-        
-        let should_execute = !in_multiline_block && paren_level == 0 && bracket_level == 0 && brace_level == 0 && 
+
+        let should_execute = !in_multiline_block && paren_level == 0 && bracket_level == 0 && brace_level == 0 &&
                                     (input.trim().is_empty() || !input.trim().ends_with(':'));
-        
+
         if should_execute {
             let complete_input = input_buffer.trim();
-            
+
             if !complete_input.is_empty() {
                 // First lexical analysis
                 let mut lexer = Lexer::new(complete_input);
                 let tokens = lexer.tokenize();
-                
+
                 let lexer_errors = lexer.get_errors();
                 if !lexer_errors.is_empty() {
                     for error in lexer_errors {
@@ -311,7 +311,7 @@ fn run_repl() -> Result<()> {
                         Ok(_module) => {
                             println!("{}", "✓ Parsed successfully".bright_green());
                             // Here you would execute the parsed code in a future interpreter
-                            
+
                             // For now, just print the tokens
                             if input.starts_with("tokens") || input.starts_with("lexer") {
                                 for token in &tokens {
@@ -330,7 +330,7 @@ fn run_repl() -> Result<()> {
                     }
                 }
             }
-            
+
             input_buffer.clear();
             paren_level = 0;
             bracket_level = 0;
@@ -338,7 +338,7 @@ fn run_repl() -> Result<()> {
             in_multiline_block = false;
         }
     }
-    
+
     println!("Goodbye!");
     Ok(())
 }
@@ -346,67 +346,67 @@ fn run_repl() -> Result<()> {
 fn run_repl_jit() -> Result<()> {
     println!("{}", "Cheetah Programming Language REPL (JIT Mode)".bright_green());
     println!("Type 'exit' or press Ctrl+D to exit");
-    
+
     let mut input_buffer = String::new();
     let mut paren_level = 0;
     let mut bracket_level = 0;
     let mut brace_level = 0;
     let mut in_multiline_block = false;
-    
+
     // Create LLVM context once for the entire REPL session
     let context = context::Context::create();
     let mut repl_count = 0;
-    
+
     loop {
         let prompt = if !input_buffer.is_empty() {
             "... ".bright_yellow().to_string()
         } else {
             ">>> ".bright_green().to_string()
         };
-        
+
         print!("{}", prompt);
         io::stdout().flush()?;
-        
+
         let mut input = String::new();
         if io::stdin().read_line(&mut input)? == 0 {
             break;
         }
-        
+
         let input = input.trim_end();
-        
+
         if input_buffer.is_empty() && input == "exit" {
             break;
         }
-        
+
         input_buffer.push_str(input);
         input_buffer.push('\n');
-        
+
         update_repl_state(&input, &mut paren_level, &mut bracket_level, &mut brace_level, &mut in_multiline_block);
-        
-        let should_execute = !in_multiline_block && paren_level == 0 && bracket_level == 0 && brace_level == 0 && 
+
+        let should_execute = !in_multiline_block && paren_level == 0 && bracket_level == 0 && brace_level == 0 &&
                                     (input.trim().is_empty() || !input.trim().ends_with(':'));
-        
+
         if should_execute {
             let complete_input = input_buffer.trim();
-            
+
             if !complete_input.is_empty() {
                 repl_count += 1;
                 let module_name = format!("repl_{}", repl_count);
-                
+
                 // Parse the input
                 match parse(complete_input) {
                     Ok(module) => {
                         // Create compiler for this REPL entry
                         let mut compiler = Compiler::new(&context, &module_name);
-                        
+
                         // Compile the AST
                         match compiler.compile_module(&module) {
                             Ok(_) => {
                                 println!("{}", "✓ Compiled successfully".bright_green());
-                                
+
                                 // Get the compiled module
                                 let compiled_module = compiler.get_module();
-                                
+
                                 // Create JIT execution engine
                                 match compiled_module.create_jit_execution_engine(inkwell::OptimizationLevel::Default) {
                                     Ok(execution_engine) => {
@@ -414,7 +414,7 @@ fn run_repl_jit() -> Result<()> {
                                         if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
                                             println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
                                         }
-                                        
+
                                         // TODO: JIT execution would go here
                                         println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
                                         println!("{}", compiler.get_ir());
@@ -436,7 +436,7 @@ fn run_repl_jit() -> Result<()> {
                     }
                 }
             }
-            
+
             input_buffer.clear();
             paren_level = 0;
             bracket_level = 0;
@@ -444,7 +444,7 @@ fn run_repl_jit() -> Result<()> {
             in_multiline_block = false;
         }
     }
-    
+
     println!("Goodbye!");
     Ok(())
 }
@@ -462,7 +462,7 @@ fn update_repl_state(input: &str, paren_level: &mut usize, bracket_level: &mut u
             _ => {}
         }
     }
-    
+
     if input.trim().ends_with(':') {
         *in_multiline_block = true;
     } else if input.trim().is_empty() && *in_multiline_block {
@@ -473,10 +473,10 @@ fn update_repl_state(input: &str, paren_level: &mut usize, bracket_level: &mut u
 fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
-    
+
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
-    
+
     let errors = lexer.get_errors();
     if !errors.is_empty() {
         eprintln!("Lexical errors found in '{}':", filename);
@@ -488,25 +488,25 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
             }
         }
     }
-    
+
     println!("Tokens from file '{}':", filename);
-    
+
     if verbose {
         for (i, token) in tokens.iter().enumerate() {
             let mut token_str = String::new();
-            
+
             if line_numbers {
                 token_str = format!("{:4}: ", i);
             }
-            
+
             token_str.push_str(&format!("{}", token));
-            
+
             if use_color {
                 match &token.token_type {
-                    TokenType::Def | TokenType::If | TokenType::Else | TokenType::For | 
+                    TokenType::Def | TokenType::If | TokenType::Else | TokenType::For |
                     TokenType::While | TokenType::Return => println!("{}", token_str.bright_blue()),
                     TokenType::Identifier(_) => println!("{}", token_str.bright_yellow()),
-                    TokenType::StringLiteral(_) | TokenType::RawString(_) | 
+                    TokenType::StringLiteral(_) | TokenType::RawString(_) |
                     TokenType::FString(_) | TokenType::BytesLiteral(_) => {
                         println!("{}", token_str.bright_green())
                     },
@@ -533,7 +533,7 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -541,11 +541,11 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
 fn parse_file(filename: &str, verbose: bool) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
-    
+
     // First, lex the file
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
-    
+
     let lexer_errors = lexer.get_errors();
     if !lexer_errors.is_empty() {
         eprintln!("Lexical errors found in '{}':", filename);
@@ -554,12 +554,12 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
         }
         return Ok(());
     }
-    
+
     // Then, parse the tokens with the new parser interface
     match parser::parse(tokens) {
         Ok(module) => {
             println!("Successfully parsed file: {}", filename);
-            
+
             if verbose {
                 // Use the AstPrinter to display the AST structure
                 use cheetah::visitor::AstPrinter;
@@ -570,17 +570,17 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
             } else {
                 // Just print summary info
                 println!("AST contains {} top-level statements", module.body.len());
-                
+
                 // Print the first few statements as a preview
                 let max_preview = 5;
                 let preview_count = std::cmp::min(max_preview, module.body.len());
-                
+
                 if preview_count > 0 {
                     println!("Top-level statements:");
                     for (i, stmt) in module.body.iter().take(preview_count).enumerate() {
                         println!("  {}: {}", i + 1, stmt);
                     }
-                    
+
                     if module.body.len() > max_preview {
                         println!("  ... and {} more", module.body.len() - max_preview);
                     }
@@ -594,14 +594,14 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
 fn check_file(filename: &str, verbose: bool) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
-    
+
     // Check for lexical errors first
     let config = LexerConfig {
         enforce_indent_consistency: true,
@@ -610,10 +610,10 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
         allow_tabs_in_indentation: false,
         allow_trailing_semicolon: false,
     };
-    
+
     let mut lexer = Lexer::with_config(&source, config);
     let tokens = lexer.tokenize();
-    
+
     let lexer_errors = lexer.get_errors();
     if !lexer_errors.is_empty() {
         eprintln!("✗ Lexical errors found in '{}':", filename);
@@ -632,7 +632,7 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
         }
         return Ok(());
     }
-    
+
     // Then check for syntax errors using the new parser interface
     match parser::parse(tokens) {
         Ok(_) => {
@@ -644,16 +644,16 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
                 if verbose {
                     // Get error details and display with context
                     let (line, column, message) = match &error {
-                        ParseError::UnexpectedToken { expected, found, line, column } => 
+                        ParseError::UnexpectedToken { expected, found, line, column } =>
                             (*line, *column, format!("Expected {}, found {:?}", expected, found)),
-                        ParseError::InvalidSyntax { message, line, column } => 
+                        ParseError::InvalidSyntax { message, line, column } =>
                             (*line, *column, message.clone()),
-                        ParseError::EOF { expected, line, column } => 
+                        ParseError::EOF { expected, line, column } =>
                             (*line, *column, format!("Unexpected end of file, expected {}", expected)),
                     };
-                    
+
                     eprintln!("  Line {}, Col {}: {}", line, column, message);
-                    
+
                     // Trying to extract line from source for context
                     if let Some(context) = get_line_context(&source, line) {
                         eprintln!("  {}", context);
@@ -666,7 +666,7 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -675,7 +675,7 @@ fn get_line_context(source: &str, line_num: usize) -> Option<String> {
     if line_num == 0 {
         return None;
     }
-    
+
     let lines: Vec<&str> = source.lines().collect();
     if line_num <= lines.len() {
         Some(lines[line_num - 1].to_string())
@@ -687,11 +687,11 @@ fn get_line_context(source: &str, line_num: usize) -> Option<String> {
 fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
-    
+
     // First, check for lexical errors
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
-    
+
     let lexer_errors = lexer.get_errors();
     if !lexer_errors.is_empty() {
         eprintln!("Cannot format file with lexical errors:");
@@ -700,7 +700,7 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
         }
         return Ok(());
     }
-    
+
     // Then parse into AST using the new parser interface
     match parser::parse(tokens) {
         Ok(module) => {
@@ -708,7 +708,7 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
             let mut formatter = CodeFormatter::new(indent_size);
             formatter.visit_module(&module);
             let formatted_source = formatter.get_output().to_string();
-            
+
             if write {
                 fs::write(filename, &formatted_source)
                     .with_context(|| format!("Failed to write to file: {}", filename))?;
@@ -724,7 +724,7 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -737,20 +737,20 @@ fn compile_file(
 ) -> Result<()> {
     let _ = target_triple;
     println!("{}", format!("Compiling {} with optimization level {}", filename, opt_level).bright_green());
-    
+
     let source = fs::read_to_string(filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
-    
+
     // Parse the source code
     match parse(&source) {
         Ok(module) => {
             // Create LLVM context and compiler
             let context = context::Context::create();
             let mut compiler = Compiler::new(&context, filename);
-            
+
             // Set optimization level
             // We'll implement this in the Compiler later
-            
+
             // Compile the AST
             match compiler.compile_module(&module) {
                 Ok(_) => {
@@ -763,7 +763,7 @@ fn compile_file(
                             path
                         }
                     };
-                    
+
                     // If output_object is true, we would compile to an object file
                     // For now, we'll just write the LLVM IR
                     if output_object {
@@ -772,11 +772,11 @@ fn compile_file(
                             output_path.set_extension("ll");
                         }
                     }
-                    
+
                     // Write LLVM IR to file
                     compiler.write_to_file(&output_path)
                         .map_err(|e| anyhow::anyhow!("Failed to write IR to file: {}", e))?;
-                    
+
                     println!("Successfully compiled to {}", output_path.display());
                     Ok(())
                 },
@@ -797,16 +797,16 @@ fn format_token(token: &Token, use_color: bool) -> String {
     if !use_color {
         return format!("{}", token);
     }
-    
+
     match &token.token_type {
         TokenType::Invalid(_) => format!("{}", token).bright_red().to_string(),
         TokenType::Indent | TokenType::Dedent | TokenType::Newline => {
             format!("{}", token).bright_magenta().to_string()
         },
         TokenType::Identifier(_) => format!("{}", token).bright_yellow().to_string(),
-        TokenType::Def | TokenType::If | TokenType::Else | TokenType::For | 
+        TokenType::Def | TokenType::If | TokenType::Else | TokenType::For |
         TokenType::While | TokenType::Return => format!("{}", token).bright_blue().to_string(),
-        TokenType::StringLiteral(_) | TokenType::RawString(_) | 
+        TokenType::StringLiteral(_) | TokenType::RawString(_) |
         TokenType::FString(_) | TokenType::BytesLiteral(_) => format!("{}", token).bright_green().to_string(),
         TokenType::IntLiteral(_) | TokenType::FloatLiteral(_) |
         TokenType::BinaryLiteral(_) | TokenType::OctalLiteral(_) |
@@ -820,7 +820,7 @@ fn format_token_for_repl(token: &Token, use_color: bool) -> String {
     if !use_color {
         return format!("{}", token);
     }
-    
+
     let token_desc = match &token.token_type {
         TokenType::Invalid(msg) => format!("Invalid: {}", msg).bright_red().to_string(),
         TokenType::Identifier(name) => format!("Identifier: {}", name).bright_yellow().to_string(),
@@ -844,13 +844,13 @@ fn format_token_for_repl(token: &Token, use_color: bool) -> String {
         TokenType::Newline => "Newline".bright_magenta().to_string(),
         _ => format!("{:?}", token.token_type),
     };
-    
+
     format!("{} at {}:{}", token_desc, token.line, token.column)
 }
 
 // This function registers all runtime functions with the JIT execution engine
 fn register_runtime_functions(
-    engine: &inkwell::execution_engine::ExecutionEngine<'_>, 
+    engine: &inkwell::execution_engine::ExecutionEngine<'_>,
     module: &inkwell::module::Module<'_>
 ) -> Result<(), String> {
     // Type conversion functions
@@ -859,81 +859,81 @@ fn register_runtime_functions(
             engine.add_global_mapping(&function, jit_int_to_string as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("float_to_string") {
         {
             engine.add_global_mapping(&function, jit_float_to_string as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("bool_to_string") {
         {
             engine.add_global_mapping(&function, jit_bool_to_string as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("string_to_int") {
         {
             engine.add_global_mapping(&function, jit_string_to_int as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("string_to_float") {
         {
             engine.add_global_mapping(&function, jit_string_to_float as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("string_to_bool") {
         {
             engine.add_global_mapping(&function, jit_string_to_bool as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("free_string") {
         {
             engine.add_global_mapping(&function, jit_free_string as usize);
         }
     }
-    
+
     // Built-in functions (these would call the type conversion functions)
     if let Some(function) = module.get_function("str_int") {
         {
             engine.add_global_mapping(&function, jit_str_int as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("str_float") {
         {
             engine.add_global_mapping(&function, jit_str_float as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("str_bool") {
         {
             engine.add_global_mapping(&function, jit_str_bool as usize);
         }
     }
-    
+
     // String operations
     if let Some(function) = module.get_function("string_concat") {
         {
             engine.add_global_mapping(&function, jit_string_concat as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("string_equals") {
         {
             engine.add_global_mapping(&function, jit_string_equals as usize);
         }
     }
-    
+
     if let Some(function) = module.get_function("string_length") {
         {
             engine.add_global_mapping(&function, jit_string_length as usize);
         }
     }
-    
+
     Ok(())
 }
 
@@ -950,8 +950,8 @@ extern "C" fn jit_float_to_string(value: f64) -> *mut c_char {
     c_str.into_raw()
 }
 
-extern "C" fn jit_bool_to_string(value: bool) -> *mut c_char {
-    let s = if value { "True" } else { "False" }.to_string();
+extern "C" fn jit_bool_to_string(value: i64) -> *mut c_char {
+    let s = if value != 0 { "True" } else { "False" }.to_string();
     let c_str = CString::new(s).unwrap();
     c_str.into_raw()
 }
@@ -996,17 +996,17 @@ extern "C" fn jit_str_float(value: f64) -> *mut c_char {
 }
 
 extern "C" fn jit_str_bool(value: bool) -> *mut c_char {
-    jit_bool_to_string(value)
+    jit_bool_to_string(if value { 1 } else { 0 })
 }
 
 // String operation implementations
 extern "C" fn jit_string_concat(left: *const c_char, right: *const c_char) -> *mut c_char {
     let left_cstr = unsafe { CStr::from_ptr(left) };
     let right_cstr = unsafe { CStr::from_ptr(right) };
-    
+
     let left_str = left_cstr.to_str().unwrap_or("");
     let right_str = right_cstr.to_str().unwrap_or("");
-    
+
     let result = format!("{}{}", left_str, right_str);
     let c_str = CString::new(result).unwrap();
     c_str.into_raw()
@@ -1015,10 +1015,10 @@ extern "C" fn jit_string_concat(left: *const c_char, right: *const c_char) -> *m
 extern "C" fn jit_string_equals(left: *const c_char, right: *const c_char) -> bool {
     let left_cstr = unsafe { CStr::from_ptr(left) };
     let right_cstr = unsafe { CStr::from_ptr(right) };
-    
+
     let left_str = left_cstr.to_str().unwrap_or("");
     let right_str = right_cstr.to_str().unwrap_or("");
-    
+
     left_str == right_str
 }
 
