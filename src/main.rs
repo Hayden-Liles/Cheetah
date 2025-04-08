@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use clap::{Parser as ClapParser, Subcommand};
 use anyhow::{Result, Context};
 use colored::Colorize;
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
 
 // Import modules from lib.rs
 use cheetah::lexer::{Lexer, Token, TokenType, LexerConfig};
@@ -16,6 +18,7 @@ use cheetah::parse;
 use inkwell::context;
 // Import LLVM context
 use inkwell::targets::{InitializationConfig, Target};
+
 
 #[derive(ClapParser)]
 #[command(name = "cheetah")]
@@ -219,9 +222,20 @@ fn run_file_jit(filename: &str) -> Result<()> {
             // Compile the AST
             match compiler.compile_module(&module) {
                 Ok(_) => {
-                    println!("Successfully compiled module");
+                    // Get the compiled module using the getter
+                    let compiled_module = compiler.get_module();
                     
-                    // TODO: JIT execution will be implemented here
+                    // Create JIT execution engine
+                    let execution_engine = compiled_module
+                        .create_jit_execution_engine(inkwell::OptimizationLevel::Default)
+                        .map_err(|e| anyhow::anyhow!("Failed to create execution engine: {}", e))?;
+                    
+                    // Register runtime functions with the execution engine
+                    if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
+                        println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
+                    }
+                    
+                    // TODO: JIT execution of the "main" function would go here
                     println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
                     println!("{}", compiler.get_ir());
                     
@@ -390,9 +404,25 @@ fn run_repl_jit() -> Result<()> {
                             Ok(_) => {
                                 println!("{}", "✓ Compiled successfully".bright_green());
                                 
-                                // TODO: JIT execution will be implemented here
-                                println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
-                                println!("{}", compiler.get_ir());
+                                // Get the compiled module
+                                let compiled_module = compiler.get_module();
+                                
+                                // Create JIT execution engine
+                                match compiled_module.create_jit_execution_engine(inkwell::OptimizationLevel::Default) {
+                                    Ok(execution_engine) => {
+                                        // Register runtime functions with the execution engine
+                                        if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
+                                            println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
+                                        }
+                                        
+                                        // TODO: JIT execution would go here
+                                        println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
+                                        println!("{}", compiler.get_ir());
+                                    },
+                                    Err(e) => {
+                                        eprintln!("{}", format!("Failed to create execution engine: {}", e).bright_red());
+                                    }
+                                }
                             },
                             Err(e) => {
                                 eprintln!("{}", format!("Compilation error: {}", e).bright_red());
@@ -816,4 +846,184 @@ fn format_token_for_repl(token: &Token, use_color: bool) -> String {
     };
     
     format!("{} at {}:{}", token_desc, token.line, token.column)
+}
+
+// This function registers all runtime functions with the JIT execution engine
+fn register_runtime_functions(
+    engine: &inkwell::execution_engine::ExecutionEngine<'_>, 
+    module: &inkwell::module::Module<'_>
+) -> Result<(), String> {
+    // Type conversion functions
+    if let Some(function) = module.get_function("int_to_string") {
+        {
+            engine.add_global_mapping(&function, jit_int_to_string as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("float_to_string") {
+        {
+            engine.add_global_mapping(&function, jit_float_to_string as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("bool_to_string") {
+        {
+            engine.add_global_mapping(&function, jit_bool_to_string as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("string_to_int") {
+        {
+            engine.add_global_mapping(&function, jit_string_to_int as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("string_to_float") {
+        {
+            engine.add_global_mapping(&function, jit_string_to_float as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("string_to_bool") {
+        {
+            engine.add_global_mapping(&function, jit_string_to_bool as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("free_string") {
+        {
+            engine.add_global_mapping(&function, jit_free_string as usize);
+        }
+    }
+    
+    // Built-in functions (these would call the type conversion functions)
+    if let Some(function) = module.get_function("str_int") {
+        {
+            engine.add_global_mapping(&function, jit_str_int as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("str_float") {
+        {
+            engine.add_global_mapping(&function, jit_str_float as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("str_bool") {
+        {
+            engine.add_global_mapping(&function, jit_str_bool as usize);
+        }
+    }
+    
+    // String operations
+    if let Some(function) = module.get_function("string_concat") {
+        {
+            engine.add_global_mapping(&function, jit_string_concat as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("string_equals") {
+        {
+            engine.add_global_mapping(&function, jit_string_equals as usize);
+        }
+    }
+    
+    if let Some(function) = module.get_function("string_length") {
+        {
+            engine.add_global_mapping(&function, jit_string_length as usize);
+        }
+    }
+    
+    Ok(())
+}
+
+// Runtime function implementations
+extern "C" fn jit_int_to_string(value: i64) -> *mut c_char {
+    let s = format!("{}", value);
+    let c_str = CString::new(s).unwrap();
+    c_str.into_raw()
+}
+
+extern "C" fn jit_float_to_string(value: f64) -> *mut c_char {
+    let s = format!("{}", value);
+    let c_str = CString::new(s).unwrap();
+    c_str.into_raw()
+}
+
+extern "C" fn jit_bool_to_string(value: bool) -> *mut c_char {
+    let s = if value { "True" } else { "False" }.to_string();
+    let c_str = CString::new(s).unwrap();
+    c_str.into_raw()
+}
+
+extern "C" fn jit_string_to_int(value: *const c_char) -> i64 {
+    let c_str = unsafe { CStr::from_ptr(value) };
+    let s = c_str.to_str().unwrap_or("");
+    s.parse::<i64>().unwrap_or(0)
+}
+
+extern "C" fn jit_string_to_float(value: *const c_char) -> f64 {
+    let c_str = unsafe { CStr::from_ptr(value) };
+    let s = c_str.to_str().unwrap_or("");
+    s.parse::<f64>().unwrap_or(0.0)
+}
+
+extern "C" fn jit_string_to_bool(value: *const c_char) -> bool {
+    let c_str = unsafe { CStr::from_ptr(value) };
+    let s = c_str.to_str().unwrap_or("");
+    match s.to_lowercase().as_str() {
+        "true" | "1" => true,
+        _ => false,
+    }
+}
+
+extern "C" fn jit_free_string(ptr: *mut c_char) {
+    if !ptr.is_null() {
+        unsafe {
+            let _ = CString::from_raw(ptr);
+            // Memory is freed when CString is dropped
+        }
+    }
+}
+
+// Built-in function implementations
+extern "C" fn jit_str_int(value: i64) -> *mut c_char {
+    jit_int_to_string(value)
+}
+
+extern "C" fn jit_str_float(value: f64) -> *mut c_char {
+    jit_float_to_string(value)
+}
+
+extern "C" fn jit_str_bool(value: bool) -> *mut c_char {
+    jit_bool_to_string(value)
+}
+
+// String operation implementations
+extern "C" fn jit_string_concat(left: *const c_char, right: *const c_char) -> *mut c_char {
+    let left_cstr = unsafe { CStr::from_ptr(left) };
+    let right_cstr = unsafe { CStr::from_ptr(right) };
+    
+    let left_str = left_cstr.to_str().unwrap_or("");
+    let right_str = right_cstr.to_str().unwrap_or("");
+    
+    let result = format!("{}{}", left_str, right_str);
+    let c_str = CString::new(result).unwrap();
+    c_str.into_raw()
+}
+
+extern "C" fn jit_string_equals(left: *const c_char, right: *const c_char) -> bool {
+    let left_cstr = unsafe { CStr::from_ptr(left) };
+    let right_cstr = unsafe { CStr::from_ptr(right) };
+    
+    let left_str = left_cstr.to_str().unwrap_or("");
+    let right_str = right_cstr.to_str().unwrap_or("");
+    
+    left_str == right_str
+}
+
+extern "C" fn jit_string_length(string: *const c_char) -> i64 {
+    let cstr = unsafe { CStr::from_ptr(string) };
+    let s = cstr.to_str().unwrap_or("");
+    s.len() as i64
 }

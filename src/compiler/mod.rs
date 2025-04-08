@@ -3,6 +3,7 @@ pub mod types;
 pub mod context;
 pub mod expr;
 pub mod stmt;
+pub mod runtime;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;
@@ -35,6 +36,9 @@ impl<'ctx> Compiler<'ctx> {
         
         // Position builder at the end of the entry block
         self.context.builder.position_at_end(basic_block);
+        
+        // Embed runtime support functions
+        self.embed_runtime_functions();
         
         // Process all top-level statements
         for stmt in &module.body {
@@ -70,6 +74,67 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
     
+    fn embed_runtime_functions(&mut self) {
+        let context = self.context.llvm_context;
+        let module = &mut self.context.module;
+        
+        // Declare runtime string functions if they don't exist yet
+        
+        // int_to_string
+        if module.get_function("int_to_string").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = str_ptr_type.fn_type(&[context.i64_type().into()], false);
+            module.add_function("int_to_string", fn_type, None);
+        }
+        
+        // float_to_string
+        if module.get_function("float_to_string").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = str_ptr_type.fn_type(&[context.f64_type().into()], false);
+            module.add_function("float_to_string", fn_type, None);
+        }
+        
+        // bool_to_string
+        if module.get_function("bool_to_string").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = str_ptr_type.fn_type(&[context.bool_type().into()], false);
+            module.add_function("bool_to_string", fn_type, None);
+        }
+        
+        // string_to_int
+        if module.get_function("string_to_int").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = context.i64_type().fn_type(&[str_ptr_type.into()], false);
+            module.add_function("string_to_int", fn_type, None);
+        }
+        
+        // string_to_float
+        if module.get_function("string_to_float").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = context.f64_type().fn_type(&[str_ptr_type.into()], false);
+            module.add_function("string_to_float", fn_type, None);
+        }
+        
+        // string_to_bool
+        if module.get_function("string_to_bool").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = context.bool_type().fn_type(&[str_ptr_type.into()], false);
+            module.add_function("string_to_bool", fn_type, None);
+        }
+        
+        // free_string
+        if module.get_function("free_string").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = context.void_type().fn_type(&[str_ptr_type.into()], false);
+            module.add_function("free_string", fn_type, None);
+        }
+        
+        // Register str as an alias for int_to_string to support str() built-in
+        if let Some(int_to_string) = module.get_function("int_to_string") {
+            self.context.functions.insert("str".to_string(), int_to_string);
+        }
+    }
+
     /// Compile a function definition
     fn compile_function(&mut self, name: &str, params: &[ast::Parameter], body: &[Box<ast::Stmt>]) -> Result<(), String> {
         let _ = body;
@@ -103,5 +168,9 @@ impl<'ctx> Compiler<'ctx> {
     /// Get the LLVM IR representation as a string
     pub fn get_ir(&self) -> String {
         self.context.module.print_to_string().to_string()
+    }
+
+    pub fn get_module(&self) -> &inkwell::module::Module<'ctx> {
+        &self.context.module
     }
 }

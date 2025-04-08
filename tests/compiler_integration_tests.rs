@@ -26,7 +26,7 @@ fn compile_source(source: &str) -> Result<String, String> {
 
 #[test]
 fn test_fizzbuzz() {
-    // Test a simple FizzBuzz implementation
+    // Test a simple FizzBuzz implementation with explicit string conversion
     let source = r#"
 i = 1
 while i <= 20:
@@ -37,7 +37,8 @@ while i <= 20:
     elif i % 5 == 0:
         result = "Buzz"
     else:
-        result = i
+        # Use explicit string conversion function
+        result = str(i)
     i = i + 1
 "#;
     
@@ -50,6 +51,8 @@ while i <= 20:
     // Check for module and while loop
     assert!(ir.contains("while.cond"));
     assert!(ir.contains("while.body"));
+    // Check for int_to_string call
+    assert!(ir.contains("call"));
 }
 
 #[test]

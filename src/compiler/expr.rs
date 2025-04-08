@@ -1,4 +1,4 @@
-use crate::ast::{BoolOperator, CmpOperator, Expr, ExprContext, NameConstant, Number, Operator, UnaryOperator};
+use crate::ast::{BoolOperator, CmpOperator, Expr, NameConstant, Number, Operator, UnaryOperator};
 use crate::compiler::context::CompilationContext;
 use crate::compiler::types::Type;
 use crate::compiler::types::is_reference_type;
@@ -175,19 +175,18 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             },
             
             Expr::Str { value, .. } => {
-                // Create a global string constant
-                let str_type = self.llvm_context.i8_type().array_type(value.len() as u32 + 1);
+                // Create the string constant with null terminator
+                let const_str = self.llvm_context.const_string(value.as_bytes(), true);
                 
-                // Create the string constant (null-terminated)
-                let mut chars: Vec<u8> = value.bytes().collect();
-                chars.push(0); // Null terminator
+                // Get the type of the constant string
+                let str_type = const_str.get_type();
                 
-                // Create a global variable to hold the string constant
+                // Create a global variable with the same type as the constant
                 let global_str = self.module.add_global(str_type, None, "str_const");
                 global_str.set_constant(true);
-                global_str.set_initializer(&self.llvm_context.const_string(&chars, true));
+                global_str.set_initializer(&const_str);
                 
-                // Get a pointer to the string (fixed deprecated method)
+                // Get a pointer to the string
                 let str_ptr = self.builder.build_pointer_cast(
                     global_str.as_pointer_value(),
                     self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
@@ -289,51 +288,54 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             },
             
             Expr::Call { func, args, keywords, .. } => {
-                // For function calls, we need to handle various cases:
-                // 1. Direct function references
-                // 2. Function pointers
-                // 3. Method calls
-    
-                // Different handling based on the function expression
                 match func.as_ref() {
                     Expr::Name { id, .. } => {
-                        // Direct function reference by name
-                        if let Some(func_value) = self.functions.get(id) {
-                            // Compile all argument expressions
-                            let mut arg_values = Vec::with_capacity(args.len());
-                            let mut arg_types = Vec::with_capacity(args.len());
-                            
-                            for arg in args {
-                                let (arg_val, arg_type) = self.compile_expr(arg)?;
-                                arg_values.push(arg_val);
-                                arg_types.push(arg_type);
-                            }
-                            
-                            // Handle keyword arguments
-                            if !keywords.is_empty() {
-                                return Err("Keyword arguments not yet implemented".to_string());
-                            }
-                            
-                            // Convert to inkwell's BasicMetadataValueEnum
-                            let call_args: Vec<_> = arg_values
-                                .iter()
-                                .map(|&v| v.into())
-                                .collect();
-                            
-                            // Build the call instruction
-                            let call = self.builder.build_call(*func_value, &call_args, "call").unwrap();
-                            
-                            // Get the return value if there is one
-                            if let Some(ret_val) = call.try_as_basic_value().left() {
-                                // Look up the function's return type
-                                // For now, we'll just return the value with a placeholder type
-                                Ok((ret_val, Type::Int)) // Simplified; should get actual return type
+                        // Extract the function value first before any other operations
+                        // This avoids the borrow conflict
+                        let func_value = match self.functions.get(id) {
+                            Some(f) => *f,
+                            None => return Err(format!("Undefined function: {}", id)),
+                        };
+                        
+                        // Compile all argument expressions
+                        let mut arg_values = Vec::with_capacity(args.len());
+                        let mut arg_types = Vec::with_capacity(args.len());
+                        
+                        for arg in args {
+                            let (arg_val, arg_type) = self.compile_expr(arg)?;
+                            arg_values.push(arg_val);
+                            arg_types.push(arg_type);
+                        }
+                        
+                        // Handle keyword arguments
+                        if !keywords.is_empty() {
+                            return Err("Keyword arguments not yet implemented".to_string());
+                        }
+                        
+                        // Convert to inkwell's BasicMetadataValueEnum
+                        let call_args: Vec<_> = arg_values
+                            .iter()
+                            .map(|&v| v.into())
+                            .collect();
+                        
+                        // Build the call instruction
+                        let call = self.builder.build_call(func_value, &call_args, "call").unwrap();
+                        
+                        // Get the return value if there is one
+                        if let Some(ret_val) = call.try_as_basic_value().left() {
+                            // Determine the actual return type based on the function
+                            let return_type = if id == "str" || id == "int_to_string" || 
+                                                id == "float_to_string" || id == "bool_to_string" {
+                                Type::String
                             } else {
-                                // Function returns void
-                                Ok((self.llvm_context.i32_type().const_zero().into(), Type::Void))
-                            }
+                                // Default for other functions
+                                Type::Int
+                            };
+                            
+                            Ok((ret_val, return_type))
                         } else {
-                            Err(format!("Undefined function: {}", id))
+                            // Function returns void
+                            Ok((self.llvm_context.i32_type().const_zero().into(), Type::Void))
                         }
                     },
                     _ => {

@@ -328,49 +328,161 @@ impl<'ctx> CompilationContext<'ctx> {
     
     fn build_int_to_string_call(&self, int_val: inkwell::values::IntValue<'ctx>) 
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        let _ = int_val;
-        // In a complete implementation, this would call a runtime function
-        // that converts an integer to a string
-        Err("Int to String conversion requires runtime support (not yet implemented)".to_string())
+        
+        // Get or create the int_to_string function
+        let int_to_string_fn = self.module.get_function("int_to_string").unwrap_or_else(|| {
+            // Define the function signature: int_to_string(int) -> string*
+            let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = str_ptr_type.fn_type(&[self.llvm_context.i64_type().into()], false);
+            self.module.add_function("int_to_string", fn_type, None)
+        });
+        
+        // Build the function call
+        let result = self.builder.build_call(
+            int_to_string_fn,
+            &[int_val.into()],
+            "int_to_string_result"
+        ).unwrap();
+        
+        // Extract the return value (string pointer)
+        if let Some(ret_val) = result.try_as_basic_value().left() {
+            Ok(ret_val)
+        } else {
+            Err("Failed to call int_to_string function".to_string())
+        }
     }
     
     fn build_float_to_string_call(&self, float_val: inkwell::values::FloatValue<'ctx>) 
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        let _ = float_val;
-        // In a complete implementation, this would call a runtime function
-        // that converts a float to a string
-        Err("Float to String conversion requires runtime support (not yet implemented)".to_string())
+    
+        // Get or create the float_to_string function
+        let float_to_string_fn = self.module.get_function("float_to_string").unwrap_or_else(|| {
+            // Define the function signature: float_to_string(float) -> string*
+            let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = str_ptr_type.fn_type(&[self.llvm_context.f64_type().into()], false);
+            self.module.add_function("float_to_string", fn_type, None)
+        });
+        
+        // Build the function call
+        let result = self.builder.build_call(
+            float_to_string_fn,
+            &[float_val.into()],
+            "float_to_string_result"
+        ).unwrap();
+        
+        // Extract the return value
+        if let Some(ret_val) = result.try_as_basic_value().left() {
+            Ok(ret_val)
+        } else {
+            Err("Failed to call float_to_string function".to_string())
+        }
     }
     
     fn build_bool_to_string_call(&self, bool_val: inkwell::values::IntValue<'ctx>) 
-        -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        let _ = bool_val;
-        // In a complete implementation, this would call a runtime function
-        // that converts a boolean to a string
-        Err("Bool to String conversion requires runtime support (not yet implemented)".to_string())
+    -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
+    
+        // Get or create the bool_to_string function
+        let bool_to_string_fn = self.module.get_function("bool_to_string").unwrap_or_else(|| {
+            // Define the function signature: bool_to_string(bool) -> string*
+            let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = str_ptr_type.fn_type(&[self.llvm_context.bool_type().into()], false);
+            self.module.add_function("bool_to_string", fn_type, None)
+        });
+        
+        // Build the function call
+        let result = self.builder.build_call(
+            bool_to_string_fn,
+            &[bool_val.into()],
+            "bool_to_string_result"
+        ).unwrap();
+        
+        // Extract the return value
+        if let Some(ret_val) = result.try_as_basic_value().left() {
+            Ok(ret_val)
+        } else {
+            Err("Failed to call bool_to_string function".to_string())
+        }
     }
+
     
     fn build_string_to_int_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>) 
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        let _ = string_ptr;
-        // In a complete implementation, this would call a runtime function
-        // that parses a string as an integer
-        Err("String to Int conversion requires runtime support (not yet implemented)".to_string())
+        
+        // Get or create the string_to_int function
+        let string_to_int_fn = self.module.get_function("string_to_int").unwrap_or_else(|| {
+            // Define the function signature: string_to_int(string*) -> int
+            let i64_type = self.llvm_context.i64_type();
+            let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = i64_type.fn_type(&[str_ptr_type.into()], false);
+            self.module.add_function("string_to_int", fn_type, None)
+        });
+        
+        // Build the function call
+        let result = self.builder.build_call(
+            string_to_int_fn,
+            &[string_ptr.into()],
+            "string_to_int_result"
+        ).unwrap();
+        
+        // Extract the return value
+        if let Some(ret_val) = result.try_as_basic_value().left() {
+            Ok(ret_val)
+        } else {
+            Err("Failed to call string_to_int function".to_string())
+        }
     }
     
     fn build_string_to_float_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>) 
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        let _ = string_ptr;
-        // In a complete implementation, this would call a runtime function
-        // that parses a string as a float
-        Err("String to Float conversion requires runtime support (not yet implemented)".to_string())
+        
+        // Get or create the string_to_float function
+        let string_to_float_fn = self.module.get_function("string_to_float").unwrap_or_else(|| {
+            // Define the function signature: string_to_float(string*) -> float
+            let f64_type = self.llvm_context.f64_type();
+            let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = f64_type.fn_type(&[str_ptr_type.into()], false);
+            self.module.add_function("string_to_float", fn_type, None)
+        });
+        
+        // Build the function call
+        let result = self.builder.build_call(
+            string_to_float_fn,
+            &[string_ptr.into()],
+            "string_to_float_result"
+        ).unwrap();
+        
+        // Extract the return value
+        if let Some(ret_val) = result.try_as_basic_value().left() {
+            Ok(ret_val)
+        } else {
+            Err("Failed to call string_to_float function".to_string())
+        }
     }
-    
+
     fn build_string_to_bool_call(&self, string_ptr: inkwell::values::PointerValue<'ctx>) 
         -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
-        let _ = string_ptr;
-        // In a complete implementation, this would call a runtime function
-        // that parses a string as a boolean
-        Err("String to Bool conversion requires runtime support (not yet implemented)".to_string())
+        
+        // Get or create the string_to_bool function
+        let string_to_bool_fn = self.module.get_function("string_to_bool").unwrap_or_else(|| {
+            // Define the function signature: string_to_bool(string*) -> bool
+            let bool_type = self.llvm_context.bool_type();
+            let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = bool_type.fn_type(&[str_ptr_type.into()], false);
+            self.module.add_function("string_to_bool", fn_type, None)
+        });
+        
+        // Build the function call
+        let result = self.builder.build_call(
+            string_to_bool_fn,
+            &[string_ptr.into()],
+            "string_to_bool_result"
+        ).unwrap();
+        
+        // Extract the return value
+        if let Some(ret_val) = result.try_as_basic_value().left() {
+            Ok(ret_val)
+        } else {
+            Err("Failed to call string_to_bool function".to_string())
+        }
     }
 }
