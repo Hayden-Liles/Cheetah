@@ -15,7 +15,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Enable large input parser tests
 - [x] Improve error messages for syntax errors
 - [x] Fix nested parentheses parsing in expressions
-- [ ] Add better recovery from parsing errors
+- [x] Add better recovery from parsing errors
 
 ### Compiler Core
 - [ ] Implement proper type checking system
@@ -91,4 +91,5 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Fix comprehension_conditions5 test
 - [x] Enable previously ignored large input parser tests
 - [x] Create this TODO list
+- [x] Add better recovery from parsing errors
 

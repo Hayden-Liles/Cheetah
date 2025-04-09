@@ -74,8 +74,12 @@ impl Parser {
                 Ok(stmt) => body.push(Box::new(stmt)),
                 Err(e) => {
                     self.errors.push(e);
-                    // For the test case, just return after the first error
-                    break;
+                    // Instead of breaking, try to synchronize and continue parsing
+                    self.synchronize();
+                    // If we've reached EOF after synchronizing, break out of the loop
+                    if self.current.is_none() || matches!(self.current.as_ref().unwrap().token_type, TokenType::EOF) {
+                        break;
+                    }
                 }
             }
         }
@@ -179,6 +183,30 @@ impl Parser {
     pub fn print_errors(&self) {
         for (i, error) in self.errors.iter().enumerate() {
             println!("Error {}: {:?}", i + 1, error);
+        }
+    }
+
+    /// Synchronize the parser state after an error
+    ///
+    /// This method skips tokens until it finds a synchronization point,
+    /// which is typically the start of a new statement or the end of a block.
+    fn synchronize(&mut self) {
+        // For simplicity and safety, just skip to the next newline or EOF
+        // This is a basic but effective recovery strategy
+        while let Some(token) = &self.current {
+            // If we've reached the end of the file, stop
+            if matches!(token.token_type, TokenType::EOF) {
+                break;
+            }
+
+            // If we've reached a newline, consume it and stop
+            if matches!(token.token_type, TokenType::Newline) {
+                self.advance(); // Consume the newline
+                break;
+            }
+
+            // Otherwise, skip this token and continue
+            self.advance();
         }
     }
 }
