@@ -50,3 +50,7 @@ mod binary_ops_advanced_test;
 // Include the binary operations error tests
 #[path = "more_tests/compiler/binary_ops_error_test.rs"]
 mod binary_ops_error_test;
+
+// Include the string operations tests
+#[path = "more_tests/compiler/string_ops_test.rs"]
+mod string_ops_test;

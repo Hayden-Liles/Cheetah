@@ -151,6 +151,27 @@ impl<'ctx> Compiler<'ctx> {
             module.add_function("free_string", fn_type, None);
         }
 
+        // string_concat - for string concatenation
+        if module.get_function("string_concat").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = str_ptr_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
+            module.add_function("string_concat", fn_type, None);
+        }
+
+        // string_equals - for string comparison
+        if module.get_function("string_equals").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = context.bool_type().fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
+            module.add_function("string_equals", fn_type, None);
+        }
+
+        // string_length - for getting string length
+        if module.get_function("string_length").is_none() {
+            let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = context.i64_type().fn_type(&[str_ptr_type.into()], false);
+            module.add_function("string_length", fn_type, None);
+        }
+
         // Register str as an alias for int_to_string to support str() built-in
         if let Some(int_to_string) = module.get_function("int_to_string") {
             self.context.functions.insert("str".to_string(), int_to_string);

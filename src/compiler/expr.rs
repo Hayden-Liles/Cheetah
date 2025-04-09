@@ -658,8 +658,29 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                     Ok((result.into(), Type::Float))
                 },
                 Type::String => {
-                    // String concatenation would require runtime support
-                    Err("String concatenation not yet implemented".to_string())
+                    // Get or create the string_concat function
+                    let string_concat_fn = self.module.get_function("string_concat").unwrap_or_else(|| {
+                        // Define the function signature: string_concat(string*, string*) -> string*
+                        let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                        let fn_type = str_ptr_type.fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
+                        self.module.add_function("string_concat", fn_type, None)
+                    });
+
+                    // Build the function call
+                    let left_ptr = left_converted.into_pointer_value();
+                    let right_ptr = right_converted.into_pointer_value();
+                    let result = self.builder.build_call(
+                        string_concat_fn,
+                        &[left_ptr.into(), right_ptr.into()],
+                        "string_concat_result"
+                    ).unwrap();
+
+                    // Get the result value
+                    if let Some(result_val) = result.try_as_basic_value().left() {
+                        Ok((result_val, Type::String))
+                    } else {
+                        Err("Failed to concatenate strings".to_string())
+                    }
                 },
                 _ => Err(format!("Addition not supported for type {:?}", common_type)),
             },
@@ -1239,8 +1260,40 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
             },
 
             Type::String => {
-                // String comparisons would require runtime support functions
-                Err(format!("String comparison not yet implemented for operator {:?}", op))
+                // Get or create the string_equals function
+                let string_equals_fn = self.module.get_function("string_equals").unwrap_or_else(|| {
+                    // Define the function signature: string_equals(string*, string*) -> bool
+                    let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                    let fn_type = self.llvm_context.bool_type().fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
+                    self.module.add_function("string_equals", fn_type, None)
+                });
+
+                // Build the function call
+                let left_ptr = left_converted.into_pointer_value();
+                let right_ptr = right_converted.into_pointer_value();
+                let result = self.builder.build_call(
+                    string_equals_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "string_equals_result"
+                ).unwrap();
+
+                // Get the result value
+                if let Some(result_val) = result.try_as_basic_value().left() {
+                    let bool_result = result_val.into_int_value();
+
+                    // Apply the comparison operator
+                    match op {
+                        CmpOperator::Eq => Ok((bool_result.into(), Type::Bool)),
+                        CmpOperator::NotEq => {
+                            // Negate the result for not equal
+                            let not_result = self.builder.build_not(bool_result, "string_not_equals").unwrap();
+                            Ok((not_result.into(), Type::Bool))
+                        },
+                        _ => Err(format!("String comparison operator {:?} not supported", op)),
+                    }
+                } else {
+                    Err("Failed to compare strings".to_string())
+                }
             },
 
             _ => Err(format!("Comparison not supported for type {:?}", common_type)),
