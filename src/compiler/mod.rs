@@ -1,4 +1,5 @@
 use crate::ast;
+use crate::typechecker;
 pub mod types;
 pub mod context;
 pub mod expr;
@@ -27,6 +28,11 @@ impl<'ctx> Compiler<'ctx> {
 
     /// Compile an AST module to LLVM IR
     pub fn compile_module(&mut self, module: &ast::Module) -> Result<(), String> {
+        // Type check the module first
+        if let Err(type_error) = typechecker::check_module(module) {
+            return Err(format!("Type error: {}", type_error));
+        }
+
         // Get types for function signature
         let void_type = Type::get_void_type(self.context.llvm_context);
         let fn_type = void_type.fn_type(&[], false);
