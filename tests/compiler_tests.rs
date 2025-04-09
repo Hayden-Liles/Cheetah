@@ -38,3 +38,7 @@ mod comprehensive_compiler_tests;
 // Include the AST tests
 #[path = "more_tests/compiler/ast_test.rs"]
 mod ast_test;
+
+// Include the binary operations tests
+#[path = "more_tests/compiler/binary_ops_test.rs"]
+mod binary_ops_test;

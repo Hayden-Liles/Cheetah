@@ -1029,7 +1029,68 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 _ => Err(format!("Power operation not supported for type {:?}", common_type)),
             },
 
-            // Implement other binary operators (bitwise, etc.) as needed
+            // Bitwise operations
+            Operator::BitOr => match common_type {
+                Type::Int => {
+                    let left_int = left_converted.into_int_value();
+                    let right_int = right_converted.into_int_value();
+                    let result = self.builder.build_or(left_int, right_int, "int_or").unwrap();
+                    Ok((result.into(), Type::Int))
+                },
+                _ => Err(format!("Bitwise OR not supported for type {:?}", common_type)),
+            },
+
+            Operator::BitXor => match common_type {
+                Type::Int => {
+                    let left_int = left_converted.into_int_value();
+                    let right_int = right_converted.into_int_value();
+                    let result = self.builder.build_xor(left_int, right_int, "int_xor").unwrap();
+                    Ok((result.into(), Type::Int))
+                },
+                _ => Err(format!("Bitwise XOR not supported for type {:?}", common_type)),
+            },
+
+            Operator::BitAnd => match common_type {
+                Type::Int => {
+                    let left_int = left_converted.into_int_value();
+                    let right_int = right_converted.into_int_value();
+                    let result = self.builder.build_and(left_int, right_int, "int_and").unwrap();
+                    Ok((result.into(), Type::Int))
+                },
+                _ => Err(format!("Bitwise AND not supported for type {:?}", common_type)),
+            },
+
+            // Shift operations
+            Operator::LShift => match common_type {
+                Type::Int => {
+                    let left_int = left_converted.into_int_value();
+                    let right_int = right_converted.into_int_value();
+                    let result = self.builder.build_left_shift(left_int, right_int, "int_lshift").unwrap();
+                    Ok((result.into(), Type::Int))
+                },
+                _ => Err(format!("Left shift not supported for type {:?}", common_type)),
+            },
+
+            Operator::RShift => match common_type {
+                Type::Int => {
+                    let left_int = left_converted.into_int_value();
+                    let right_int = right_converted.into_int_value();
+                    // Use arithmetic right shift (preserves sign bit)
+                    let result = self.builder.build_right_shift(left_int, right_int, true, "int_rshift").unwrap();
+                    Ok((result.into(), Type::Int))
+                },
+                _ => Err(format!("Right shift not supported for type {:?}", common_type)),
+            },
+
+            // Matrix multiplication
+            Operator::MatMult => {
+                // Matrix multiplication requires runtime support or specialized libraries
+                // For now, we'll just return an error
+                Err("Matrix multiplication not yet implemented".to_string())
+            },
+
+            // All operators are now handled, but we'll keep this for future additions
+            #[allow(unreachable_patterns)]
             _ => Err(format!("Binary operator {:?} not implemented", op)),
         }
     }
