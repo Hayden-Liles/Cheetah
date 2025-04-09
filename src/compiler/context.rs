@@ -41,6 +41,12 @@ pub struct CompilationContext<'ctx> {
 
     /// Map of polymorphic function names to their implementation variants by argument type
     pub polymorphic_functions: HashMap<String, HashMap<Type, inkwell::values::FunctionValue<'ctx>>>,
+
+    /// Currently active function (if any)
+    pub current_function: Option<inkwell::values::FunctionValue<'ctx>>,
+
+    /// Local variables in the current function scope
+    pub local_vars: HashMap<String, inkwell::values::PointerValue<'ctx>>,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -59,6 +65,8 @@ impl<'ctx> CompilationContext<'ctx> {
             variables: HashMap::new(),
             loop_stack: Vec::new(),
             polymorphic_functions: HashMap::new(),
+            current_function: None,
+            local_vars: HashMap::new(),
         }
     }
 
@@ -138,6 +146,12 @@ impl<'ctx> CompilationContext<'ctx> {
 
     /// Get the storage location for a variable
     pub fn get_variable_ptr(&self, name: &str) -> Option<inkwell::values::PointerValue<'ctx>> {
+        // First check local variables (function parameters and local variables)
+        if let Some(&ptr) = self.local_vars.get(name) {
+            return Some(ptr);
+        }
+
+        // Then check global variables
         self.variables.get(name).copied()
     }
 

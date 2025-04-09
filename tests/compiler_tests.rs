@@ -54,3 +54,7 @@ mod binary_ops_error_test;
 // Include the string operations tests
 #[path = "more_tests/compiler/string_ops_test.rs"]
 mod string_ops_test;
+
+// Include the recursive function tests
+#[path = "more_tests/compiler/recursive_function_test.rs"]
+mod recursive_function_test;

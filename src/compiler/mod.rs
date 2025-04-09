@@ -47,12 +47,36 @@ impl<'ctx> Compiler<'ctx> {
         // Embed runtime support functions
         self.embed_runtime_functions();
 
-        // Process all top-level statements
+        // First pass: register all function declarations
+        let mut function_defs = Vec::new();
+
         for stmt in &module.body {
             match stmt.as_ref() {
+                ast::Stmt::FunctionDef { name, params, .. } => {
+                    // Register the function declaration
+                    self.declare_function(name, params)?;
+                    function_defs.push(stmt);
+                },
+                _ => {}
+            }
+        }
+
+        // Second pass: compile function bodies
+        for stmt in &function_defs {
+            match stmt.as_ref() {
                 ast::Stmt::FunctionDef { name, params, body, .. } => {
-                    // Function definitions are handled separately
-                    self.compile_function(name, params, body)?;
+                    // Compile the function body
+                    self.compile_function_body(name, params, body)?;
+                },
+                _ => unreachable!("Only function definitions should be in function_defs")
+            }
+        }
+
+        // Third pass: compile all other statements
+        for stmt in &module.body {
+            match stmt.as_ref() {
+                ast::Stmt::FunctionDef { .. } => {
+                    // Already handled in previous passes
                 },
                 ast::Stmt::ClassDef { name, bases, body, .. } => {
                     // Class definitions are handled separately
@@ -205,13 +229,100 @@ impl<'ctx> Compiler<'ctx> {
         self.context.functions.insert("bool_to_string".to_string(), bool_to_string);
     }
 
-    /// Compile a function definition
-    fn compile_function(&mut self, name: &str, params: &[ast::Parameter], body: &[Box<ast::Stmt>]) -> Result<(), String> {
-        let _ = body;
-        let _ = params;
-        let _ = name;
-        // Implementation will use type mapping to create function signature
-        // This is where you'll use the new type mapping functionality
+    /// Declare a function (first pass)
+    fn declare_function(&mut self, name: &str, params: &[ast::Parameter]) -> Result<(), String> {
+        // Get the LLVM context
+        let context = self.context.llvm_context;
+
+        // Create parameter types
+        let mut param_types = Vec::new();
+
+        // Process parameters
+        for _ in params {
+            // For now, all parameters are i64 (Int type)
+            param_types.push(context.i64_type().into());
+        }
+
+        // Create function type (for now, all functions return i64)
+        let return_type = context.i64_type();
+        let function_type = return_type.fn_type(&param_types, false);
+
+        // Create the function
+        let function = self.context.module.add_function(name, function_type, None);
+
+        // Register the function in our context
+        self.context.functions.insert(name.to_string(), function);
+
+        Ok(())
+    }
+
+    /// Compile a function body (second pass)
+    fn compile_function_body(&mut self, name: &str, params: &[ast::Parameter], body: &[Box<ast::Stmt>]) -> Result<(), String> {
+        // Get the LLVM context
+        let context = self.context.llvm_context;
+
+        // Get the function
+        let function = match self.context.functions.get(name) {
+            Some(&f) => f,
+            None => return Err(format!("Function {} not found", name)),
+        };
+
+        // Create a basic block for the function
+        let basic_block = context.append_basic_block(function, "entry");
+
+        // Save the current position
+        let current_block = self.context.builder.get_insert_block();
+
+        // Position at the end of the new block
+        self.context.builder.position_at_end(basic_block);
+
+        // Create a new scope for the function
+        let mut local_vars = HashMap::new();
+
+        // Add parameters to the local variables
+        for (i, param) in params.iter().enumerate() {
+            let param_value = function.get_nth_param(i as u32).unwrap();
+
+            // Create an alloca for this variable
+            let alloca = self.context.builder.build_alloca(context.i64_type(), &param.name).unwrap();
+
+            // Store the parameter value in the alloca
+            self.context.builder.build_store(alloca, param_value).unwrap();
+
+            // Remember the alloca for this variable
+            local_vars.insert(param.name.clone(), alloca);
+
+            // Register the parameter type in the type environment
+            self.context.register_variable(param.name.clone(), Type::Int);
+        }
+
+        // Save the current function and local variables
+        let old_function = self.context.current_function;
+        let old_local_vars = std::mem::replace(&mut self.context.local_vars, local_vars);
+
+        // Set the current function
+        self.context.current_function = Some(function);
+
+        // Compile the function body
+        for stmt in body {
+            self.context.compile_stmt(stmt.as_ref())?;
+        }
+
+        // If the function doesn't end with a return statement, add one
+        if !self.context.builder.get_insert_block().unwrap().get_terminator().is_some() {
+            // Return 0 by default
+            let zero = context.i64_type().const_int(0, false);
+            self.context.builder.build_return(Some(&zero)).unwrap();
+        }
+
+        // Restore the previous function and local variables
+        self.context.current_function = old_function;
+        self.context.local_vars = old_local_vars;
+
+        // Restore the previous position
+        if let Some(block) = current_block {
+            self.context.builder.position_at_end(block);
+        }
 
         Ok(())
     }
