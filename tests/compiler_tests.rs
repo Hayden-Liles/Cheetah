@@ -42,3 +42,11 @@ mod ast_test;
 // Include the binary operations tests
 #[path = "more_tests/compiler/binary_ops_test.rs"]
 mod binary_ops_test;
+
+// Include the advanced binary operations tests
+#[path = "more_tests/compiler/binary_ops_advanced_test.rs"]
+mod binary_ops_advanced_test;
+
+// Include the binary operations error tests
+#[path = "more_tests/compiler/binary_ops_error_test.rs"]
+mod binary_ops_error_test;
