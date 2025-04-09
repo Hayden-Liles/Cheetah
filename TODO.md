@@ -29,6 +29,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 
 ### Language Features
 - [ ] Complete implementation of for loops
+- [ ] Implement tuple operations
 - [ ] Support for the range() built-in function
 - [ ] Implement list operations
 - [ ] Add dictionary support

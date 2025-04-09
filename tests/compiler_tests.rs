@@ -62,3 +62,7 @@ mod recursive_function_test;
 // Include the variable scoping tests
 #[path = "more_tests/compiler/variable_scoping_test.rs"]
 mod variable_scoping_test;
+
+// Include the global and nonlocal statement tests
+#[path = "more_tests/compiler/global_nonlocal_test.rs"]
+mod global_nonlocal_test;

@@ -160,8 +160,8 @@ impl<'ctx> CompilationContext<'ctx> {
 
     /// Get the storage location for a variable
     pub fn get_variable_ptr(&self, name: &str) -> Option<inkwell::values::PointerValue<'ctx>> {
-        // First check the scope stack
-        if let Some(ptr) = self.scope_stack.get_variable(name) {
+        // First check the scope stack, respecting global and nonlocal declarations
+        if let Some(ptr) = self.scope_stack.get_variable_respecting_declarations(name) {
             return Some(*ptr);
         }
 
@@ -573,5 +573,15 @@ impl<'ctx> CompilationContext<'ctx> {
     /// Add a variable to the current scope
     pub fn add_variable_to_scope(&mut self, name: String, ptr: inkwell::values::PointerValue<'ctx>, ty: Type) {
         self.scope_stack.add_variable(name, ptr, ty);
+    }
+
+    /// Declare a variable as global in the current scope
+    pub fn declare_global(&mut self, name: String) {
+        self.scope_stack.declare_global(name);
+    }
+
+    /// Declare a variable as nonlocal in the current scope
+    pub fn declare_nonlocal(&mut self, name: String) {
+        self.scope_stack.declare_nonlocal(name);
     }
 }

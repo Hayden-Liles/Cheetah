@@ -156,7 +156,66 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             },
 
             Expr::Name { id, .. } => {
-                // Look up variable type
+                // Check if the variable is declared as global in the current scope
+                let is_global = if let Some(current_scope) = self.scope_stack.current_scope() {
+                    current_scope.is_global(id)
+                } else {
+                    false
+                };
+
+                // If the variable is declared as global, look it up in the global scope
+                if is_global {
+                    if let Some(global_scope) = self.scope_stack.global_scope() {
+                        if let Some(ptr) = global_scope.get_variable(id) {
+                            // Get the variable type
+                            if let Some(var_type) = self.lookup_variable_type(id) {
+                                // Get the LLVM type for the variable
+                                let llvm_type = self.get_llvm_type(var_type);
+
+                                // Load the variable's value
+                                let value = self.builder.build_load(llvm_type, *ptr, id).unwrap();
+                                return Ok((value, var_type.clone()));
+                            }
+                        }
+                    }
+
+                    // If the global variable doesn't exist yet, create it
+                    // First, register the variable with a default type (Int)
+                    let var_type = Type::Int;
+                    self.register_variable(id.to_string(), var_type.clone());
+
+                    // Create a global variable
+                    let global_var = self.module.add_global(
+                        self.get_llvm_type(&var_type).into_int_type(),
+                        None,
+                        id
+                    );
+
+                    // Initialize with zero
+                    global_var.set_initializer(&self.llvm_context.i64_type().const_zero());
+
+                    // Get a pointer to the global variable
+                    let ptr = global_var.as_pointer_value();
+
+                    // Store the variable's storage location in the global scope
+                    if let Some(global_scope) = self.scope_stack.global_scope_mut() {
+                        global_scope.add_variable(id.to_string(), ptr, var_type.clone());
+                    }
+
+                    // Also store it in the variables map for backward compatibility
+                    self.variables.insert(id.to_string(), ptr);
+
+                    // Load the variable's value
+                    let value = self.builder.build_load(
+                        self.get_llvm_type(&var_type),
+                        ptr,
+                        id
+                    ).unwrap();
+
+                    return Ok((value, var_type));
+                }
+
+                // Normal variable lookup
                 if let Some(var_type) = self.lookup_variable_type(id) {
                     // Look up variable storage location
                     if let Some(ptr) = self.get_variable_ptr(id) {
@@ -1333,7 +1392,103 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
         value_type: &Type) -> Result<(), String> {
         match target {
             Expr::Name { id, .. } => {
-                // Check if variable already exists
+                // Check if the variable is declared as global in the current scope
+                let is_global = if let Some(current_scope) = self.scope_stack.current_scope() {
+                    current_scope.is_global(id)
+                } else {
+                    false
+                };
+
+                // Check if the variable is declared as nonlocal in the current scope
+                let is_nonlocal = if let Some(current_scope) = self.scope_stack.current_scope() {
+                    current_scope.is_nonlocal(id)
+                } else {
+                    false
+                };
+
+                if is_global {
+                    // Handle global variable assignment
+                    if let Some(global_scope) = self.scope_stack.global_scope() {
+                        // Check if the global variable exists
+                        if let Some(ptr) = global_scope.get_variable(id) {
+                            // Check if types are compatible
+                            if let Some(target_type) = self.lookup_variable_type(id) {
+                                // Convert value to target type if needed
+                                let converted_value = if target_type != value_type {
+                                    self.convert_type(value, value_type, target_type)?
+                                } else {
+                                    value
+                                };
+
+                                // Store the value to the global variable
+                                self.builder.build_store(*ptr, converted_value).unwrap();
+                                return Ok(());
+                            }
+                        } else {
+                            // Global variable doesn't exist yet, allocate it in the global scope
+                            let global_var = self.module.add_global(
+                                self.get_llvm_type(value_type).into_int_type(),
+                                None,
+                                id
+                            );
+
+                            // Initialize with the value
+                            global_var.set_initializer(&self.get_llvm_type(value_type).const_zero());
+
+                            // Get a pointer to the global variable
+                            let ptr = global_var.as_pointer_value();
+
+                            // Store the variable's storage location in the global scope
+                            if let Some(global_scope) = self.scope_stack.global_scope_mut() {
+                                global_scope.add_variable(id.clone(), ptr, value_type.clone());
+                            }
+
+                            // Store the value to the global variable
+                            self.builder.build_store(ptr, value).unwrap();
+                            return Ok(());
+                        }
+                    }
+                } else if is_nonlocal {
+                    // Handle nonlocal variable assignment
+                    // Find the variable in an outer function scope
+                    let mut found_function = false;
+                    let mut found_ptr = None;
+
+                    for scope in self.scope_stack.scopes.iter().rev().skip(1) { // Skip current scope
+                        if found_function {
+                            // We're now in an outer function scope, look for the variable
+                            if let Some(ptr) = scope.get_variable(id) {
+                                found_ptr = Some(*ptr);
+                                break;
+                            }
+                        }
+
+                        // Mark when we've found the current function scope
+                        if scope.is_function {
+                            found_function = true;
+                        }
+                    }
+
+                    if let Some(ptr) = found_ptr {
+                        // Check if types are compatible
+                        if let Some(target_type) = self.lookup_variable_type(id) {
+                            // Convert value to target type if needed
+                            let converted_value = if target_type != value_type {
+                                self.convert_type(value, value_type, target_type)?
+                            } else {
+                                value
+                            };
+
+                            // Store the value to the nonlocal variable
+                            self.builder.build_store(ptr, converted_value).unwrap();
+                            return Ok(());
+                        }
+                    } else {
+                        return Err(format!("Nonlocal variable '{}' not found in outer scopes", id));
+                    }
+                }
+
+                // Normal variable assignment (not global or nonlocal)
                 if let Some(ptr) = self.get_variable_ptr(id) {
                     // Check if types are compatible
                     if let Some(target_type) = self.lookup_variable_type(id) {

@@ -387,10 +387,21 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 Ok(())
             },
 
-            // Compile global and nonlocal declarations
-            Stmt::Global { .. } | Stmt::Nonlocal { .. } => {
-                // These are scope declarations that affect variable resolution
-                // But don't generate actual code
+            // Compile global declarations
+            Stmt::Global { names, .. } => {
+                // Register each name as a global variable in the current scope
+                for name in names {
+                    self.declare_global(name.clone());
+                }
+                Ok(())
+            },
+
+            // Compile nonlocal declarations
+            Stmt::Nonlocal { names, .. } => {
+                // Register each name as a nonlocal variable in the current scope
+                for name in names {
+                    self.declare_nonlocal(name.clone());
+                }
                 Ok(())
             },
 
