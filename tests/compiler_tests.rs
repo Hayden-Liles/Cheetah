@@ -66,3 +66,7 @@ mod variable_scoping_test;
 // Include the global and nonlocal statement tests
 #[path = "more_tests/compiler/global_nonlocal_test.rs"]
 mod global_nonlocal_test;
+
+// Include the closure tests
+#[path = "more_tests/compiler/closure_test.rs"]
+mod closure_test;

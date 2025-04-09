@@ -23,13 +23,17 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Implement string concatenation
 - [x] Support for recursive function calls
 - [x] Implement proper variable scoping
-- [x] Implement Global and Nonlocal Statements
-- [ ] Improve Global Variable Access from nested scopes
-- [ ] Add Support for Closures
+- [x] Implement Global
+- [x] Add Support for Closures (basic infrastructure)
+- [x] Add Support for Nested Functions
+- [x] Implement Nonlocal Statements (basic support)
+- [x] Improve Global Variable Access from nested scopes
+- [ ] Fix LLVM validation issues with nonlocal variables in nested functions
+- [x] Add tests for closure support
+- [ ] Implement tuple
 
 ### Language Features
 - [ ] Complete implementation of for loops
-- [ ] Implement tuple operations
 - [ ] Support for the range() built-in function
 - [ ] Implement list operations
 - [ ] Add dictionary support

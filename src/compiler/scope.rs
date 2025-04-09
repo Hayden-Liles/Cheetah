@@ -3,7 +3,7 @@ use inkwell::values::PointerValue;
 use crate::compiler::types::Type;
 
 /// Represents a scope in the compilation context
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Scope<'ctx> {
     /// Maps variable names to their storage locations
     pub variables: HashMap<String, PointerValue<'ctx>>,
@@ -19,6 +19,11 @@ pub struct Scope<'ctx> {
     pub is_loop: bool,
     /// Whether this scope is a class scope
     pub is_class: bool,
+    /// Maps nonlocal variable names to their captured pointers
+    /// This is used for nested functions to access variables from outer scopes
+    pub captured_vars: HashMap<String, PointerValue<'ctx>>,
+    /// Variables that need to be heap-allocated because they're accessed by nested functions
+    pub heap_vars: Vec<String>,
 }
 
 impl<'ctx> Scope<'ctx> {
@@ -32,6 +37,8 @@ impl<'ctx> Scope<'ctx> {
             is_function,
             is_loop,
             is_class,
+            captured_vars: HashMap::new(),
+            heap_vars: Vec::new(),
         }
     }
 
@@ -51,6 +58,11 @@ impl<'ctx> Scope<'ctx> {
         self.types.insert(name, ty);
     }
 
+    /// Add a type to this scope
+    pub fn add_type(&mut self, name: String, ty: Type) {
+        self.types.insert(name, ty);
+    }
+
     /// Check if a variable is declared as global in this scope
     pub fn is_global(&self, name: &str) -> bool {
         self.global_vars.contains(&name.to_string())
@@ -59,6 +71,33 @@ impl<'ctx> Scope<'ctx> {
     /// Check if a variable is declared as nonlocal in this scope
     pub fn is_nonlocal(&self, name: &str) -> bool {
         self.nonlocal_vars.contains(&name.to_string())
+    }
+
+    /// Add a captured variable to this scope
+    pub fn add_captured_variable(&mut self, name: String, ptr: PointerValue<'ctx>) {
+        self.captured_vars.insert(name, ptr);
+    }
+
+    /// Get a captured variable's storage location
+    pub fn get_captured_variable(&self, name: &str) -> Option<&PointerValue<'ctx>> {
+        self.captured_vars.get(name)
+    }
+
+    /// Check if a variable is captured in this scope
+    pub fn is_captured(&self, name: &str) -> bool {
+        self.captured_vars.contains_key(name)
+    }
+
+    /// Mark a variable as needing heap allocation
+    pub fn mark_as_heap_var(&mut self, name: String) {
+        if !self.heap_vars.contains(&name) {
+            self.heap_vars.push(name);
+        }
+    }
+
+    /// Check if a variable needs heap allocation
+    pub fn is_heap_var(&self, name: &str) -> bool {
+        self.heap_vars.contains(&name.to_string())
     }
 
     /// Declare a variable as global in this scope
@@ -77,7 +116,7 @@ impl<'ctx> Scope<'ctx> {
 }
 
 /// Manages a stack of scopes during compilation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScopeStack<'ctx> {
     /// Stack of scopes, with the innermost scope at the end
     pub scopes: Vec<Scope<'ctx>>,
@@ -199,6 +238,62 @@ impl<'ctx> ScopeStack<'ctx> {
         }
     }
 
+    /// Capture a variable from an outer scope for use in the current scope
+    /// Returns true if the variable was found and captured, false otherwise
+    pub fn capture_variable(&mut self, name: &str) -> bool {
+        // Get the current scope index
+        let current_index = self.scopes.len() - 1;
+
+        // Look for the variable in outer scopes
+        let mut found_ptr = None;
+        let mut found_type = None;
+        let mut found_scope_index = 0;
+
+        // Skip the current scope and look in all outer scopes
+        for i in (0..current_index).rev() {
+            if let Some(ptr) = self.scopes[i].get_variable(name) {
+                found_ptr = Some(*ptr);
+                found_type = self.scopes[i].get_type(name).cloned();
+                found_scope_index = i;
+                break;
+            }
+        }
+
+        // If we found the variable, capture it in the current scope
+        if let (Some(ptr), Some(var_type)) = (found_ptr, found_type) {
+            if let Some(current_scope) = self.current_scope_mut() {
+                // Add the variable to the captured variables
+                current_scope.add_captured_variable(name.to_string(), ptr);
+
+                // Also add the type information
+                current_scope.add_type(name.to_string(), var_type);
+
+                // Mark the variable as needing heap allocation in its original scope
+                self.scopes[found_scope_index].mark_as_heap_var(name.to_string());
+
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Mark a variable as needing heap allocation in the current scope
+    pub fn mark_as_heap_var(&mut self, name: String) {
+        if let Some(scope) = self.current_scope_mut() {
+            scope.mark_as_heap_var(name);
+        }
+    }
+
+    /// Check if a variable needs heap allocation in the current scope
+    pub fn is_heap_var(&self, name: &str) -> bool {
+        if let Some(scope) = self.current_scope() {
+            scope.is_heap_var(name)
+        } else {
+            false
+        }
+    }
+
     /// Get a variable's storage location, respecting global and nonlocal declarations
     pub fn get_variable_respecting_declarations(&self, name: &str) -> Option<&PointerValue<'ctx>> {
         // Check if the variable is declared as global in the current scope
@@ -212,22 +307,24 @@ impl<'ctx> ScopeStack<'ctx> {
 
             // Check if the variable is declared as nonlocal
             if current_scope.is_nonlocal(name) {
-                // If it's declared as nonlocal, look it up in outer function scopes
-                let mut found_function = false;
+                // First check if it's a captured variable in the current scope
+                if let Some(ptr) = current_scope.get_captured_variable(name) {
+                    return Some(ptr);
+                }
 
-                for scope in self.scopes.iter().rev().skip(1) { // Skip current scope
-                    if found_function {
-                        // We're now in an outer function scope, look for the variable
-                        if let Some(ptr) = scope.get_variable(name) {
-                            return Some(ptr);
-                        }
-                    }
+                // If it's declared as nonlocal, look it up in outer scopes (not just function scopes)
+                // Start from the current scope's index - 1 (the outer scope)
+                let current_index = self.scopes.len() - 1;
 
-                    // Mark when we've found the current function scope
-                    if scope.is_function {
-                        found_function = true;
+                // Look in all outer scopes
+                for i in (0..current_index).rev() {
+                    if let Some(ptr) = self.scopes[i].get_variable(name) {
+                        return Some(ptr);
                     }
                 }
+
+                // If we get here, the nonlocal variable wasn't found
+                return None;
             }
         }
 

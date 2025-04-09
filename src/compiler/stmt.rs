@@ -1,5 +1,5 @@
 // In stmt.rs
-use crate::ast::Stmt;
+use crate::ast::{Stmt, Expr};
 use crate::compiler::context::CompilationContext;
 use crate::compiler::expr::{ExprCompiler, AssignmentCompiler, BinaryOpCompiler};
 use crate::compiler::types::Type;
@@ -21,11 +21,22 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
 
             // Compile an assignment statement
             Stmt::Assign { targets, value, .. } => {
+                // Debug print
+                println!("Compiling assignment statement");
+
                 // Compile the right-hand side expression
                 let (val, val_type) = self.compile_expr(value)?;
 
+                // Debug print
+                println!("Right-hand side value type: {:?}", val_type);
+
                 // For each target on the left-hand side, assign the value
                 for target in targets {
+                    // Debug print
+                    if let Expr::Name { id, .. } = target.as_ref() {
+                        println!("Assigning to variable: {}", id);
+                    }
+
                     self.compile_assignment(target, val, &val_type)?;
                 }
 
@@ -401,6 +412,18 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 // Register each name as a nonlocal variable in the current scope
                 for name in names {
                     self.declare_nonlocal(name.clone());
+
+                    // Check if we're in a nested function
+                    if let Some(current_function) = self.current_function {
+                        // Get the current function name
+                        let fn_name = current_function.get_name().to_string_lossy().to_string();
+
+                        // If this is a nested function (contains a dot in the name)
+                        if fn_name.contains('.') {
+                            // We'll handle the actual variable promotion in compile_nested_function_body
+                            println!("Marked '{}' as nonlocal in nested function '{}'", name, fn_name);
+                        }
+                    }
                 }
                 Ok(())
             },
@@ -468,9 +491,36 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 Err("Match statements not implemented yet".to_string())
             },
 
-            // Function and class definitions are handled separately in the Compiler
-            Stmt::FunctionDef { .. } | Stmt::ClassDef { .. } => {
-                Ok(()) // Functions and classes are handled at module level
+            // Class definitions are handled separately in the Compiler
+            Stmt::ClassDef { .. } => {
+                Ok(()) // Classes are handled at module level
+            },
+
+            // Function definitions within other functions (nested functions)
+            Stmt::FunctionDef { name, params, body, .. } => {
+                // Get the current function name to create a qualified name for the nested function
+                let parent_function_name = if let Some(current_function) = self.current_function {
+                    // Get the function name from the LLVM function value
+                    let fn_name = current_function.get_name().to_string_lossy().to_string();
+                    Some(fn_name)
+                } else {
+                    None
+                };
+
+                // Create a qualified name for the nested function
+                let qualified_name = if let Some(parent) = parent_function_name {
+                    format!("{}.{}", parent, name)
+                } else {
+                    name.clone()
+                };
+
+                // Declare the nested function
+                self.declare_nested_function(&qualified_name, params)?;
+
+                // Compile the nested function body
+                self.compile_nested_function_body(&qualified_name, params, body)?;
+
+                Ok(())
             },
         }
     }

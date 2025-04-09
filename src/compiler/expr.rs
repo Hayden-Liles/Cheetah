@@ -163,6 +163,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     false
                 };
 
+                // Check if the variable is declared as nonlocal in the current scope
+                let is_nonlocal = if let Some(current_scope) = self.scope_stack.current_scope() {
+                    current_scope.is_nonlocal(id)
+                } else {
+                    false
+                };
+
                 // If the variable is declared as global, look it up in the global scope
                 if is_global {
                     if let Some(global_scope) = self.scope_stack.global_scope() {
@@ -213,6 +220,27 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     ).unwrap();
 
                     return Ok((value, var_type));
+                }
+
+                // If the variable is declared as nonlocal, look it up in the current scope
+                // We've already set up the variable in the current scope to point to the outer scope
+                if is_nonlocal {
+                    // For nonlocal variables, we use the same approach as for normal variables
+                    if let Some(var_type) = self.lookup_variable_type(id) {
+                        // Look up variable storage location
+                        if let Some(ptr) = self.get_variable_ptr(id) {
+                            // Get the LLVM type for the variable
+                            let llvm_type = self.get_llvm_type(var_type);
+
+                            // Load the variable's value with the correct method signature
+                            let value = self.builder.build_load(llvm_type, ptr, id).unwrap();
+                            return Ok((value, var_type.clone()));
+                        } else {
+                            return Err(format!("Nonlocal variable '{}' not found", id));
+                        }
+                    } else {
+                        return Err(format!("Nonlocal variable '{}' not found", id));
+                    }
                 }
 
                 // Normal variable lookup
@@ -430,20 +458,62 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 return Err(format!("No str implementation available for type {:?}", arg_types[0]));
                             }
                         } else {
+                            // Check if we're in a function and this might be a nested function call
+                            let mut found_function = false;
+                            let mut qualified_name = String::new();
+
+                            if let Some(current_function) = self.current_function {
+                                // Get the current function name
+                                let current_name = current_function.get_name().to_string_lossy().to_string();
+
+                                // Try to find the nested function with a qualified name
+                                qualified_name = format!("{}.{}", current_name, id);
+
+                                // Debug print
+                                println!("Looking for nested function: {}", qualified_name);
+
+                                if self.module.get_function(&qualified_name).is_some() {
+                                    found_function = true;
+                                    println!("Found nested function: {}", qualified_name);
+                                }
+                            }
+
                             // Regular (non-polymorphic) function call
-                            let func_value = match self.functions.get(id) {
-                                Some(f) => *f,
-                                None => return Err(format!("Undefined function: {}", id)),
+                            let func_value = if found_function {
+                                // Use the qualified name for nested functions
+                                match self.module.get_function(&qualified_name) {
+                                    Some(f) => f,
+                                    None => return Err(format!("Undefined nested function: {}", qualified_name)),
+                                }
+                            } else {
+                                // Use the original name for regular functions
+                                match self.functions.get(id) {
+                                    Some(f) => *f,
+                                    None => return Err(format!("Undefined function: {}", id)),
+                                }
                             };
 
-                            // Convert to inkwell's BasicMetadataValueEnum
-                            let call_args: Vec<_> = arg_values
+                            // Check if this is a nested function call that needs a closure environment
+                            let mut call_args: Vec<_> = arg_values
                                 .iter()
                                 .map(|&v| v.into())
                                 .collect();
 
+                            // If this is a nested function, add the environment pointer as the last argument
+                            if found_function {
+                                // For now, we'll just pass a null pointer as the environment
+                                // In a full implementation, we would create and pass the actual environment
+                                let null_ptr = self.llvm_context.ptr_type(inkwell::AddressSpace::default())
+                                    .const_null().into();
+                                call_args.push(null_ptr);
+                            }
+
                             // Build the call instruction
-                            let call = self.builder.build_call(func_value, &call_args, "call").unwrap();
+                            let call = self.builder.build_call(
+                                func_value,
+                                &call_args,
+                                &format!("call_{}", if found_function { &qualified_name } else { id })
+                            ).unwrap();
 
                             // Get the return value if there is one
                             if let Some(ret_val) = call.try_as_basic_value().left() {
@@ -1450,26 +1520,9 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                     }
                 } else if is_nonlocal {
                     // Handle nonlocal variable assignment
-                    // Find the variable in an outer function scope
-                    let mut found_function = false;
-                    let mut found_ptr = None;
-
-                    for scope in self.scope_stack.scopes.iter().rev().skip(1) { // Skip current scope
-                        if found_function {
-                            // We're now in an outer function scope, look for the variable
-                            if let Some(ptr) = scope.get_variable(id) {
-                                found_ptr = Some(*ptr);
-                                break;
-                            }
-                        }
-
-                        // Mark when we've found the current function scope
-                        if scope.is_function {
-                            found_function = true;
-                        }
-                    }
-
-                    if let Some(ptr) = found_ptr {
+                    // For nonlocal variables, we use the same approach as for normal variables
+                    // because we've already set up the variable in the current scope to point to the outer scope
+                    if let Some(ptr) = self.get_variable_ptr(id) {
                         // Check if types are compatible
                         if let Some(target_type) = self.lookup_variable_type(id) {
                             // Convert value to target type if needed
@@ -1484,7 +1537,7 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                             return Ok(());
                         }
                     } else {
-                        return Err(format!("Nonlocal variable '{}' not found in outer scopes", id));
+                        return Err(format!("Nonlocal variable '{}' not found", id));
                     }
                 }
 

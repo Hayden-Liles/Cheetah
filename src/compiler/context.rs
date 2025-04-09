@@ -7,6 +7,9 @@ use inkwell::basic_block::BasicBlock;
 use crate::compiler::types::Type;
 use crate::compiler::types::is_reference_type;
 use crate::compiler::scope::ScopeStack;
+use crate::compiler::closure::ClosureEnvironment;
+use crate::ast;
+use crate::compiler::stmt::StmtCompiler;
 
 /// Loop context for managing break and continue statements
 pub struct LoopContext<'ctx> {
@@ -51,6 +54,12 @@ pub struct CompilationContext<'ctx> {
 
     /// Stack of variable scopes
     pub scope_stack: ScopeStack<'ctx>,
+
+    /// Map of function names to their closure environments
+    pub closure_environments: HashMap<String, ClosureEnvironment<'ctx>>,
+
+    /// Currently active closure environment (if any)
+    pub current_environment: Option<String>,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -72,6 +81,8 @@ impl<'ctx> CompilationContext<'ctx> {
             current_function: None,
             local_vars: HashMap::new(),
             scope_stack: ScopeStack::new(),
+            closure_environments: HashMap::new(),
+            current_environment: None,
         }
     }
 
@@ -140,7 +151,8 @@ impl<'ctx> CompilationContext<'ctx> {
             self.builder.position_at_end(entry_bb);
         }
 
-        // Create the alloca instruction
+        // For now, we'll just allocate all variables on the stack
+        // In a future implementation, we could add heap allocation for variables accessed by nested functions
         let llvm_type = self.get_llvm_type(ty);
         let ptr = self.builder.build_alloca(llvm_type, &name).unwrap();
 
@@ -149,6 +161,12 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // Store the variable's storage location
         self.variables.insert(name.clone(), ptr);
+
+        // Add the variable to the current scope
+        self.add_variable_to_scope(name.clone(), ptr, ty.clone());
+
+        // Debug print
+        println!("Added variable '{}' to current scope", name);
 
         // Register the variable type if not already present
         if !self.type_env.contains_key(&name) {
@@ -583,5 +601,239 @@ impl<'ctx> CompilationContext<'ctx> {
     /// Declare a variable as nonlocal in the current scope
     pub fn declare_nonlocal(&mut self, name: String) {
         self.scope_stack.declare_nonlocal(name);
+    }
+
+    /// Declare a nested function
+    pub fn declare_nested_function(&mut self, name: &str, params: &[ast::Parameter]) -> Result<(), String> {
+        // Get the LLVM context
+        let context = self.llvm_context;
+
+        // Create parameter types
+        let mut param_types = Vec::new();
+
+        // Process parameters
+        for _ in params {
+            // For now, all parameters are i64 (Int type)
+            param_types.push(context.i64_type().into());
+        }
+
+        // Create a closure environment for this function
+        self.create_closure_environment(name);
+
+        // Add an extra parameter for the closure environment (if needed)
+        // For now, we'll always add it, but in a more optimized implementation,
+        // we would only add it if the function captures variables
+        let env_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+        param_types.push(env_ptr_type.into());
+
+        // Create function type (for now, all functions return i64)
+        let return_type = context.i64_type();
+        let function_type = return_type.fn_type(&param_types, false);
+
+        // Create the function
+        let function = self.module.add_function(name, function_type, None);
+
+        // Register the function in our context
+        self.functions.insert(name.to_string(), function);
+
+        Ok(())
+    }
+
+    /// Compile a nested function body
+    pub fn compile_nested_function_body(&mut self, name: &str, params: &[ast::Parameter], body: &[Box<ast::Stmt>]) -> Result<(), String> {
+        // Get the LLVM context
+        let context = self.llvm_context;
+
+        // Get the function
+        let function = match self.functions.get(name) {
+            Some(&f) => f,
+            None => return Err(format!("Function {} not found", name)),
+        };
+
+        // Create a basic block for the function
+        let basic_block = context.append_basic_block(function, "entry");
+
+        // Save the current position
+        let current_block = self.builder.get_insert_block();
+
+        // Position at the end of the new block
+        self.builder.position_at_end(basic_block);
+
+        // Debug print
+        println!("Compiling nested function body for {}", name);
+        println!("Current scope stack size: {}", self.scope_stack.scopes.len());
+
+        // Create a new scope for the function
+        self.push_scope(true, false, false); // Create a new scope for the function (is_function=true)
+
+        // Debug print
+        println!("After pushing function scope, stack size: {}", self.scope_stack.scopes.len());
+
+        // For backward compatibility
+        let mut local_vars = HashMap::new();
+
+        // Add parameters to the local variables
+        for (i, param) in params.iter().enumerate() {
+            let param_value = function.get_nth_param(i as u32).unwrap();
+
+            // Create an alloca for this variable
+            let alloca = self.builder.build_alloca(context.i64_type(), &param.name).unwrap();
+
+            // Store the parameter value in the alloca
+            self.builder.build_store(alloca, param_value).unwrap();
+
+            // Remember the alloca for this variable
+            local_vars.insert(param.name.clone(), alloca);
+
+            // Add the parameter to the current scope
+            self.add_variable_to_scope(param.name.clone(), alloca, Type::Int);
+
+            // Debug print
+            println!("Added parameter '{}' to function scope", param.name);
+
+            // Register the parameter type in the type environment (for backward compatibility)
+            self.register_variable(param.name.clone(), Type::Int);
+        }
+
+        // Get the closure environment parameter (last parameter)
+        let env_param = function.get_nth_param(params.len() as u32).unwrap();
+
+        // Create an alloca for the environment pointer
+        let env_alloca = self.builder.build_alloca(context.ptr_type(inkwell::AddressSpace::default()), "env_ptr").unwrap();
+
+        // Store the environment parameter in the alloca
+        self.builder.build_store(env_alloca, env_param).unwrap();
+
+        // Set the current environment
+        self.set_current_environment(name.to_string());
+
+        // Pre-process the body to find nonlocal declarations
+        let mut nonlocal_vars = Vec::new();
+        for stmt in body {
+            if let ast::Stmt::Nonlocal { names, .. } = stmt.as_ref() {
+                for name in names {
+                    nonlocal_vars.push(name.clone());
+                }
+            }
+        }
+
+        // For each nonlocal variable, add it to the closure environment
+        for var_name in &nonlocal_vars {
+            // Declare the variable as nonlocal in the current scope
+            self.scope_stack.declare_nonlocal(var_name.clone());
+
+            // Find the variable in the outer scope
+            let mut found_ptr = None;
+            let mut found_type = None;
+
+            // Get the current scope index
+            let current_index = self.scope_stack.scopes.len() - 1;
+
+            // Look in all outer scopes
+            for i in (0..current_index).rev() {
+                if let Some(ptr) = self.scope_stack.scopes[i].get_variable(var_name) {
+                    found_ptr = Some(*ptr);
+                    found_type = self.scope_stack.scopes[i].get_type(var_name).cloned();
+                    println!("Found nonlocal variable '{}' in outer scope {}", var_name, i);
+                    break;
+                }
+            }
+
+            if let (Some(ptr), Some(var_type)) = (found_ptr, found_type) {
+                // Add the variable to the closure environment
+                if let Some(env) = self.get_closure_environment_mut(name) {
+                    env.add_variable(var_name.clone(), ptr, var_type.clone());
+                    println!("Added nonlocal variable '{}' to closure environment for {}", var_name, name);
+                }
+
+                // Register the variable type
+                self.register_variable(var_name.clone(), var_type.clone());
+
+                // Add the variable to the current scope with the same pointer
+                // This is a temporary solution - in a full implementation, we would
+                // access the variable through the environment
+                self.add_variable_to_scope(var_name.clone(), ptr, var_type.clone());
+
+                // Also add it to local_vars for backward compatibility
+                local_vars.insert(var_name.clone(), ptr);
+            } else {
+                return Err(format!("Nonlocal variable '{}' not found in outer scopes", var_name));
+            }
+        }
+
+        // Save the current function and local variables
+        let old_function = self.current_function;
+        let old_local_vars = std::mem::replace(&mut self.local_vars, local_vars);
+
+        // Set the current function
+        self.current_function = Some(function);
+
+        // Compile the function body
+        for stmt in body {
+            self.compile_stmt(stmt.as_ref())?;
+        }
+
+        // If the function doesn't end with a return statement, add one
+        if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+            // Return 0 by default
+            let zero = context.i64_type().const_int(0, false);
+            self.builder.build_return(Some(&zero)).unwrap();
+        }
+
+        // Restore the previous function and local variables
+        self.current_function = old_function;
+        self.local_vars = old_local_vars;
+
+        // Clear the current environment
+        self.current_environment = None;
+
+        // Pop the function scope
+        self.pop_scope();
+
+        // Restore the previous position
+        if let Some(block) = current_block {
+            self.builder.position_at_end(block);
+        }
+
+        Ok(())
+    }
+
+    /// Create a new closure environment for a function
+    pub fn create_closure_environment(&mut self, function_name: &str) {
+        let env = ClosureEnvironment::new(function_name.to_string());
+        self.closure_environments.insert(function_name.to_string(), env);
+    }
+
+    /// Get a closure environment by function name
+    pub fn get_closure_environment(&self, function_name: &str) -> Option<&ClosureEnvironment<'ctx>> {
+        self.closure_environments.get(function_name)
+    }
+
+    /// Get a mutable reference to a closure environment by function name
+    pub fn get_closure_environment_mut(&mut self, function_name: &str) -> Option<&mut ClosureEnvironment<'ctx>> {
+        self.closure_environments.get_mut(function_name)
+    }
+
+    /// Set the current closure environment
+    pub fn set_current_environment(&mut self, function_name: String) {
+        self.current_environment = Some(function_name);
+    }
+
+    /// Get the current closure environment (if any)
+    pub fn current_environment(&self) -> Option<&ClosureEnvironment<'ctx>> {
+        if let Some(name) = &self.current_environment {
+            self.get_closure_environment(name)
+        } else {
+            None
+        }
+    }
+
+    /// Get a mutable reference to the current closure environment (if any)
+    pub fn current_environment_mut(&mut self) -> Option<&mut ClosureEnvironment<'ctx>> {
+        if let Some(name) = self.current_environment.clone() {
+            self.get_closure_environment_mut(&name)
+        } else {
+            None
+        }
     }
 }

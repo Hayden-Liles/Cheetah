@@ -6,6 +6,7 @@ pub mod expr;
 pub mod stmt;
 pub mod runtime;
 pub mod scope;
+pub mod closure;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;
