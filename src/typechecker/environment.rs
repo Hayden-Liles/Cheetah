@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 /// Represents a scope in the type environment
 #[derive(Debug, Clone)]
-struct Scope {
+pub struct Scope {
     /// Maps variable names to their types
     variables: HashMap<String, Type>,
     /// Maps function names to their types
@@ -30,6 +30,14 @@ pub struct TypeEnvironment {
     scopes: Vec<Scope>,
     /// Current return type for function checking
     current_return_type: Option<Type>,
+}
+
+// Make Scope public so it can be accessed from outside
+impl Scope {
+    /// Get a reference to the variables in this scope
+    pub fn get_variables(&self) -> &HashMap<String, Type> {
+        &self.variables
+    }
 }
 
 impl TypeEnvironment {
@@ -171,5 +179,10 @@ impl TypeEnvironment {
         self.lookup_variable(name).is_some() ||
         self.lookup_function(name).is_some() ||
         self.lookup_class(name).is_some()
+    }
+
+    /// Get a reference to the current (innermost) scope
+    pub fn get_current_scope(&self) -> Option<&Scope> {
+        self.scopes.last()
     }
 }

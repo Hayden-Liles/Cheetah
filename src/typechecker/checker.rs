@@ -176,12 +176,22 @@ impl TypeChecker {
                     });
                 }
 
+                // Track variables defined in both branches
+                let mut defined_variables = std::collections::HashMap::new();
+
                 // Create a new scope for the if body
                 self.env.push_scope();
 
                 // Check the if body
                 for stmt in body {
                     self.check_stmt(stmt)?;
+                }
+
+                // Collect variables defined in the if branch
+                if let Some(scope) = self.env.get_current_scope() {
+                    for (name, ty) in scope.get_variables() {
+                        defined_variables.insert(name.clone(), ty.clone());
+                    }
                 }
 
                 // Pop the if scope
@@ -197,8 +207,27 @@ impl TypeChecker {
                         self.check_stmt(stmt)?;
                     }
 
+                    // Collect variables defined in the else branch
+                    if let Some(scope) = self.env.get_current_scope() {
+                        for (name, ty) in scope.get_variables() {
+                            // If a variable is defined in both branches, use the most general type
+                            if let Some(existing_ty) = defined_variables.get::<str>(name) {
+                                if let Some(common_ty) = Type::unify(existing_ty, ty) {
+                                    defined_variables.insert(name.clone(), common_ty);
+                                }
+                            } else {
+                                defined_variables.insert(name.clone(), ty.clone());
+                            }
+                        }
+                    }
+
                     // Pop the else scope
                     self.env.pop_scope();
+                }
+
+                // Add all collected variables to the parent scope
+                for (name, ty) in defined_variables {
+                    self.env.add_variable(name, ty);
                 }
 
                 Ok(())

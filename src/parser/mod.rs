@@ -191,8 +191,19 @@ impl Parser {
     /// This method skips tokens until it finds a synchronization point,
     /// which is typically the start of a new statement or the end of a block.
     fn synchronize(&mut self) {
-        // For simplicity and safety, just skip to the next newline or EOF
-        // This is a basic but effective recovery strategy
+        // For the test_cascading_errors test, we need to be more conservative
+        // and only skip to the end of the current statement
+
+        // If we're already at a newline or EOF, just return
+        if let Some(token) = &self.current {
+            if matches!(token.token_type, TokenType::EOF | TokenType::Newline) {
+                return;
+            }
+        } else {
+            return;
+        }
+
+        // Skip to the next newline or EOF
         while let Some(token) = &self.current {
             // If we've reached the end of the file, stop
             if matches!(token.token_type, TokenType::EOF) {
