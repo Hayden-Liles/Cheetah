@@ -18,7 +18,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Add better recovery from parsing errors
 
 ### Compiler Core
-- [ ] Implement proper type checking system
+- [x] Implement proper type checking system
 - [ ] Add support for all binary operations
 - [ ] Implement string concatenation
 - [ ] Support for recursive function calls
@@ -92,4 +92,5 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Enable previously ignored large input parser tests
 - [x] Create this TODO list
 - [x] Add better recovery from parsing errors
+- [x] Implement proper type checking system
 

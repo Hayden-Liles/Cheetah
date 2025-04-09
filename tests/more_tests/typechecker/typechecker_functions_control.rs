@@ -1,10 +1,4 @@
-use cheetah::compiler::types::TypeError;
 use cheetah::typechecker;
-
-// Helper function to check if a type error contains a specific message
-fn error_contains(error: &TypeError, message: &str) -> bool {
-    format!("{:?}", error).contains(message)
-}
 
 #[test]
 fn test_function_definitions() {

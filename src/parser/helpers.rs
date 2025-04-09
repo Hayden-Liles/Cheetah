@@ -30,48 +30,48 @@ pub const ERR_EXPECTED_NEWLINE: &str = "Expected newline";
 pub trait TokenMatching {
     /// Check if the current token matches the expected type
     fn check(&self, expected_type: TokenType) -> bool;
-    
+
     /// Check if the current token is one of several types
     #[allow(dead_code)]
     fn check_any(&self, types: &[TokenType]) -> bool;
-    
+
     /// Match and consume a token if it's the expected type
     fn match_token(&mut self, expected_type: TokenType) -> bool;
-    
+
     /// Peek at the next token
     fn peek_matches(&self, expected_type: TokenType) -> bool;
-    
+
     /// Expect and consume a token of the given type, or return an error
     #[allow(dead_code)]
     fn expect(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError>;
-    
+
     fn consume_attribute_name(&mut self, expected: &str) -> Result<String, ParseError>;
 
     fn get_keyword_name(&self, token_type: &TokenType) -> String;
 
     /// Consume a token of the given type, or return an error
     fn consume(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError>;
-    
+
     /// Consume a newline token
     fn consume_newline(&mut self) -> Result<(), ParseError>;
-    
+
     fn is_keyword_token(&self) -> bool;
 
     /// Check if the current token is a newline
     fn check_newline(&self) -> bool;
-    
+
     /// Consume an identifier token
     fn consume_identifier(&mut self, expected: &str) -> Result<String, ParseError>;
-    
+
     /// Consume a dotted name (like module.submodule)
     fn consume_dotted_name(&mut self, expected: &str) -> Result<String, ParseError>;
-    
+
     /// Create a syntax error at the current position
     fn syntax_error<T>(&self, message: &str) -> Result<T, ParseError>;
-    
+
     /// Create an EOF error
     fn unexpected_eof<T>(&self, expected: &str) -> Result<T, ParseError>;
-    
+
     /// Token matching utility function
     fn token_matches(&self, a: &TokenType, b: &TokenType) -> bool;
 }
@@ -83,11 +83,11 @@ impl TokenMatching for Parser {
             None => false,
         }
     }
-    
+
     fn check_any(&self, types: &[TokenType]) -> bool {
         types.iter().any(|t| self.check(t.clone()))
     }
-    
+
     fn match_token(&mut self, expected_type: TokenType) -> bool {
         if self.check(expected_type) {
             self.advance();
@@ -96,7 +96,7 @@ impl TokenMatching for Parser {
             false
         }
     }
-    
+
     fn peek_matches(&self, expected_type: TokenType) -> bool {
         if let Some(token) = self.tokens.front() {
             self.token_matches(&token.token_type, &expected_type)
@@ -104,7 +104,7 @@ impl TokenMatching for Parser {
             false
         }
     }
-    
+
     fn expect(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError> {
         if self.check(expected_type) {
             Ok(self.advance().unwrap())
@@ -178,7 +178,7 @@ impl TokenMatching for Parser {
             None => Err(ParseError::eof(expected, self.last_position().0, self.last_position().1)),
         }
     }
-    
+
     fn consume(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError> {
         match &self.current {
             Some(token) => {
@@ -231,7 +231,7 @@ impl TokenMatching for Parser {
             None => false,
         }
     }
-    
+
     fn consume_newline(&mut self) -> Result<(), ParseError> {
         if self.match_token(TokenType::SemiColon) {
             // After consuming a semicolon, check if there are more statements on the same line
@@ -239,7 +239,7 @@ impl TokenMatching for Parser {
                 return Ok(()); // Allow continuing to parse more statements on the same line
             }
         }
-        
+
         if !self.check_newline() && !self.check(TokenType::EOF) && !self.check(TokenType::Dedent) {
             // Check for unexpected delimiters and provide a more specific error message
             if let Some(token) = &self.current {
@@ -256,7 +256,7 @@ impl TokenMatching for Parser {
                     _ => {}
                 }
             }
-            
+
             return Err(ParseError::InvalidSyntax {
                 message: "Expected newline after statement".to_string(),
                 line: self.current.as_ref().map_or(0, |t| t.line),
@@ -264,19 +264,19 @@ impl TokenMatching for Parser {
                 suggestion: None
             });
         }
-        
+
         while self.match_token(TokenType::Newline) {}
-        
+
         Ok(())
     }
-    
+
     fn check_newline(&self) -> bool {
         match &self.current {
             Some(token) => matches!(token.token_type, TokenType::Newline),
             None => false,
         }
     }
-    
+
     fn consume_identifier(&mut self, expected: &str) -> Result<String, ParseError> {
         match &self.current {
             Some(token) => match &token.token_type {
@@ -290,7 +290,7 @@ impl TokenMatching for Parser {
             None => Err(ParseError::eof(expected, self.last_position().0, self.last_position().1)),
         }
     }
-    
+
     fn consume_dotted_name(&mut self, expected: &str) -> Result<String, ParseError> {
         let mut name = self.consume_identifier(expected)?;
 
@@ -301,10 +301,10 @@ impl TokenMatching for Parser {
 
         Ok(name)
     }
-    
+
     fn syntax_error<T>(&self, message: &str) -> Result<T, ParseError> {
         let (line, column) = self.current_position();
-        
+
         Err(ParseError::InvalidSyntax {
             message: message.to_string(),
             line,
@@ -312,10 +312,10 @@ impl TokenMatching for Parser {
             suggestion: None
         })
     }
-    
+
     fn unexpected_eof<T>(&self, expected: &str) -> Result<T, ParseError> {
         let (line, column) = self.last_position();
-        
+
         Err(ParseError::EOF {
             expected: expected.to_string(),
             line,
@@ -323,7 +323,7 @@ impl TokenMatching for Parser {
             suggestion: None
         })
     }
-    
+
     fn token_matches(&self, actual: &TokenType, expected: &TokenType) -> bool {
         match (actual, expected) {
             // Handle token types with values
@@ -334,7 +334,7 @@ impl TokenMatching for Parser {
             (TokenType::FString(_), TokenType::FString(_)) => true,
             (TokenType::RawString(_), TokenType::RawString(_)) => true,
             (TokenType::BytesLiteral(_), TokenType::BytesLiteral(_)) => true,
-            
+
             // For all other token types, compare the discriminant
             _ => std::mem::discriminant(actual) == std::mem::discriminant(expected),
         }
@@ -346,23 +346,23 @@ pub trait AstBuilder {
     /// Create a new identifier expression
     #[allow(dead_code)]
     fn create_identifier(&self, name: &str, line: usize, column: usize) -> crate::ast::Expr;
-    
+
     /// Create a new string literal expression
     #[allow(dead_code)]
     fn create_string(&self, value: &str, line: usize, column: usize) -> crate::ast::Expr;
-    
+
     /// Create a new integer literal expression
     #[allow(dead_code)]
     fn create_integer(&self, value: i64, line: usize, column: usize) -> crate::ast::Expr;
-    
+
     /// Create a new float literal expression
     #[allow(dead_code)]
     fn create_float(&self, value: f64, line: usize, column: usize) -> crate::ast::Expr;
-    
+
     /// Create a new boolean literal expression
     #[allow(dead_code)]
     fn create_boolean(&self, value: bool, line: usize, column: usize) -> crate::ast::Expr;
-    
+
     /// Create a new None literal expression
     #[allow(dead_code)]
     fn create_none(&self, line: usize, column: usize) -> crate::ast::Expr;
@@ -377,7 +377,7 @@ impl AstBuilder for Parser {
             column,
         }
     }
-    
+
     fn create_string(&self, value: &str, line: usize, column: usize) -> crate::ast::Expr {
         crate::ast::Expr::Str {
             value: value.to_string(),
@@ -385,7 +385,7 @@ impl AstBuilder for Parser {
             column,
         }
     }
-    
+
     fn create_integer(&self, value: i64, line: usize, column: usize) -> crate::ast::Expr {
         crate::ast::Expr::Num {
             value: crate::ast::Number::Integer(value),
@@ -393,7 +393,7 @@ impl AstBuilder for Parser {
             column,
         }
     }
-    
+
     fn create_float(&self, value: f64, line: usize, column: usize) -> crate::ast::Expr {
         crate::ast::Expr::Num {
             value: crate::ast::Number::Float(value),
@@ -401,7 +401,7 @@ impl AstBuilder for Parser {
             column,
         }
     }
-    
+
     fn create_boolean(&self, value: bool, line: usize, column: usize) -> crate::ast::Expr {
         crate::ast::Expr::NameConstant {
             value: if value {
@@ -413,7 +413,7 @@ impl AstBuilder for Parser {
             column,
         }
     }
-    
+
     fn create_none(&self, line: usize, column: usize) -> crate::ast::Expr {
         crate::ast::Expr::NameConstant {
             value: crate::ast::NameConstant::None,

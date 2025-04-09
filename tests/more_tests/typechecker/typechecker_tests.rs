@@ -1,4 +1,3 @@
-use cheetah::ast::Module;
 use cheetah::compiler::types::TypeError;
 use cheetah::typechecker;
 
