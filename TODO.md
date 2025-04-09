@@ -21,8 +21,11 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Implement proper type checking system
 - [x] Add support for all binary operations
 - [x] Implement string concatenation
-- [ ] Support for recursive function calls
-- [ ] Implement proper variable scoping
+- [x] Support for recursive function calls
+- [x] Implement proper variable scoping
+- [ ] Implement Global and Nonlocal Statements
+- [ ] Improve Global Variable Access from nested scopes
+- [ ] Add Support for Closures
 
 ### Language Features
 - [ ] Complete implementation of for loops
@@ -93,4 +96,6 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Create this TODO list
 - [x] Add better recovery from parsing errors
 - [x] Implement proper type checking system
+- [x] Support for recursive function calls
+- [x] Implement proper variable scoping
 

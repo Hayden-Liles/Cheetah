@@ -5,6 +5,7 @@ pub mod context;
 pub mod expr;
 pub mod stmt;
 pub mod runtime;
+pub mod scope;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;
@@ -277,6 +278,9 @@ impl<'ctx> Compiler<'ctx> {
         self.context.builder.position_at_end(basic_block);
 
         // Create a new scope for the function
+        self.context.push_scope(true, false, false); // Create a new scope for the function (is_function=true)
+
+        // For backward compatibility
         let mut local_vars = HashMap::new();
 
         // Add parameters to the local variables
@@ -292,9 +296,14 @@ impl<'ctx> Compiler<'ctx> {
             // Remember the alloca for this variable
             local_vars.insert(param.name.clone(), alloca);
 
-            // Register the parameter type in the type environment
+            // Add the parameter to the current scope
+            self.context.add_variable_to_scope(param.name.clone(), alloca, Type::Int);
+
+            // Register the parameter type in the type environment (for backward compatibility)
             self.context.register_variable(param.name.clone(), Type::Int);
         }
+
+        // Note: Global variables will be accessed directly through the get_variable_ptr method
 
         // Save the current function and local variables
         let old_function = self.context.current_function;
@@ -318,6 +327,9 @@ impl<'ctx> Compiler<'ctx> {
         // Restore the previous function and local variables
         self.context.current_function = old_function;
         self.context.local_vars = old_local_vars;
+
+        // Pop the function scope
+        self.context.pop_scope();
 
         // Restore the previous position
         if let Some(block) = current_block {

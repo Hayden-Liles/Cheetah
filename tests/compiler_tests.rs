@@ -58,3 +58,7 @@ mod string_ops_test;
 // Include the recursive function tests
 #[path = "more_tests/compiler/recursive_function_test.rs"]
 mod recursive_function_test;
+
+// Include the variable scoping tests
+#[path = "more_tests/compiler/variable_scoping_test.rs"]
+mod variable_scoping_test;

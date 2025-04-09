@@ -167,7 +167,34 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         let value = self.builder.build_load(llvm_type, ptr, id).unwrap();
                         Ok((value, var_type.clone()))
                     } else {
-                        Err(format!("Variable '{}' has no allocated storage", id))
+                        // This is a global variable that exists in the type environment but not in the variables map
+                        // We need to allocate it
+                        let var_type_clone = var_type.clone();
+
+                        // Create a global variable
+                        let global_var = self.module.add_global(
+                            self.get_llvm_type(&var_type_clone).into_int_type(),
+                            None,
+                            id
+                        );
+
+                        // Initialize with zero
+                        global_var.set_initializer(&self.llvm_context.i64_type().const_zero());
+
+                        // Get a pointer to the global variable
+                        let ptr = global_var.as_pointer_value();
+
+                        // Store the variable's storage location
+                        self.variables.insert(id.to_string(), ptr);
+
+                        // Load the variable's value
+                        let value = self.builder.build_load(
+                            self.get_llvm_type(&var_type_clone),
+                            ptr,
+                            id
+                        ).unwrap();
+
+                        Ok((value, var_type_clone))
                     }
                 } else {
                     Err(format!("Undefined variable: {}", id))

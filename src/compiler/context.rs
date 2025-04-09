@@ -6,6 +6,7 @@ use inkwell::values::BasicValueEnum;
 use inkwell::basic_block::BasicBlock;
 use crate::compiler::types::Type;
 use crate::compiler::types::is_reference_type;
+use crate::compiler::scope::ScopeStack;
 
 /// Loop context for managing break and continue statements
 pub struct LoopContext<'ctx> {
@@ -47,6 +48,9 @@ pub struct CompilationContext<'ctx> {
 
     /// Local variables in the current function scope
     pub local_vars: HashMap<String, inkwell::values::PointerValue<'ctx>>,
+
+    /// Stack of variable scopes
+    pub scope_stack: ScopeStack<'ctx>,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -67,6 +71,7 @@ impl<'ctx> CompilationContext<'ctx> {
             polymorphic_functions: HashMap::new(),
             current_function: None,
             local_vars: HashMap::new(),
+            scope_stack: ScopeStack::new(),
         }
     }
 
@@ -82,6 +87,12 @@ impl<'ctx> CompilationContext<'ctx> {
 
     /// Look up a variable's type
     pub fn lookup_variable_type(&self, name: &str) -> Option<&Type> {
+        // First check the scope stack
+        if let Some(ty) = self.scope_stack.get_type(name) {
+            return Some(ty);
+        }
+
+        // Then check the global type environment
         self.type_env.get(name)
     }
 
@@ -106,10 +117,13 @@ impl<'ctx> CompilationContext<'ctx> {
     pub fn declare_variable(&mut self, name: String, init_value: BasicValueEnum<'ctx>,
                            value_type: &Type) -> Result<(), String> {
         // Allocate storage for the variable
-        let ptr = self.allocate_variable(name, value_type);
+        let ptr = self.allocate_variable(name.clone(), value_type);
 
         // Store the initial value
         self.builder.build_store(ptr, init_value).unwrap();
+
+        // Add the variable to the current scope
+        self.scope_stack.add_variable(name, ptr, value_type.clone());
 
         Ok(())
     }
@@ -146,13 +160,37 @@ impl<'ctx> CompilationContext<'ctx> {
 
     /// Get the storage location for a variable
     pub fn get_variable_ptr(&self, name: &str) -> Option<inkwell::values::PointerValue<'ctx>> {
-        // First check local variables (function parameters and local variables)
+        // First check the scope stack
+        if let Some(ptr) = self.scope_stack.get_variable(name) {
+            return Some(*ptr);
+        }
+
+        // For backward compatibility, check local variables
         if let Some(&ptr) = self.local_vars.get(name) {
             return Some(ptr);
         }
 
         // Then check global variables
         self.variables.get(name).copied()
+    }
+
+    /// Ensure a variable exists in the current scope or create it if it's a global variable
+    pub fn ensure_variable(&mut self, name: &str) -> Option<inkwell::values::PointerValue<'ctx>> {
+        // First try to get the variable from existing storage
+        if let Some(ptr) = self.get_variable_ptr(name) {
+            return Some(ptr);
+        }
+
+        // If not found, check if it's a global variable that needs to be created
+        if self.type_env.contains_key(name) {
+            // This is a global variable that exists in the type environment but not in the variables map
+            // We need to allocate it
+            let ty = self.type_env.get(name).unwrap().clone();
+            let ptr = self.allocate_variable(name.to_string(), &ty);
+            return Some(ptr);
+        }
+
+        None
     }
 
     /// Push a new loop context onto the stack
@@ -520,5 +558,20 @@ impl<'ctx> CompilationContext<'ctx> {
             }
         }
         None
+    }
+
+    /// Push a new scope onto the stack
+    pub fn push_scope(&mut self, is_function: bool, is_loop: bool, is_class: bool) {
+        self.scope_stack.push_scope(is_function, is_loop, is_class);
+    }
+
+    /// Pop the innermost scope from the stack
+    pub fn pop_scope(&mut self) {
+        self.scope_stack.pop_scope();
+    }
+
+    /// Add a variable to the current scope
+    pub fn add_variable_to_scope(&mut self, name: String, ptr: inkwell::values::PointerValue<'ctx>, ty: Type) {
+        self.scope_stack.add_variable(name, ptr, ty);
     }
 }
