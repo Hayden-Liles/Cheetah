@@ -19,8 +19,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 
 ### Compiler Core
 - [x] Implement proper type checking system
-- [ ] Add support for all binary operations
-- [ ] Implement string concatenation
+- [x] Add support for all binary operations
+- [x] Implement string concatenation
 - [ ] Support for recursive function calls
 - [ ] Implement proper variable scoping
 
