@@ -23,7 +23,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Implement string concatenation
 - [x] Support for recursive function calls
 - [x] Implement proper variable scoping
-- [ ] Implement Global and Nonlocal Statements
+- [x] Implement Global and Nonlocal Statements
 - [ ] Improve Global Variable Access from nested scopes
 - [ ] Add Support for Closures
 
@@ -90,13 +90,4 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - Explore WASM as a target platform
 - Look into Python 3.10+ features to support
 - Research performance improvements for numeric operations
-
-## Recently Completed
-- [x] Fix comprehension_conditions5 test
-- [x] Enable previously ignored large input parser tests
-- [x] Create this TODO list
-- [x] Add better recovery from parsing errors
-- [x] Implement proper type checking system
-- [x] Support for recursive function calls
-- [x] Implement proper variable scoping
 
