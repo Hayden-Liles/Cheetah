@@ -732,19 +732,35 @@ impl<'ctx> CompilationContext<'ctx> {
                 // Get the current scope index
                 let current_index = self.scope_stack.scopes.len() - 1;
 
-                // Look in all outer scopes
-                for i in (0..current_index).rev() {
-                    if let Some(ptr) = self.scope_stack.scopes[i].get_variable(var_name) {
+                // For nonlocal variables, we need to look in the immediate outer scope first
+                // This is important for handling shadowing correctly
+                if current_index > 0 {
+                    let parent_scope_index = current_index - 1;
+                    if let Some(ptr) = self.scope_stack.scopes[parent_scope_index].get_variable(var_name) {
                         found_ptr = Some(*ptr);
-                        found_type = self.scope_stack.scopes[i].get_type(var_name).cloned();
-                        println!("Found nonlocal variable '{}' in outer scope {}", var_name, i);
-                        break;
+                        found_type = self.scope_stack.scopes[parent_scope_index].get_type(var_name).cloned();
+                        println!("Found nonlocal variable '{}' in immediate outer scope {}", var_name, parent_scope_index);
+                    }
+                }
+
+                // If not found in the immediate outer scope, look in all outer scopes
+                if found_ptr.is_none() {
+                    for i in (0..current_index).rev() {
+                        if let Some(ptr) = self.scope_stack.scopes[i].get_variable(var_name) {
+                            found_ptr = Some(*ptr);
+                            found_type = self.scope_stack.scopes[i].get_type(var_name).cloned();
+                            println!("Found nonlocal variable '{}' in outer scope {}", var_name, i);
+                            break;
+                        }
                     }
                 }
 
                 if let (Some(_ptr), Some(var_type)) = (found_ptr, found_type) {
-                    // Create a unique name for the nonlocal variable
-                    let global_name = format!("__nonlocal_{}", var_name);
+                    // Create a unique name for the nonlocal variable that includes the function name
+                    // This ensures that each level of nesting has its own global variable
+                    // Get the current function name
+                    let function_name = name;
+                    let global_name = format!("__nonlocal_{}_{}", function_name.replace('.', "_"), var_name);
 
                     // Get the LLVM type for the variable
                     let llvm_type = self.get_llvm_type(&var_type);

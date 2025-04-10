@@ -188,6 +188,59 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 }
                             }
                         }
+
+                        // If we didn't find a mapping, check if there's a global variable with a name that matches this variable
+                        // Try different formats of the global name (with and without function prefix)
+                        let simple_global_name = format!("__nonlocal_{}", id);
+
+                        // Get the current function name if available
+                        let current_function = if let Some(func) = self.builder.get_insert_block().unwrap().get_parent() {
+                            func.get_name().to_string_lossy().to_string()
+                        } else {
+                            "".to_string()
+                        };
+
+                        // Try to find the global variable with different name patterns
+                        let mut global_var = None;
+
+                        // First try with the current function name
+                        if !current_function.is_empty() {
+                            let func_global_name = format!("__nonlocal_{}_{}", current_function.replace('.', "_"), id);
+                            if let Some(var) = self.module.get_global(&func_global_name) {
+                                global_var = Some(var);
+                            }
+
+                            // Try with parent function names if this is a nested function
+                            if global_var.is_none() && current_function.contains('.') {
+                                let parts: Vec<&str> = current_function.split('.').collect();
+                                for i in 1..parts.len() {
+                                    let parent_name = parts[..i].join(".");
+                                    let parent_global_name = format!("__nonlocal_{}_{}", parent_name.replace('.', "_"), id);
+                                    if let Some(var) = self.module.get_global(&parent_global_name) {
+                                        global_var = Some(var);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Finally try with the simple name
+                        if global_var.is_none() {
+                            if let Some(var) = self.module.get_global(&simple_global_name) {
+                                global_var = Some(var);
+                            }
+                        }
+
+                        if let Some(global_var) = global_var {
+                            // Get the variable type (assume it's an integer for now)
+                            let var_type = Type::Int;
+                            let llvm_type = self.get_llvm_type(&var_type);
+
+                            // Load the value from the global variable
+                            let value = self.builder.build_load(llvm_type, global_var.as_pointer_value(), &format!("load_{}_global", id)).unwrap();
+                            println!("Loaded nonlocal variable '{}' from global variable", id);
+                            return Ok((value, var_type));
+                        }
                     }
                 }
 
@@ -514,11 +567,39 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 }
                             };
 
-                            // Check if this is a nested function call that needs a closure environment
-                            let mut call_args: Vec<_> = arg_values
-                                .iter()
-                                .map(|&v| v.into())
-                                .collect();
+                            // Get the parameter types from the function
+                            let param_types = func_value.get_type().get_param_types();
+
+                            // Convert arguments to match parameter types if needed
+                            let mut call_args = Vec::with_capacity(arg_values.len());
+
+                            for (i, &arg_value) in arg_values.iter().enumerate() {
+                                // Skip the last parameter if this is a nested function (it's the environment pointer)
+                                if found_function && i >= param_types.len() - 1 {
+                                    call_args.push(arg_value.into());
+                                    continue;
+                                }
+
+                                // Get the parameter type
+                                if let Some(param_type) = param_types.get(i) {
+                                    // Check if we need to convert the argument
+                                    let arg_type = &arg_types[i];
+
+                                    // Special handling for boolean values
+                                    if arg_type == &Type::Bool && param_type.is_int_type() && param_type.into_int_type().get_bit_width() == 64 {
+                                        // Convert boolean to i64
+                                        let bool_val = arg_value.into_int_value();
+                                        let int_val = self.builder.build_int_z_extend(bool_val, self.llvm_context.i64_type(), "bool_to_i64").unwrap();
+                                        call_args.push(int_val.into());
+                                    } else {
+                                        // Use the argument as is
+                                        call_args.push(arg_value.into());
+                                    }
+                                } else {
+                                    // Use the argument as is
+                                    call_args.push(arg_value.into());
+                                }
+                            }
 
                             // If this is a nested function, add the environment pointer as the last argument
                             if found_function {
@@ -536,8 +617,36 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     if let Some(current_scope) = self.scope_stack.current_scope() {
                                         for (var_name, var_ptr) in &current_scope.variables {
                                             // Check if there's a global variable with a name that matches this variable
-                                            let global_name = format!("__nonlocal_{}", var_name);
-                                            if let Some(global_var) = self.module.get_global(&global_name) {
+                                            // Try different formats of the global name (with and without function prefix)
+                                            let simple_global_name = format!("__nonlocal_{}", var_name);
+                                            let function_parts: Vec<&str> = qualified_name.split('.').collect();
+
+                                            // Try to find the global variable with different name patterns
+                                            let mut global_var = None;
+
+                                            // First try with the full function name
+                                            let full_global_name = format!("__nonlocal_{}_{}", qualified_name.replace('.', "_"), var_name);
+                                            if let Some(var) = self.module.get_global(&full_global_name) {
+                                                global_var = Some(var);
+                                            }
+
+                                            // Then try with the parent function name
+                                            if global_var.is_none() && function_parts.len() >= 2 {
+                                                let parent_name = function_parts[function_parts.len() - 2];
+                                                let parent_global_name = format!("__nonlocal_{}_{}", parent_name, var_name);
+                                                if let Some(var) = self.module.get_global(&parent_global_name) {
+                                                    global_var = Some(var);
+                                                }
+                                            }
+
+                                            // Finally try with the simple name
+                                            if global_var.is_none() {
+                                                if let Some(var) = self.module.get_global(&simple_global_name) {
+                                                    global_var = Some(var);
+                                                }
+                                            }
+
+                                            if let Some(global_var) = global_var {
                                                 // Get the variable type
                                                 if let Some(var_type) = current_scope.get_type(var_name) {
                                                     // Get the LLVM type for the variable
@@ -548,7 +657,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                                                     // Store the current value to the global variable
                                                     self.builder.build_store(global_var.as_pointer_value(), value).unwrap();
-                                                    println!("Updated global variable '{}' before calling nested function", global_name);
+                                                    println!("Updated global variable before calling nested function");
                                                 }
                                             }
                                         }
@@ -1536,6 +1645,55 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                                 println!("Assigned to nonlocal variable '{}' using unique name '{}'", id, unique_name);
                                 return Ok(());
                             }
+                        }
+
+                        // If we didn't find a mapping, check if there's a global variable with a name that matches this variable
+                        // Try different formats of the global name (with and without function prefix)
+                        let simple_global_name = format!("__nonlocal_{}", id);
+
+                        // Get the current function name if available
+                        let current_function = if let Some(func) = self.builder.get_insert_block().unwrap().get_parent() {
+                            func.get_name().to_string_lossy().to_string()
+                        } else {
+                            "".to_string()
+                        };
+
+                        // Try to find the global variable with different name patterns
+                        let mut global_var = None;
+
+                        // First try with the current function name
+                        if !current_function.is_empty() {
+                            let func_global_name = format!("__nonlocal_{}_{}", current_function.replace('.', "_"), id);
+                            if let Some(var) = self.module.get_global(&func_global_name) {
+                                global_var = Some(var);
+                            }
+
+                            // Try with parent function names if this is a nested function
+                            if global_var.is_none() && current_function.contains('.') {
+                                let parts: Vec<&str> = current_function.split('.').collect();
+                                for i in 1..parts.len() {
+                                    let parent_name = parts[..i].join(".");
+                                    let parent_global_name = format!("__nonlocal_{}_{}", parent_name.replace('.', "_"), id);
+                                    if let Some(var) = self.module.get_global(&parent_global_name) {
+                                        global_var = Some(var);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Finally try with the simple name
+                        if global_var.is_none() {
+                            if let Some(var) = self.module.get_global(&simple_global_name) {
+                                global_var = Some(var);
+                            }
+                        }
+
+                        if let Some(global_var) = global_var {
+                            // Store the value directly to the global variable
+                            self.builder.build_store(global_var.as_pointer_value(), value).unwrap();
+                            println!("Assigned to nonlocal variable '{}' using global variable", id);
+                            return Ok(());
                         }
                     }
                 }

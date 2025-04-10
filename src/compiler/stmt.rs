@@ -108,6 +108,20 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 self.builder.position_at_end(then_block);
                 self.push_scope(false, false, false); // Create a new scope for the then block
 
+                // Add nonlocal declarations to the new scope
+                // First collect the nonlocal variables from the parent scope
+                let nonlocal_vars = if self.scope_stack.scopes.len() >= 2 {
+                    let parent_scope = &self.scope_stack.scopes[self.scope_stack.scopes.len() - 2];
+                    parent_scope.nonlocal_vars.clone()
+                } else {
+                    Vec::new()
+                };
+
+                // Then declare them in the current scope
+                for var_name in nonlocal_vars {
+                    self.declare_nonlocal(var_name);
+                }
+
                 for stmt in body {
                     self.compile_stmt(stmt.as_ref())?;
                 }
@@ -121,6 +135,20 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 // Compile the else block with its own scope
                 self.builder.position_at_end(else_block);
                 self.push_scope(false, false, false); // Create a new scope for the else block
+
+                // Add nonlocal declarations to the new scope
+                // First collect the nonlocal variables from the parent scope
+                let nonlocal_vars = if self.scope_stack.scopes.len() >= 2 {
+                    let parent_scope = &self.scope_stack.scopes[self.scope_stack.scopes.len() - 2];
+                    parent_scope.nonlocal_vars.clone()
+                } else {
+                    Vec::new()
+                };
+
+                // Then declare them in the current scope
+                for var_name in nonlocal_vars {
+                    self.declare_nonlocal(var_name);
+                }
 
                 for stmt in orelse {
                     self.compile_stmt(stmt.as_ref())?;
@@ -173,6 +201,20 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 self.builder.position_at_end(body_block);
                 self.push_scope(false, true, false); // Create a new scope for the loop body (is_loop=true)
 
+                // Add nonlocal declarations to the new scope
+                // First collect the nonlocal variables from the parent scope
+                let nonlocal_vars = if self.scope_stack.scopes.len() >= 2 {
+                    let parent_scope = &self.scope_stack.scopes[self.scope_stack.scopes.len() - 2];
+                    parent_scope.nonlocal_vars.clone()
+                } else {
+                    Vec::new()
+                };
+
+                // Then declare them in the current scope
+                for var_name in nonlocal_vars {
+                    self.declare_nonlocal(var_name);
+                }
+
                 for stmt in body {
                     self.compile_stmt(stmt.as_ref())?;
                 }
@@ -186,6 +228,20 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 // Compile the else block with its own scope (executed when the loop condition becomes false)
                 self.builder.position_at_end(else_block);
                 self.push_scope(false, false, false); // Create a new scope for the else block
+
+                // Add nonlocal declarations to the new scope
+                // First collect the nonlocal variables from the parent scope
+                let nonlocal_vars = if self.scope_stack.scopes.len() >= 2 {
+                    let parent_scope = &self.scope_stack.scopes[self.scope_stack.scopes.len() - 2];
+                    parent_scope.nonlocal_vars.clone()
+                } else {
+                    Vec::new()
+                };
+
+                // Then declare them in the current scope
+                for var_name in nonlocal_vars {
+                    self.declare_nonlocal(var_name);
+                }
 
                 for stmt in orelse {
                     self.compile_stmt(stmt.as_ref())?;

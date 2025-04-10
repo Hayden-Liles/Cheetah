@@ -150,7 +150,6 @@ result = outer()
 }
 
 #[test]
-#[ignore = "LLVM dominance validation issues with nonlocal variables in conditionals"]
 fn test_nonlocal_in_conditional() {
     // Test nonlocal variable in a conditional
     let source = r#"
@@ -178,7 +177,6 @@ result = outer()
 }
 
 #[test]
-#[ignore = "LLVM dominance validation issues with nonlocal variables in loops"]
 fn test_nonlocal_in_loop() {
     // Test nonlocal variable in a loop
     let source = r#"
@@ -263,6 +261,36 @@ result = outer()
 
     // Print the IR for debugging
     println!("Nonlocal with shadowing IR:\n{}", result.unwrap());
+}
+
+#[test]
+#[ignore = "LLVM dominance validation issues with accessing variables across function boundaries"]
+fn test_simplified_shadowing() {
+    // A simplified version of the shadowing test that should work
+    let source = r#"
+def outer():
+    x = 10
+
+    def inner():
+        y = 20  # Use a different variable name to avoid shadowing
+
+        def innermost():
+            nonlocal x  # This refers to outer's x
+            z = x + y   # Use both variables
+            return z
+
+        return innermost()
+
+    return inner()
+
+result = outer()
+"#;
+
+    let result = compile_source(source);
+    assert!(result.is_ok(), "Failed to compile simplified shadowing: {:?}", result.err());
+
+    // Print the IR for debugging
+    println!("Simplified shadowing IR:\n{}", result.unwrap());
 }
 
 #[test]
