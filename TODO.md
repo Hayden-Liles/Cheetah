@@ -28,7 +28,9 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Add Support for Nested Functions
 - [x] Implement Nonlocal Statements (basic support)
 - [x] Improve Global Variable Access from nested scopes
-- [ ] Fix LLVM validation issues with nonlocal variables in nested functions
+- [x] Implement a solution for nonlocal variables in nested functions (using global variables and unique variable names)
+- [x] Fix basic LLVM validation issues with nonlocal variables in nested functions
+- [ ] Fix remaining LLVM validation issues with nonlocal variables in complex scenarios (conditionals, loops, shadowing)
 - [x] Add tests for closure support
 - [ ] Implement tuple
 

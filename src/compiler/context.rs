@@ -4,6 +4,7 @@ use inkwell::module::Module;
 use inkwell::builder::Builder;
 use inkwell::values::BasicValueEnum;
 use inkwell::basic_block::BasicBlock;
+// use inkwell::types::BasicType;
 use crate::compiler::types::Type;
 use crate::compiler::types::is_reference_type;
 use crate::compiler::scope::ScopeStack;
@@ -717,47 +718,68 @@ impl<'ctx> CompilationContext<'ctx> {
             }
         }
 
-        // For each nonlocal variable, add it to the closure environment
-        for var_name in &nonlocal_vars {
-            // Declare the variable as nonlocal in the current scope
-            self.scope_stack.declare_nonlocal(var_name.clone());
+        // For each nonlocal variable, we need to create a special handling mechanism
+        if !nonlocal_vars.is_empty() {
+            // Use a much simpler approach: create a global variable for each nonlocal variable
+            for var_name in &nonlocal_vars {
+                // Declare the variable as nonlocal in the current scope
+                self.scope_stack.declare_nonlocal(var_name.clone());
 
-            // Find the variable in the outer scope
-            let mut found_ptr = None;
-            let mut found_type = None;
+                // Find the variable in the outer scope
+                let mut found_ptr = None;
+                let mut found_type = None;
 
-            // Get the current scope index
-            let current_index = self.scope_stack.scopes.len() - 1;
+                // Get the current scope index
+                let current_index = self.scope_stack.scopes.len() - 1;
 
-            // Look in all outer scopes
-            for i in (0..current_index).rev() {
-                if let Some(ptr) = self.scope_stack.scopes[i].get_variable(var_name) {
-                    found_ptr = Some(*ptr);
-                    found_type = self.scope_stack.scopes[i].get_type(var_name).cloned();
-                    println!("Found nonlocal variable '{}' in outer scope {}", var_name, i);
-                    break;
-                }
-            }
-
-            if let (Some(ptr), Some(var_type)) = (found_ptr, found_type) {
-                // Add the variable to the closure environment
-                if let Some(env) = self.get_closure_environment_mut(name) {
-                    env.add_variable(var_name.clone(), ptr, var_type.clone());
-                    println!("Added nonlocal variable '{}' to closure environment for {}", var_name, name);
+                // Look in all outer scopes
+                for i in (0..current_index).rev() {
+                    if let Some(ptr) = self.scope_stack.scopes[i].get_variable(var_name) {
+                        found_ptr = Some(*ptr);
+                        found_type = self.scope_stack.scopes[i].get_type(var_name).cloned();
+                        println!("Found nonlocal variable '{}' in outer scope {}", var_name, i);
+                        break;
+                    }
                 }
 
-                // Register the variable type
-                self.register_variable(var_name.clone(), var_type.clone());
+                if let (Some(_ptr), Some(var_type)) = (found_ptr, found_type) {
+                    // Create a unique name for the nonlocal variable
+                    let global_name = format!("__nonlocal_{}", var_name);
 
-                // Add the variable to the current scope with the same pointer
-                // This is a temporary solution - in a full implementation, we would
-                // access the variable through the environment
-                self.add_variable_to_scope(var_name.clone(), ptr, var_type.clone());
+                    // Get the LLVM type for the variable
+                    let llvm_type = self.get_llvm_type(&var_type);
 
-                // Also add it to local_vars for backward compatibility
-                local_vars.insert(var_name.clone(), ptr);
-            } else {
-                return Err(format!("Nonlocal variable '{}' not found in outer scopes", var_name));
+                    // We'll use a default value (0) for the global variable
+                    // The actual value will be set in the outer function before calling the nested function
+                    let value = self.llvm_context.i64_type().const_zero();
+
+                    // Create a global variable with a default value (0)
+                    let global_var = self.module.add_global(llvm_type.into_int_type(), None, &global_name);
+                    global_var.set_initializer(&self.llvm_context.i64_type().const_zero());
+
+                    // Store the current value to the global variable at the point of definition
+                    // This ensures that the global variable has the correct value when the nested function is called
+                    self.builder.build_store(global_var.as_pointer_value(), value).unwrap();
+
+                    // Get a pointer to the global variable
+                    let global_ptr = global_var.as_pointer_value();
+
+                    // Register the variable type with the unique name
+                    self.register_variable(global_name.clone(), var_type.clone());
+
+                    // Add the variable to the current scope with the global pointer
+                    self.add_variable_to_scope(global_name.clone(), global_ptr, var_type.clone());
+
+                    // Also add it to local_vars for backward compatibility
+                    local_vars.insert(global_name.clone(), global_ptr);
+
+                    // Add a mapping from the original name to the unique name
+                    self.scope_stack.add_nonlocal_mapping(var_name.clone(), global_name);
+
+                    println!("Created global variable for nonlocal variable '{}'", var_name);
+                } else {
+                    return Err(format!("Nonlocal variable '{}' not found in outer scopes", var_name));
+                }
             }
         }
 
@@ -835,5 +857,61 @@ impl<'ctx> CompilationContext<'ctx> {
         } else {
             None
         }
+    }
+
+    /// Get or create the malloc function
+    fn get_or_create_malloc_function(&self) -> inkwell::values::FunctionValue<'ctx> {
+        // Check if malloc is already defined
+        if let Some(malloc_fn) = self.module.get_function("malloc") {
+            return malloc_fn;
+        }
+
+        // Define malloc function type: void* malloc(size_t size)
+        let malloc_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default())
+            .fn_type(&[self.llvm_context.i64_type().into()], false);
+
+        // Create the function declaration
+        let malloc_fn = self.module.add_function("malloc", malloc_type, None);
+
+        malloc_fn
+    }
+
+    /// Get or create the free function
+    fn get_or_create_free_function(&self) -> inkwell::values::FunctionValue<'ctx> {
+        // Check if free is already defined
+        if let Some(free_fn) = self.module.get_function("free") {
+            return free_fn;
+        }
+
+        // Define free function type: void free(void* ptr)
+        let free_type = self.llvm_context.void_type()
+            .fn_type(&[self.llvm_context.ptr_type(inkwell::AddressSpace::default()).into()], false);
+
+        // Create the function declaration
+        let free_fn = self.module.add_function("free", free_type, None);
+
+        free_fn
+    }
+
+    /// Allocate a variable on the heap
+    pub fn allocate_heap_variable(&mut self, name: &str, ty: &Type) -> inkwell::values::PointerValue<'ctx> {
+        // Get the LLVM type for the variable
+        let _llvm_type = self.get_llvm_type(ty);
+
+        // Get the size of the type
+        // For simplicity, we'll just use a fixed size for now (8 bytes for an i64)
+        let size_val = self.llvm_context.i64_type().const_int(8, false);
+
+        // Call malloc to allocate memory on the heap
+        let malloc_fn = self.get_or_create_malloc_function();
+        let heap_ptr = self.builder.build_call(malloc_fn, &[size_val.into()], &format!("malloc_{}", name)).unwrap();
+        let heap_ptr = heap_ptr.try_as_basic_value().left().unwrap().into_pointer_value();
+
+        // Bitcast the raw pointer to the correct type
+        let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+        let typed_ptr = self.builder.build_bit_cast(heap_ptr, ptr_type, &format!("{}_ptr", name)).unwrap();
+
+        // Return the typed pointer
+        typed_ptr.into_pointer_value()
     }
 }

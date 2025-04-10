@@ -24,6 +24,9 @@ pub struct Scope<'ctx> {
     pub captured_vars: HashMap<String, PointerValue<'ctx>>,
     /// Variables that need to be heap-allocated because they're accessed by nested functions
     pub heap_vars: Vec<String>,
+    /// Maps original variable names to their unique names in the current scope
+    /// This is used for nonlocal variables to avoid LLVM's dominance validation issues
+    pub nonlocal_mappings: HashMap<String, String>,
 }
 
 impl<'ctx> Scope<'ctx> {
@@ -39,7 +42,18 @@ impl<'ctx> Scope<'ctx> {
             is_class,
             captured_vars: HashMap::new(),
             heap_vars: Vec::new(),
+            nonlocal_mappings: HashMap::new(),
         }
+    }
+
+    /// Add a mapping from an original variable name to a unique name
+    pub fn add_nonlocal_mapping(&mut self, original_name: String, unique_name: String) {
+        self.nonlocal_mappings.insert(original_name, unique_name);
+    }
+
+    /// Get the unique name for a nonlocal variable
+    pub fn get_nonlocal_mapping(&self, original_name: &str) -> Option<&String> {
+        self.nonlocal_mappings.get(original_name)
     }
 
     /// Get a variable's storage location
@@ -312,6 +326,14 @@ impl<'ctx> ScopeStack<'ctx> {
                     return Some(ptr);
                 }
 
+                // Check if there's a mapping for this nonlocal variable
+                if let Some(unique_name) = current_scope.get_nonlocal_mapping(name) {
+                    // Look up the unique name in the current scope
+                    if let Some(ptr) = current_scope.get_variable(unique_name) {
+                        return Some(ptr);
+                    }
+                }
+
                 // If it's declared as nonlocal, look it up in outer scopes (not just function scopes)
                 // Start from the current scope's index - 1 (the outer scope)
                 let current_index = self.scopes.len() - 1;
@@ -330,5 +352,21 @@ impl<'ctx> ScopeStack<'ctx> {
 
         // If not declared as global or nonlocal, use normal variable lookup
         self.get_variable(name)
+    }
+
+    /// Add a mapping from an original variable name to a unique name in the current scope
+    pub fn add_nonlocal_mapping(&mut self, original_name: String, unique_name: String) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.add_nonlocal_mapping(original_name, unique_name);
+        }
+    }
+
+    /// Get the unique name for a nonlocal variable in the current scope
+    pub fn get_nonlocal_mapping(&self, original_name: &str) -> Option<&String> {
+        if let Some(scope) = self.scopes.last() {
+            scope.get_nonlocal_mapping(original_name)
+        } else {
+            None
+        }
     }
 }

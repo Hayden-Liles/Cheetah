@@ -70,3 +70,11 @@ mod global_nonlocal_test;
 // Include the closure tests
 #[path = "more_tests/compiler/closure_test.rs"]
 mod closure_test;
+
+// Include the nonlocal debug tests
+#[path = "more_tests/compiler/nonlocal_debug_test.rs"]
+mod nonlocal_debug_test;
+
+// Include the simple nonlocal tests
+#[path = "more_tests/compiler/simple_nonlocal_test.rs"]
+mod simple_nonlocal_test;

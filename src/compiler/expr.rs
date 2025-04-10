@@ -170,6 +170,27 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     false
                 };
 
+                // If the variable is nonlocal, check if it has a unique name mapping
+                if is_nonlocal {
+                    if let Some(current_scope) = self.scope_stack.current_scope() {
+                        if let Some(unique_name) = current_scope.get_nonlocal_mapping(id) {
+                            // Use the unique name instead of the original name
+                            if let Some(ptr) = current_scope.get_variable(unique_name) {
+                                // Get the variable type
+                                if let Some(var_type) = current_scope.get_type(unique_name) {
+                                    // Get the LLVM type for the variable
+                                    let llvm_type = self.get_llvm_type(var_type);
+
+                                    // Load the value directly from the global variable
+                                    // Use a unique name for the load instruction to avoid conflicts
+                                    let value = self.builder.build_load(llvm_type, *ptr, &format!("load_{}", unique_name)).unwrap();
+                                    return Ok((value, var_type.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // If the variable is declared as global, look it up in the global scope
                 if is_global {
                     if let Some(global_scope) = self.scope_stack.global_scope() {
@@ -506,6 +527,33 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 let null_ptr = self.llvm_context.ptr_type(inkwell::AddressSpace::default())
                                     .const_null().into();
                                 call_args.push(null_ptr);
+
+                                // Update global variables for nonlocal variables before calling the nested function
+                                // This ensures that the nested function has access to the current values of nonlocal variables
+                                let parts: Vec<&str> = qualified_name.split('.').collect();
+                                if parts.len() >= 2 {
+                                    // Find all variables in the current scope
+                                    if let Some(current_scope) = self.scope_stack.current_scope() {
+                                        for (var_name, var_ptr) in &current_scope.variables {
+                                            // Check if there's a global variable with a name that matches this variable
+                                            let global_name = format!("__nonlocal_{}", var_name);
+                                            if let Some(global_var) = self.module.get_global(&global_name) {
+                                                // Get the variable type
+                                                if let Some(var_type) = current_scope.get_type(var_name) {
+                                                    // Get the LLVM type for the variable
+                                                    let llvm_type = self.get_llvm_type(var_type);
+
+                                                    // Load the current value of the variable
+                                                    let value = self.builder.build_load(llvm_type, *var_ptr, &format!("load_{}_before_call", var_name)).unwrap();
+
+                                                    // Store the current value to the global variable
+                                                    self.builder.build_store(global_var.as_pointer_value(), value).unwrap();
+                                                    println!("Updated global variable '{}' before calling nested function", global_name);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             // Build the call instruction
@@ -1475,6 +1523,22 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                 } else {
                     false
                 };
+
+                // If the variable is nonlocal, check if it has a unique name mapping
+                if is_nonlocal {
+                    if let Some(current_scope) = self.scope_stack.current_scope() {
+                        if let Some(unique_name) = current_scope.get_nonlocal_mapping(id) {
+                            // Use the unique name instead of the original name
+                            if let Some(ptr) = current_scope.get_variable(unique_name) {
+                                // Store the value directly to the global variable
+                                // Use a unique name for the store instruction to avoid conflicts
+                                self.builder.build_store(*ptr, value).unwrap();
+                                println!("Assigned to nonlocal variable '{}' using unique name '{}'", id, unique_name);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
 
                 if is_global {
                     // Handle global variable assignment
