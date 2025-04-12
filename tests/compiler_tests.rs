@@ -158,3 +158,19 @@ mod dict_comprehension_test;
 // Include the dictionary membership tests
 #[path = "more_tests/compiler/dict_membership_test.rs"]
 mod dict_membership_test;
+
+// Include the dictionary function integration tests
+#[path = "more_tests/compiler/dict_function_integration_test.rs"]
+mod dict_function_integration_test;
+
+// Include the dictionary function simple tests
+#[path = "more_tests/compiler/dict_function_simple_test.rs"]
+mod dict_function_simple_test;
+
+// Include the dictionary function minimal tests
+#[path = "more_tests/compiler/dict_function_minimal_test.rs"]
+mod dict_function_minimal_test;
+
+// Include the dictionary function return tests
+#[path = "more_tests/compiler/dict_function_return_test.rs"]
+mod dict_function_return_test;

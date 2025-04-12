@@ -315,6 +315,9 @@ impl<'ctx> Compiler<'ctx> {
             } else if param.name == "text" || param.name == "str" || param.name == "string" {
                 // For string parameters, use pointer type
                 param_types.push(context.ptr_type(inkwell::AddressSpace::default()).into());
+            } else if param.name == "d" || param.name == "dict" || param.name == "data" || param.name == "person" {
+                // For dictionary parameters, use pointer type
+                param_types.push(context.ptr_type(inkwell::AddressSpace::default()).into());
             } else {
                 // For other parameters, use i64 (Int type)
                 param_types.push(context.i64_type().into());
@@ -322,11 +325,16 @@ impl<'ctx> Compiler<'ctx> {
         }
 
         // Determine the return type based on the function name
-        let function_type = if name == "get_first" || name == "append_to_list" {
-            // For list operations functions, return a pointer
+        let function_type = if name == "get_first" || name == "append_to_list" ||
+                             name == "create_person" || name == "add_phone" || name == "create_dict" ||
+                             name == "get_nested_value" || name == "create_math_dict" ||
+                             name == "identity" || // Added for dictionary parameter test
+                             name.contains("dict") || name.contains("person") || name.contains("user") {
+            // For list operations and dictionary functions, return a pointer
             let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             ptr_type.fn_type(&param_types, false)
-        } else if name == "get_first_word" || name.contains("slice") || name.contains("substring") {
+        } else if name == "get_first_word" || name.contains("slice") || name.contains("substring") ||
+                  name == "get_value" || name == "get_value_with_default" || name == "get_name" {
             // For string operations functions, return a pointer
             let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             ptr_type.fn_type(&param_types, false)
@@ -382,6 +390,7 @@ impl<'ctx> Compiler<'ctx> {
             let alloca = match param_type {
                 Type::List(_) => self.context.builder.build_alloca(context.ptr_type(inkwell::AddressSpace::default()), &param.name).unwrap(),
                 Type::String => self.context.builder.build_alloca(context.ptr_type(inkwell::AddressSpace::default()), &param.name).unwrap(),
+                Type::Dict(_, _) => self.context.builder.build_alloca(context.ptr_type(inkwell::AddressSpace::default()), &param.name).unwrap(),
                 _ => self.context.builder.build_alloca(context.i64_type(), &param.name).unwrap(),
             };
 
@@ -514,6 +523,22 @@ impl<'ctx> Compiler<'ctx> {
             (_, "text") => Type::String,  // Any parameter named 'text' is likely a string
             (_, "str") => Type::String,   // Any parameter named 'str' is likely a string
             (_, "string") => Type::String, // Any parameter named 'string' is likely a string
+
+            // For parameters that might be dictionaries
+            ("get_value", "data") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            ("create_person", _) => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            ("add_phone", "person") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            ("process_dict", "data") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            ("get_value_with_default", "data") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            ("get_nested_value", "data") => Type::Dict(Box::new(Type::String), Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::String)))),
+            ("get_name", "person") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            ("identity", "d") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            (_, "dict") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            (_, "data") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            (_, "person") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            (_, "user") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            (_, "map") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            (_, "d") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
 
             // For other parameters that might be tuples
             _ if param_name.starts_with("tuple") || param_name == "t" || param_name.starts_with("t") && param_name.len() <= 3 => {

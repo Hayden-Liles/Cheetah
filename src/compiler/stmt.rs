@@ -583,16 +583,33 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                         let return_type = current_function.get_type().get_return_type();
 
                         if let Some(ret_type) = return_type {
-                            // For list operations functions that return pointers
-                            if ret_type.is_pointer_type() && !ret_val.is_pointer_value() {
-                                // Convert the return value to a pointer if needed
-                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                                let ptr_val = self.builder.build_bit_cast(
-                                    ret_val,
-                                    ptr_type,
-                                    "to_ptr"
+                            // For functions that return pointers (lists, strings, dictionaries)
+                            if ret_type.is_pointer_type() {
+                                if ret_val.is_pointer_value() {
+                                    // If it's already a pointer, return it directly
+                                    self.builder.build_return(Some(&ret_val)).unwrap();
+                                    return Ok(());
+                                } else {
+                                    // Convert the return value to a pointer if needed
+                                    let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                                    let ptr_val = self.builder.build_bit_cast(
+                                        ret_val,
+                                        ptr_type,
+                                        "to_ptr"
+                                    ).unwrap();
+                                    self.builder.build_return(Some(&ptr_val)).unwrap();
+                                    return Ok(());
+                                }
+                            } else if ret_type.is_int_type() && ret_val.is_pointer_value() {
+                                // If the function returns an integer but we have a pointer value,
+                                // convert the pointer to an integer
+                                let int_type = self.llvm_context.i64_type();
+                                let int_val = self.builder.build_ptr_to_int(
+                                    ret_val.into_pointer_value(),
+                                    int_type,
+                                    "ptr_to_int"
                                 ).unwrap();
-                                self.builder.build_return(Some(&ptr_val)).unwrap();
+                                self.builder.build_return(Some(&int_val)).unwrap();
                                 return Ok(());
                             }
                         }
