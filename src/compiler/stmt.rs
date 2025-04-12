@@ -3,6 +3,7 @@ use crate::ast::{Stmt, Expr};
 use crate::compiler::context::CompilationContext;
 use crate::compiler::expr::{ExprCompiler, AssignmentCompiler, BinaryOpCompiler};
 use crate::compiler::types::Type;
+use inkwell::values::BasicValue;
 
 pub trait StmtCompiler<'ctx> {
     /// Compile a statement
@@ -588,6 +589,14 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                                 if ret_val.is_pointer_value() {
                                     // If it's already a pointer, return it directly
                                     self.builder.build_return(Some(&ret_val)).unwrap();
+                                    return Ok(());
+                                } else if ret_val.is_int_value() {
+                                    // If we have an integer but need to return a pointer,
+                                    // allocate memory for the integer and return a pointer to it
+                                    let int_val = ret_val.into_int_value();
+                                    let int_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "int_to_ptr").unwrap();
+                                    self.builder.build_store(int_ptr, int_val).unwrap();
+                                    self.builder.build_return(Some(&int_ptr.as_basic_value_enum())).unwrap();
                                     return Ok(());
                                 } else {
                                     // Convert the return value to a pointer if needed
