@@ -816,75 +816,89 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 for name in names {
                     // For nonlocal declarations, we need to check if the variable exists in any outer scope
                     // This is important for handling shadowing correctly
+                    let mut found_in_outer_scope = false;
 
-                    // First check the immediate outer scope
+                    // First check the immediate outer scope (this handles shadowing correctly)
                     if self.scope_stack.scopes.len() >= 2 {
                         let parent_scope_index = self.scope_stack.scopes.len() - 2;
                         if let Some(_) = self.scope_stack.scopes[parent_scope_index].get_variable(&name) {
-                            println!("Found variable '{}' in immediate outer scope for nonlocal declaration", name);
+                            found_in_outer_scope = true;
+                            println!("Found variable '{}' in immediate outer scope {} for nonlocal declaration", name, parent_scope_index);
                         }
                     }
 
-                    // For the shadowing test case where innermost's nonlocal x refers to inner's x,
-                    // we'll just declare it as nonlocal anyway and let the runtime handle any errors
-
-                    // Proceed with nonlocal declaration
-                    self.declare_nonlocal(name.clone());
-
-                    // Check if we're in a nested function
-                    if let Some(current_function) = self.current_function {
-                        // Get the current function name
-                        let fn_name = current_function.get_name().to_string_lossy().to_string();
-
-                        // If this is a nested function (contains a dot in the name)
-                        if fn_name.contains('.') {
-                            // Add the nonlocal variable to the function's environment
-                            if let Some(env) = self.get_closure_environment_mut(&fn_name) {
-                                if !env.nonlocal_params.contains(name) {
-                                    env.nonlocal_params.push(name.clone());
-                                    println!("Added nonlocal variable '{}' to function '{}' parameters", name, fn_name);
-                                }
+                    // If not found in the immediate outer scope, look in all outer scopes
+                    // This is needed for cases where the variable is defined in a scope that's not the immediate parent
+                    if !found_in_outer_scope && self.scope_stack.scopes.len() >= 3 {
+                        for i in (0..self.scope_stack.scopes.len() - 2).rev() {
+                            if let Some(_) = self.scope_stack.scopes[i].get_variable(&name) {
+                                found_in_outer_scope = true;
+                                println!("Found variable '{}' in outer scope {} for nonlocal declaration", name, i);
+                                break;
                             }
-
-                            // Create a unique name for the nonlocal variable
-                            let unique_name = format!("__nonlocal_{}_{}", fn_name.replace('.', "_"), name);
-
-                            // Get the current function
-                            let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-
-                            // Get the entry block of the function
-                            let entry_block = current_function.get_first_basic_block().unwrap();
-
-                            // Save the current position
-                            let current_block = self.builder.get_insert_block().unwrap();
-
-                            // Move to the entry block
-                            self.builder.position_at_end(entry_block);
-
-                            // Allocate a local variable for the nonlocal variable at the beginning of the function
-                            // This ensures proper dominance for all uses of the variable
-                            let llvm_type = self.get_llvm_type(&Type::Int); // Assume int for now
-                            let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
-
-                            // Initialize with a default value to avoid uninitialized memory errors
-                            let default_value = self.llvm_context.i64_type().const_int(0, false);
-                            self.builder.build_store(local_ptr, default_value).unwrap();
-
-                            // Restore the original position
-                            self.builder.position_at_end(current_block);
-
-                            // Add the variable to the current scope with the unique name
-                            if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                                current_scope.add_variable(unique_name.clone(), local_ptr, Type::Int);
-                                current_scope.add_nonlocal_mapping(name.clone(), unique_name.clone());
-                                println!("Created local variable for nonlocal variable '{}' with unique name '{}'", name, unique_name);
-                            }
-
-                            // Mark the variable as nonlocal in the current scope
-                            println!("Marked '{}' as nonlocal in nested function '{}'", name, fn_name);
                         }
-                    } else {
-                        return Err(format!("Nonlocal variable '{}' not found in outer scopes", name));
+                    }
+
+                    // Only proceed with nonlocal declaration if the variable exists in an outer scope
+                    if found_in_outer_scope {
+                        // Proceed with nonlocal declaration
+                        self.declare_nonlocal(name.clone());
+
+                        // Check if we're in a nested function
+                        if let Some(current_function) = self.current_function {
+                            // Get the current function name
+                            let fn_name = current_function.get_name().to_string_lossy().to_string();
+
+                            // If this is a nested function (contains a dot in the name)
+                            if fn_name.contains('.') {
+                                // Add the nonlocal variable to the function's environment
+                                if let Some(env) = self.get_closure_environment_mut(&fn_name) {
+                                    if !env.nonlocal_params.contains(name) {
+                                        env.nonlocal_params.push(name.clone());
+                                        println!("Added nonlocal variable '{}' to function '{}' parameters", name, fn_name);
+                                    }
+                                }
+
+                                // Create a unique name for the nonlocal variable
+                                let unique_name = format!("__nonlocal_{}_{}", fn_name.replace('.', "_"), name);
+
+                                // Get the current function
+                                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+
+                                // Get the entry block of the function
+                                let entry_block = current_function.get_first_basic_block().unwrap();
+
+                                // Save the current position
+                                let current_block = self.builder.get_insert_block().unwrap();
+
+                                // Move to the entry block
+                                self.builder.position_at_end(entry_block);
+
+                                // Allocate a local variable for the nonlocal variable at the beginning of the function
+                                // This ensures proper dominance for all uses of the variable
+                                let llvm_type = self.get_llvm_type(&Type::Int); // Assume int for now
+                                let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+
+                                // Initialize with a default value to avoid uninitialized memory errors
+                                let default_value = self.llvm_context.i64_type().const_int(0, false);
+                                self.builder.build_store(local_ptr, default_value).unwrap();
+
+                                // Restore the original position
+                                self.builder.position_at_end(current_block);
+
+                                // Add the variable to the current scope with the unique name
+                                if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                                    current_scope.add_variable(unique_name.clone(), local_ptr, Type::Int);
+                                    current_scope.add_nonlocal_mapping(name.clone(), unique_name.clone());
+                                    println!("Created local variable for nonlocal variable '{}' with unique name '{}'", name, unique_name);
+                                }
+
+                                // Mark the variable as nonlocal in the current scope
+                                println!("Marked '{}' as nonlocal in nested function '{}'", name, fn_name);
+                            }
+                        } else {
+                            return Err(format!("Nonlocal variable '{}' not found in outer scopes", name));
+                        }
                     }
                 }
                 Ok(())

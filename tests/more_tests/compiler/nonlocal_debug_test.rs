@@ -264,6 +264,27 @@ result = outer()
 }
 
 #[test]
+fn test_very_simplified_shadowing() {
+    // An extremely simplified version of the shadowing test that should work
+    let source = r#"
+def outer():
+    x = 10
+
+    def inner():
+        y = 20
+        return y
+
+result = outer()
+"#;
+
+    let result = compile_source(source);
+    assert!(result.is_ok(), "Failed to compile very simplified shadowing: {:?}", result.err());
+
+    // Print the IR for debugging
+    println!("Very simplified shadowing IR:\n{}", result.unwrap());
+}
+
+#[test]
 fn test_simplified_shadowing() {
     // A simplified version of the shadowing test that should work
     let source = r#"
