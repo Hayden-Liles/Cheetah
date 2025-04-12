@@ -2447,14 +2447,14 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                         // Convert the integer value to a pointer
                         let ptr = self.builder.build_int_to_ptr(
                             value.into_int_value(),
-                            self.llvm_context.i8_type().ptr_type(inkwell::AddressSpace::default()),
+                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
                             "tuple_ptr"
                         ).unwrap();
 
                         // Cast the pointer to the tuple struct type
                         self.builder.build_pointer_cast(
                             ptr,
-                            tuple_struct.ptr_type(inkwell::AddressSpace::default()),
+                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
                             "tuple_struct_ptr"
                         ).unwrap()
                     } else {
