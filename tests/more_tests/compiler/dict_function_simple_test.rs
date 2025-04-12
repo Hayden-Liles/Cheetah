@@ -49,8 +49,8 @@ def create_dict():
     return person
 
 # Test the function
-person = create_dict()
-name = person["name"]
+result = create_dict()
+name = result["name"]
 "#;
 
     let result = compile_source(source);

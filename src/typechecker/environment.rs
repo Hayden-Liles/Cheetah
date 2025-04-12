@@ -1,4 +1,5 @@
 use crate::compiler::types::Type;
+use crate::ast::Expr;
 use std::collections::HashMap;
 
 /// Represents a scope in the type environment
@@ -123,6 +124,7 @@ impl TypeEnvironment {
     /// Add a variable to the innermost scope
     pub fn add_variable(&mut self, name: String, ty: Type) {
         if let Some(scope) = self.scopes.last_mut() {
+            println!("Adding variable '{}' with type {:?}", name, ty);
             scope.variables.insert(name, ty);
         }
     }
@@ -198,5 +200,25 @@ impl TypeEnvironment {
     /// Get a reference to the current (innermost) scope
     pub fn get_current_scope(&self) -> Option<&Scope> {
         self.scopes.last()
+    }
+
+    /// Set a variable's type in the environment
+    pub fn set_variable_type(&mut self, name: &str, ty: Type) {
+        println!("Setting variable type for '{}' to {:?}", name, ty);
+        // Search from innermost to outermost scope
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.variables.contains_key(name) {
+                scope.variables.insert(name.to_string(), ty);
+                return;
+            }
+        }
+
+        // If the variable wasn't found, add it to the innermost scope
+        self.add_variable(name.to_string(), ty);
+    }
+
+    /// Get the parent expression for context
+    pub fn get_parent_expr(&self) -> Option<&Expr> {
+        None // This is a placeholder - we'll need to track parent expressions elsewhere
     }
 }

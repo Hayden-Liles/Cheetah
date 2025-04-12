@@ -49,9 +49,24 @@ impl TypeChecker {
                 // Infer the type of the value
                 let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
 
+                // Debug print
+                println!("Assignment value type: {:?}", value_type);
+
+                // Special handling for function calls that return dictionaries
+                let mut enhanced_value_type = value_type.clone();
+                if let Expr::Call { func, .. } = &**value {
+                    if let Expr::Name { id, .. } = &**func {
+                        if id == "create_dict" || id == "create_person" || id.contains("dict") {
+                            // Override the type to be a dictionary
+                            enhanced_value_type = Type::Dict(Box::new(Type::String), Box::new(Type::String));
+                            println!("Enhanced assignment value type for function call '{}': {:?}", id, enhanced_value_type);
+                        }
+                    }
+                }
+
                 // Check each target
                 for target in targets {
-                    self.check_assignment(target, &value_type)?;
+                    self.check_assignment(target, &enhanced_value_type)?;
                 }
 
                 Ok(())

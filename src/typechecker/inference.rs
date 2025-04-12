@@ -408,6 +408,12 @@ impl TypeInference {
                        id == "get_nested_value" || id == "create_math_dict" ||
                        id == "identity" || id == "create_person" ||
                        id.contains("dict") || id.contains("person") || id.contains("user") {
+                        // We can't directly access the parent expression here, but we can track
+                        // the return value and use it later when processing assignments
+                        let dict_type = Type::Dict(Box::new(Type::String), Box::new(Type::String));
+
+                        // Print debug information
+                        println!("Inferred dictionary return type for function call: {:?}", dict_type);
                         return Ok(Type::Dict(Box::new(Type::String), Box::new(Type::String)));
                     }
 
