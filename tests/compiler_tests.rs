@@ -142,3 +142,11 @@ mod comprehensive_dict_test;
 // Include the advanced dictionary operations tests
 #[path = "more_tests/compiler/advanced_dict_operations_test.rs"]
 mod advanced_dict_operations_test;
+
+// Include the nested dictionary tests
+#[path = "more_tests/compiler/nested_dict_test.rs"]
+mod nested_dict_test;
+
+// Include the dictionary methods tests
+#[path = "more_tests/compiler/dict_methods_test.rs"]
+mod dict_methods_test;

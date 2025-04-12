@@ -38,8 +38,15 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 ## Current Focus (High Priority)
 
 ### Core Language Features
-1. [x] Implement basic tuple support (creation, access)
-2. [x] Complete basic tuple support (function arguments, return values, unpacking)
+1. [ ] Implement a proper closure environment solution for nonlocal variables
+2. [ ] Enhance dictionary support further
+   - [x] Implement dictionary methods (keys, values, items)
+   - [ ] Add support for dictionary comprehensions
+   - [ ] Implement membership testing with 'in' operator for dictionaries
+
+### Completed Core Language Features
+3. [x] Implement basic tuple support (creation, access)
+4. [x] Complete basic tuple support (function arguments, return values, unpacking)
    - [x] Fix variable registration for tuple unpacking with assignment
    - [x] Support direct variable creation from tuple unpacking
    - [x] Improve function parameter type inference for tuples
@@ -57,12 +64,12 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
       - [x] Implement tuple unpacking in functions
       - [x] Support tuples with function calls
       - [x] Implement complex tuple scenarios
-3. [x] Complete implementation of for loops
+5. [x] Complete implementation of for loops
    - [x] Implement basic for loop structure
    - [x] Add support for range() function
    - [x] Implement break and continue statements
    - [x] Support for loop else clause
-4. [x] Implement list operations
+6. [x] Implement list operations
    - [x] Define list structure in LLVM
    - [x] Implement list creation (empty and with elements)
    - [x] Add list access (get item by index)
@@ -72,13 +79,13 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
      - [x] Fix list element assignment (numbers[0] = 100)
      - [x] Fix list operations in loops (for num in numbers)
      - [x] Fix list operations in functions (get_first, append_to_list)
-5. [x] Implement slice operations for lists and strings
+7. [x] Implement slice operations for lists and strings
    - [x] Define slice syntax and semantics
    - [x] Update the parser to handle slice notation
    - [x] Implement slice operations for lists in the compiler
    - [x] Implement slice operations for strings in the compiler
    - [x] Create tests for slice operations
-6. [x] Add support for list comprehensions
+8. [x] Add support for list comprehensions
    - [x] Implement basic list comprehension syntax
    - [x] Support for list comprehensions with range
    - [x] Support for list comprehensions with conditions (if clauses)
@@ -90,7 +97,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
      - [x] Test complex and deeply nested list comprehensions
      - [x] Test edge cases like empty list comprehensions
      - [ ] Support for advanced features (tuple unpacking in comprehensions, multiple for clauses)
-7. [x] Add dictionary support
+9. [x] Add dictionary support
    - [x] Implement basic dictionary structure in LLVM
    - [x] Add dictionary creation (empty and with key-value pairs)
    - [x] Implement dictionary access (get value by key)
@@ -98,18 +105,18 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Implement dictionary operations (len)
    - [x] Create comprehensive tests for dictionary operations
    - [x] Add advanced dictionary tests
-8. [ ] Enhance dictionary support
-   - [ ] Implement nested dictionary access
-   - [ ] Add support for mixed key and value types
-   - [ ] Implement dictionary methods (keys, values, items)
+10. [x] Enhance dictionary support
+   - [x] Implement nested dictionary access
+   - [x] Add support for mixed key and value types
+   - [x] Implement dictionary methods (keys, values, items)
    - [ ] Add support for dictionary comprehensions
    - [ ] Implement membership testing with 'in' operator for dictionaries
    - [ ] Improve dictionary integration with functions
-9. [ ] Implement a proper closure environment solution for nonlocal variables
+11. [ ] Implement a proper closure environment solution for nonlocal variables
 
 ### Essential Built-ins
-10. [x] Support for the range() built-in function
-11. [x] Implement basic built-in functions (print, len, etc.)
+12. [x] Support for the range() built-in function
+13. [x] Implement basic built-in functions (print, len, etc.)
     - [x] Implement print() function
     - [x] Implement input() function
     - [x] Implement len() function for strings and lists
@@ -119,14 +126,14 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
       - [x] Extend len() function to support dictionaries and other collections
     - [x] Implement type conversion functions (int(), float(), bool(), str())
     - [ ] Implement other common built-in functions (min, max, etc.)
-12. [ ] Implement string manipulation functions
+14. [ ] Implement string manipulation functions
 
 ### Testing Improvements
-13. [x] Add comprehensive tests for dictionary operations
-14. [ ] Add more comprehensive test cases for new features
-15. [ ] Add tests for edge cases in type conversions
-16. [ ] Create a test suite for comparing compiled output with CPython execution
-17. [ ] Add tests for error handling and recovery
+15. [x] Add comprehensive tests for dictionary operations
+16. [ ] Add more comprehensive test cases for new features
+17. [ ] Add tests for edge cases in type conversions
+18. [ ] Create a test suite for comparing compiled output with CPython execution
+19. [ ] Add tests for error handling and recovery
 
 ## Next Steps (Medium Priority)
 

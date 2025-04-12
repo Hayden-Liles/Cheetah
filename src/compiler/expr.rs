@@ -38,6 +38,9 @@ pub trait ExprCompiler<'ctx> {
 
     /// Compile a list comprehension expression
     fn compile_list_comprehension(&mut self, elt: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+
+    /// Compile an attribute access expression (e.g., dict.keys())
+    fn compile_attribute_access(&mut self, value: &Expr, attr: &str) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 }
 
 pub trait AssignmentCompiler<'ctx> {
@@ -489,6 +492,85 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             },
 
             Expr::Call { func, args, keywords, .. } => {
+                // Check if this is a method call (func is an Attribute expression)
+                if let Expr::Attribute { value, attr, .. } = func.as_ref() {
+                    // Compile the object being called
+                    let (obj_val, obj_type) = self.compile_expr(value)?;
+
+                    // Handle different types of method calls
+                    match &obj_type {
+                        Type::Dict(key_type, value_type) => {
+                            // Handle dictionary methods
+                            match attr.as_str() {
+                                "keys" => {
+                                    // Get the dict_keys function
+                                    let dict_keys_fn = match self.module.get_function("dict_keys") {
+                                        Some(f) => f,
+                                        None => return Err("dict_keys function not found".to_string()),
+                                    };
+
+                                    // Call dict_keys to get a list of keys
+                                    let call_site_value = self.builder.build_call(
+                                        dict_keys_fn,
+                                        &[obj_val.into_pointer_value().into()],
+                                        "dict_keys_result"
+                                    ).unwrap();
+
+                                    let keys_list_ptr = call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to get keys from dictionary".to_string())?;
+
+                                    // Return the keys list and its type
+                                    return Ok((keys_list_ptr, Type::List(key_type.clone())));
+                                },
+                                "values" => {
+                                    // Get the dict_values function
+                                    let dict_values_fn = match self.module.get_function("dict_values") {
+                                        Some(f) => f,
+                                        None => return Err("dict_values function not found".to_string()),
+                                    };
+
+                                    // Call dict_values to get a list of values
+                                    let call_site_value = self.builder.build_call(
+                                        dict_values_fn,
+                                        &[obj_val.into_pointer_value().into()],
+                                        "dict_values_result"
+                                    ).unwrap();
+
+                                    let values_list_ptr = call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to get values from dictionary".to_string())?;
+
+                                    // Return the values list and its type
+                                    return Ok((values_list_ptr, Type::List(value_type.clone())));
+                                },
+                                "items" => {
+                                    // Get the dict_items function
+                                    let dict_items_fn = match self.module.get_function("dict_items") {
+                                        Some(f) => f,
+                                        None => return Err("dict_items function not found".to_string()),
+                                    };
+
+                                    // Call dict_items to get a list of key-value pairs
+                                    let call_site_value = self.builder.build_call(
+                                        dict_items_fn,
+                                        &[obj_val.into_pointer_value().into()],
+                                        "dict_items_result"
+                                    ).unwrap();
+
+                                    let items_list_ptr = call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to get items from dictionary".to_string())?;
+
+                                    // Return the items list and its type (list of tuples with key-value pairs)
+                                    let tuple_type = Type::Tuple(vec![*key_type.clone(), *value_type.clone()]);
+                                    return Ok((items_list_ptr, Type::List(Box::new(tuple_type))));
+                                },
+                                _ => return Err(format!("Unknown method '{}' for dictionary type", attr)),
+                            }
+                        },
+                        _ => return Err(format!("Type {:?} does not support method calls", obj_type)),
+                    }
+                }
+
+                // Regular function call
                 match func.as_ref() {
                     Expr::Name { id, .. } => {
                         // Compile all argument expressions first
@@ -985,7 +1067,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 Ok((dict_ptr.into(), Type::Dict(Box::new(key_type), Box::new(value_type))))
             },
             Expr::Set { .. } => Err("Set expressions not yet implemented".to_string()),
-            Expr::Attribute { .. } => Err("Attribute access not yet implemented".to_string()),
+            Expr::Attribute { value, attr, .. } => self.compile_attribute_access(value, attr),
             Expr::Subscript { value, slice, .. } => self.compile_subscript(value, slice),
 
             // List comprehension
@@ -1151,8 +1233,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 Ok((item_ptr.into(), element_type.as_ref().clone()))
             },
             Type::Dict(key_type, value_type) => {
-                // Check if the key type is compatible
-                if !index_type.can_coerce_to(key_type) {
+                // For dictionaries, we need to check if the key type is compatible
+                // For string keys, we're more permissive to allow for nested dictionary access
+                if !index_type.can_coerce_to(key_type) && !matches!(index_type, Type::String) {
                     return Err(format!("Dictionary key type mismatch: expected {:?}, got {:?}", key_type, index_type));
                 }
 
@@ -1164,6 +1247,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 )?;
 
                 // Return the value and its type
+                // For nested dictionaries, the value_type will be another dictionary
                 Ok((value_ptr.into(), value_type.as_ref().clone()))
             },
             Type::String => {
@@ -2470,6 +2554,96 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Return the result list
         Ok((result_list.into(), Type::List(Box::new(Type::Unknown))))
     }
+
+    /// Compile an attribute access expression (e.g., dict.keys())
+    fn compile_attribute_access(&mut self, value: &Expr, attr: &str) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Compile the value being accessed
+        let (value_val, value_type) = self.compile_expr(value)?;
+
+        // Handle different types of attribute access
+        match &value_type {
+            Type::Dict(key_type, value_type) => {
+                // Handle dictionary methods
+                match attr {
+                    "keys" => {
+                        // Get the dict_keys function
+                        let dict_keys_fn = match self.module.get_function("dict_keys") {
+                            Some(f) => f,
+                            None => return Err("dict_keys function not found".to_string()),
+                        };
+
+                        // Call dict_keys to get a list of keys
+                        let call_site_value = self.builder.build_call(
+                            dict_keys_fn,
+                            &[value_val.into_pointer_value().into()],
+                            "dict_keys_result"
+                        ).unwrap();
+
+                        let keys_list_ptr = call_site_value.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to get keys from dictionary".to_string())?;
+
+                        // Return the keys list and its type
+                        Ok((keys_list_ptr, Type::List(key_type.clone())))
+                    },
+                    "values" => {
+                        // Get the dict_values function
+                        let dict_values_fn = match self.module.get_function("dict_values") {
+                            Some(f) => f,
+                            None => return Err("dict_values function not found".to_string()),
+                        };
+
+                        // Call dict_values to get a list of values
+                        let call_site_value = self.builder.build_call(
+                            dict_values_fn,
+                            &[value_val.into_pointer_value().into()],
+                            "dict_values_result"
+                        ).unwrap();
+
+                        let values_list_ptr = call_site_value.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to get values from dictionary".to_string())?;
+
+                        // Return the values list and its type
+                        Ok((values_list_ptr, Type::List(value_type.clone())))
+                    },
+                    "items" => {
+                        // Get the dict_items function
+                        let dict_items_fn = match self.module.get_function("dict_items") {
+                            Some(f) => f,
+                            None => return Err("dict_items function not found".to_string()),
+                        };
+
+                        // Call dict_items to get a list of key-value pairs
+                        let call_site_value = self.builder.build_call(
+                            dict_items_fn,
+                            &[value_val.into_pointer_value().into()],
+                            "dict_items_result"
+                        ).unwrap();
+
+                        let items_list_ptr = call_site_value.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to get items from dictionary".to_string())?;
+
+                        // Return the items list and its type (list of tuples with key-value pairs)
+                        let tuple_type = Type::Tuple(vec![*key_type.clone(), *value_type.clone()]);
+                        Ok((items_list_ptr, Type::List(Box::new(tuple_type))))
+                    },
+                    _ => Err(format!("Unknown method '{}' for dictionary type", attr)),
+                }
+            },
+            Type::Class { name, methods, fields, .. } => {
+                // Handle class attributes
+                if let Some(_method_type) = methods.get(attr) {
+                    // Method access not yet implemented
+                    Err(format!("Method access for class '{}' not yet implemented", name))
+                } else if let Some(_field_type) = fields.get(attr) {
+                    // Field access not yet implemented
+                    Err(format!("Field access for class '{}' not yet implemented", name))
+                } else {
+                    Err(format!("Unknown attribute '{}' for class '{}'", attr, name))
+                }
+            },
+            _ => Err(format!("Type {:?} does not support attribute access", value_type)),
+        }
+    }
 }
 
 impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
@@ -3549,8 +3723,9 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                         Ok(())
                     },
                     Type::Dict(key_type, _) => {
-                        // Check if the key type is compatible
-                        if !index_type.can_coerce_to(key_type) {
+                        // For dictionaries, we need to check if the key type is compatible
+                        // For string keys, we're more permissive to allow for nested dictionary access
+                        if !index_type.can_coerce_to(key_type) && !matches!(index_type, Type::String) {
                             return Err(format!("Dictionary key type mismatch: expected {:?}, got {:?}", key_type, index_type));
                         }
 

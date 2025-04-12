@@ -908,6 +908,13 @@ impl Type {
             (Type::Dict(from_key, from_val), Type::Dict(to_key, to_val)) =>
                 from_key.can_coerce_to(to_key) && from_val.can_coerce_to(to_val),
 
+            // Special case for nested dictionaries: allow a dictionary to be coerced to its value type
+            // This enables nested dictionary access like data["user"]["name"]
+            (Type::Dict(_, from_val), to_type) => from_val.can_coerce_to(to_type),
+
+            // Allow mixed types in dictionaries
+            (_, Type::Dict(_, to_val)) if **to_val == Type::Any => true,
+
             // Tuples need all elements to be coercible
             (Type::Tuple(from_elems), Type::Tuple(to_elems)) => {
                 if from_elems.len() != to_elems.len() {
@@ -1012,11 +1019,21 @@ impl Type {
             },
 
             (Type::Dict(key1, val1), Type::Dict(key2, val2)) => {
-                match (Type::unify(key1, key2), Type::unify(val1, val2)) {
-                    (Some(unified_key), Some(unified_val)) =>
-                        Some(Type::Dict(Box::new(unified_key), Box::new(unified_val))),
-                    _ => None,
+                // For dictionary types, we can be more permissive
+                // If we can't unify the key or value types, use Any as the type
+                let unified_key = Type::unify(key1, key2).unwrap_or(Type::Any);
+                let unified_val = Type::unify(val1, val2).unwrap_or(Type::Any);
+                Some(Type::Dict(Box::new(unified_key), Box::new(unified_val)))
+            },
+
+            // Special case for nested dictionaries
+            (Type::Dict(_, val1), other) | (other, Type::Dict(_, val1)) => {
+                // Try to unify the dictionary value type with the other type
+                if let Some(unified) = Type::unify(val1, other) {
+                    return Some(unified);
                 }
+                // If we can't unify, use Any as the type
+                Some(Type::Any)
             },
 
             (Type::Set(elem1), Type::Set(elem2)) => {
@@ -1094,8 +1111,17 @@ impl Type {
                     })
                 }
             },
-            Type::Dict(_, value_type) => {
-                // Index type should be compatible with key type
+            Type::Dict(key_type, value_type) => {
+                // For dictionaries, we need to check if the key type is compatible
+                if !index_type.can_coerce_to(key_type) {
+                    return Err(TypeError::InvalidOperator {
+                        operator: "[]".to_string(),
+                        left_type: self.clone(),
+                        right_type: Some(index_type.clone()),
+                    });
+                }
+
+                // Return the value type, which could be another dictionary for nested access
                 Ok(*value_type.clone())
             },
             Type::String => {
@@ -1212,6 +1238,78 @@ impl Type {
     #[must_use]
     pub fn is_class(&self) -> bool {
         matches!(self, Self::Class { .. })
+    }
+
+    /// Get the type of a member (attribute or method) of this type
+    pub fn get_member_type(&self, member: &str) -> Result<Type, TypeError> {
+        match self {
+            Type::Class { name, methods, fields, .. } => {
+                // Check if the member is a method
+                if let Some(method_type) = methods.get(member) {
+                    Ok(*method_type.clone())
+                }
+                // Check if the member is a field
+                else if let Some(field_type) = fields.get(member) {
+                    Ok(field_type.clone())
+                }
+                else {
+                    Err(TypeError::UndefinedMember {
+                        class_name: name.clone(),
+                        member: member.to_string(),
+                    })
+                }
+            },
+            Type::Dict(key_type, value_type) => {
+                // Dictionary methods
+                match member {
+                    "keys" => {
+                        // keys() returns a list of the dictionary's keys
+                        let return_type = Type::List(key_type.clone());
+                        Ok(Type::Function {
+                            param_types: vec![],
+                            param_names: vec![],
+                            has_varargs: false,
+                            has_kwargs: false,
+                            default_values: vec![],
+                            return_type: Box::new(return_type),
+                        })
+                    },
+                    "values" => {
+                        // values() returns a list of the dictionary's values
+                        let return_type = Type::List(value_type.clone());
+                        Ok(Type::Function {
+                            param_types: vec![],
+                            param_names: vec![],
+                            has_varargs: false,
+                            has_kwargs: false,
+                            default_values: vec![],
+                            return_type: Box::new(return_type),
+                        })
+                    },
+                    "items" => {
+                        // items() returns a list of (key, value) tuples
+                        let tuple_type = Type::Tuple(vec![*key_type.clone(), *value_type.clone()]);
+                        let return_type = Type::List(Box::new(tuple_type));
+                        Ok(Type::Function {
+                            param_types: vec![],
+                            param_names: vec![],
+                            has_varargs: false,
+                            has_kwargs: false,
+                            default_values: vec![],
+                            return_type: Box::new(return_type),
+                        })
+                    },
+                    _ => Err(TypeError::NotAClass {
+                        expr_type: self.clone(),
+                        member: member.to_string(),
+                    }),
+                }
+            },
+            _ => Err(TypeError::NotAClass {
+                expr_type: self.clone(),
+                member: member.to_string(),
+            }),
+        }
     }
 }
 

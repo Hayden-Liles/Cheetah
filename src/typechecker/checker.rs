@@ -477,26 +477,20 @@ impl TypeChecker {
             Expr::Attribute { value, attr, .. } => {
                 let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
 
-                // Check if the value is a class
-                match &value_type {
-                    Type::Class { fields, .. } => {
-                        // Check if the attribute exists
-                        if let Some(field_type) = fields.get(attr) {
-                            if !value_type.can_coerce_to(field_type) {
-                                return Err(TypeError::IncompatibleTypes {
-                                    expected: field_type.clone(),
-                                    got: value_type.clone(),
-                                    operation: "attribute assignment".to_string(),
-                                });
-                            }
+                // Use the get_member_type method to check if the attribute exists
+                match value_type.get_member_type(attr) {
+                    Ok(member_type) => {
+                        // Check if the value type is compatible with the member type
+                        if !value_type.can_coerce_to(&member_type) {
+                            return Err(TypeError::IncompatibleTypes {
+                                expected: member_type,
+                                got: value_type.clone(),
+                                operation: "attribute assignment".to_string(),
+                            });
                         }
-
                         Ok(())
                     },
-                    _ => Err(TypeError::NotAClass {
-                        expr_type: value_type,
-                        member: attr.clone(),
-                    }),
+                    Err(err) => Err(err),
                 }
             },
 

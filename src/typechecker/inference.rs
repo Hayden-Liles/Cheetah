@@ -408,29 +408,8 @@ impl TypeInference {
             Expr::Attribute { value, attr, .. } => {
                 let value_type = Self::infer_expr(env, value)?;
 
-                // Check if the value is a class or has attributes
-                match &value_type {
-                    Type::Class { name, methods, fields, .. } => {
-                        // Check if the attribute is a method
-                        if let Some(method_type) = methods.get(attr) {
-                            Ok(*method_type.clone())
-                        }
-                        // Check if the attribute is a field
-                        else if let Some(field_type) = fields.get(attr) {
-                            Ok(field_type.clone())
-                        }
-                        else {
-                            Err(TypeError::UndefinedMember {
-                                class_name: name.clone(),
-                                member: attr.clone(),
-                            })
-                        }
-                    },
-                    _ => Err(TypeError::NotAClass {
-                        expr_type: value_type,
-                        member: attr.clone(),
-                    }),
-                }
+                // Use the get_member_type method to handle attribute access
+                value_type.get_member_type(attr)
             },
 
             Expr::Subscript { value, slice, .. } => {
