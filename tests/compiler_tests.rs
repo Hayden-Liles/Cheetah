@@ -130,3 +130,15 @@ mod list_comprehension_test;
 // Include the advanced list comprehension tests
 #[path = "more_tests/compiler/advanced_list_comprehension_test.rs"]
 mod advanced_list_comprehension_test;
+
+// Include the dictionary operations tests
+#[path = "more_tests/compiler/dict_operations_test.rs"]
+mod dict_operations_test;
+
+// Include the comprehensive dictionary tests
+#[path = "more_tests/compiler/comprehensive_dict_test.rs"]
+mod comprehensive_dict_test;
+
+// Include the advanced dictionary operations tests
+#[path = "more_tests/compiler/advanced_dict_operations_test.rs"]
+mod advanced_dict_operations_test;

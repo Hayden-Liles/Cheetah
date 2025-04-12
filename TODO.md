@@ -90,28 +90,43 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
      - [x] Test complex and deeply nested list comprehensions
      - [x] Test edge cases like empty list comprehensions
      - [ ] Support for advanced features (tuple unpacking in comprehensions, multiple for clauses)
-7. [ ] Add dictionary support
-8. [ ] Implement a proper closure environment solution for nonlocal variables
+7. [x] Add dictionary support
+   - [x] Implement basic dictionary structure in LLVM
+   - [x] Add dictionary creation (empty and with key-value pairs)
+   - [x] Implement dictionary access (get value by key)
+   - [x] Add dictionary modification (set value for key)
+   - [x] Implement dictionary operations (len)
+   - [x] Create comprehensive tests for dictionary operations
+   - [x] Add advanced dictionary tests
+8. [ ] Enhance dictionary support
+   - [ ] Implement nested dictionary access
+   - [ ] Add support for mixed key and value types
+   - [ ] Implement dictionary methods (keys, values, items)
+   - [ ] Add support for dictionary comprehensions
+   - [ ] Implement membership testing with 'in' operator for dictionaries
+   - [ ] Improve dictionary integration with functions
+9. [ ] Implement a proper closure environment solution for nonlocal variables
 
 ### Essential Built-ins
-9. [x] Support for the range() built-in function
-10. [x] Implement basic built-in functions (print, len, etc.)
+10. [x] Support for the range() built-in function
+11. [x] Implement basic built-in functions (print, len, etc.)
     - [x] Implement print() function
     - [x] Implement input() function
     - [x] Implement len() function for strings and lists
       - [x] Basic len() function implementation
       - [x] Support for len() in expressions and control flow
       - [ ] Fix len() function in nested function calls with parameters
-      - [ ] Extend len() function to support dictionaries and other collections
+      - [x] Extend len() function to support dictionaries and other collections
     - [x] Implement type conversion functions (int(), float(), bool(), str())
     - [ ] Implement other common built-in functions (min, max, etc.)
-11. [ ] Implement string manipulation functions
+12. [ ] Implement string manipulation functions
 
 ### Testing Improvements
-12. [ ] Add more comprehensive test cases for new features
-13. [ ] Add tests for edge cases in type conversions
-14. [ ] Create a test suite for comparing compiled output with CPython execution
-15. [ ] Add tests for error handling and recovery
+13. [x] Add comprehensive tests for dictionary operations
+14. [ ] Add more comprehensive test cases for new features
+15. [ ] Add tests for edge cases in type conversions
+16. [ ] Create a test suite for comparing compiled output with CPython execution
+17. [ ] Add tests for error handling and recovery
 
 ## Next Steps (Medium Priority)
 

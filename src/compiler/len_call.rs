@@ -17,7 +17,7 @@ impl<'ctx> CompilationContext<'ctx> {
         // Compile the argument
         let (arg_val, arg_type) = self.compile_expr(&args[0])?;
 
-        // Check if the argument is a string or list
+        // Check if the argument is a string, list, or dictionary
         match arg_type {
             Type::String => {
                 // Get the string_len function
@@ -79,7 +79,37 @@ impl<'ctx> CompilationContext<'ctx> {
 
                 Ok((result, Type::Int))
             },
-            // Handle function parameters that might be strings or lists
+            Type::Dict(_, _) => {
+                // Get the dict_len function
+                let dict_len_fn = match self.module.get_function("dict_len") {
+                    Some(f) => f,
+                    None => return Err("dict_len function not found".to_string()),
+                };
+
+                // Make sure the argument is a pointer
+                let arg_ptr = if arg_val.is_pointer_value() {
+                    arg_val.into_pointer_value()
+                } else {
+                    // If it's not a pointer, allocate memory and store the value
+                    let ptr = self.builder.build_alloca(arg_val.get_type(), "dict_arg").unwrap();
+                    self.builder.build_store(ptr, arg_val).unwrap();
+                    ptr
+                };
+
+                // Call the dict_len function
+                let call_site_value = self.builder.build_call(
+                    dict_len_fn,
+                    &[arg_ptr.into()],
+                    "dict_len_result"
+                ).unwrap();
+
+                // Get the result
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to get dictionary length".to_string())?;
+
+                Ok((result, Type::Int))
+            },
+            // Handle function parameters that might be strings, lists, or dictionaries
             Type::Any => {
                 // Try to treat the value as a string first
                 if let Ok(result) = self.try_get_string_length(arg_val) {
@@ -91,7 +121,12 @@ impl<'ctx> CompilationContext<'ctx> {
                     return Ok((result, Type::Int));
                 }
 
-                // If neither works, return an error
+                // Then try to treat it as a dictionary
+                if let Ok(result) = self.try_get_dict_length(arg_val) {
+                    return Ok((result, Type::Int));
+                }
+
+                // If none of these work, return an error
                 Err("Cannot determine length of Any type".to_string())
             },
             _ => Err(format!("Object of type '{:?}' has no len()", arg_type)),
@@ -150,5 +185,32 @@ impl<'ctx> CompilationContext<'ctx> {
         // Get the result
         call_site_value.try_as_basic_value().left()
             .ok_or_else(|| "Failed to get list length".to_string())
+    }
+
+    /// Try to get the length of a dictionary
+    fn try_get_dict_length(&self, value: BasicValueEnum<'ctx>) -> Result<BasicValueEnum<'ctx>, String> {
+        // Get the dict_len function
+        let dict_len_fn = match self.module.get_function("dict_len") {
+            Some(f) => f,
+            None => return Err("dict_len function not found".to_string()),
+        };
+
+        // Make sure the value is a pointer
+        let value_ptr = if value.is_pointer_value() {
+            value.into_pointer_value()
+        } else {
+            return Err("Value is not a pointer".to_string());
+        };
+
+        // Call the dict_len function
+        let call_site_value = self.builder.build_call(
+            dict_len_fn,
+            &[value_ptr.into()],
+            "dict_len_result"
+        ).unwrap();
+
+        // Get the result
+        call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to get dictionary length".to_string())
     }
 }

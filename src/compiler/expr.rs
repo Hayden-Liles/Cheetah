@@ -933,7 +933,57 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                 Ok((tuple_ptr.into(), Type::Tuple(element_types)))
             },
-            Expr::Dict { .. } => Err("Dictionary expressions not yet implemented".to_string()),
+            Expr::Dict { keys, values, .. } => {
+                // Check if we have an empty dictionary
+                if keys.is_empty() {
+                    // Create an empty dictionary
+                    let dict_ptr = self.build_empty_dict("empty_dict")?;
+                    return Ok((dict_ptr.into(), Type::Dict(Box::new(Type::Any), Box::new(Type::Any))));
+                }
+
+                // Compile all keys and values
+                let mut compiled_keys = Vec::with_capacity(keys.len());
+                let mut compiled_values = Vec::with_capacity(values.len());
+                let mut key_types = Vec::with_capacity(keys.len());
+                let mut value_types = Vec::with_capacity(values.len());
+
+                for (key_opt, value) in keys.iter().zip(values.iter()) {
+                    if let Some(key) = key_opt {
+                        let (key_val, key_type) = self.compile_expr(key)?;
+                        compiled_keys.push(key_val);
+                        key_types.push(key_type);
+                    } else {
+                        // Dictionary unpacking with ** not yet supported
+                        return Err("Dictionary unpacking with ** not yet implemented".to_string());
+                    }
+
+                    let (value_val, value_type) = self.compile_expr(value)?;
+                    compiled_values.push(value_val);
+                    value_types.push(value_type);
+                }
+
+                // Determine the common key and value types
+                let key_type = if key_types.is_empty() {
+                    Type::Any
+                } else {
+                    // For simplicity, use the first key type
+                    // In a more advanced implementation, we would find a common type
+                    key_types[0].clone()
+                };
+
+                let value_type = if value_types.is_empty() {
+                    Type::Any
+                } else {
+                    // For simplicity, use the first value type
+                    // In a more advanced implementation, we would find a common type
+                    value_types[0].clone()
+                };
+
+                // Build the dictionary
+                let dict_ptr = self.build_dict(compiled_keys, compiled_values, &key_type, &value_type)?;
+
+                Ok((dict_ptr.into(), Type::Dict(Box::new(key_type), Box::new(value_type))))
+            },
             Expr::Set { .. } => Err("Set expressions not yet implemented".to_string()),
             Expr::Attribute { .. } => Err("Attribute access not yet implemented".to_string()),
             Expr::Subscript { value, slice, .. } => self.compile_subscript(value, slice),
@@ -1099,6 +1149,22 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                 // Return the item and its type
                 Ok((item_ptr.into(), element_type.as_ref().clone()))
+            },
+            Type::Dict(key_type, value_type) => {
+                // Check if the key type is compatible
+                if !index_type.can_coerce_to(key_type) {
+                    return Err(format!("Dictionary key type mismatch: expected {:?}, got {:?}", key_type, index_type));
+                }
+
+                // Get the value from the dictionary
+                let value_ptr = self.build_dict_get_item(
+                    value_val.into_pointer_value(),
+                    index_val,
+                    &index_type
+                )?;
+
+                // Return the value and its type
+                Ok((value_ptr.into(), value_type.as_ref().clone()))
             },
             Type::String => {
                 // For strings, we need an integer index
@@ -1323,8 +1389,18 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     }
 
     fn build_empty_dict(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let _ = name;
-        Err("Dict operations require runtime support (not yet implemented)".to_string())
+        // Get the dict_new function
+        let dict_new_fn = match self.module.get_function("dict_new") {
+            Some(f) => f,
+            None => return Err("dict_new function not found".to_string()),
+        };
+
+        // Call dict_new to create an empty dictionary
+        let call_site_value = self.builder.build_call(dict_new_fn, &[], name).unwrap();
+        let dict_ptr = call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to create empty dictionary".to_string())?;
+
+        Ok(dict_ptr.into_pointer_value())
     }
 
     fn build_dict(
@@ -1334,11 +1410,64 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         key_type: &Type,
         value_type: &Type
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let _ = keys;
-        let _ = values;
-        let _ = key_type;
-        let _ = value_type;
-        Err("Dict operations require runtime support (not yet implemented)".to_string())
+        // Create a dictionary with the given capacity
+        let dict_with_capacity_fn = match self.module.get_function("dict_with_capacity") {
+            Some(f) => f,
+            None => return Err("dict_with_capacity function not found".to_string()),
+        };
+
+        // Get the length of the dictionary
+        let len = keys.len() as u64;
+        let len_value = self.llvm_context.i64_type().const_int(len, false);
+
+        // Call dict_with_capacity to create a dictionary with the given capacity
+        let call_site_value = self.builder.build_call(dict_with_capacity_fn, &[len_value.into()], "dict_with_capacity").unwrap();
+        let dict_ptr = call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to create dictionary with capacity".to_string())?;
+
+        let dict_ptr = dict_ptr.into_pointer_value();
+
+        // Add each key-value pair to the dictionary
+        let dict_set_fn = match self.module.get_function("dict_set") {
+            Some(f) => f,
+            None => return Err("dict_set function not found".to_string()),
+        };
+
+        for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
+            // Convert the key and value to pointers if needed
+            let key_ptr = if crate::compiler::types::is_reference_type(key_type) {
+                *key
+            } else {
+                // For non-reference types, we need to allocate memory and store the value
+                let key_alloca = self.builder.build_alloca(
+                    key.get_type(),
+                    &format!("dict_key_{}", i)
+                ).unwrap();
+                self.builder.build_store(key_alloca, *key).unwrap();
+                key_alloca.into()
+            };
+
+            let value_ptr = if crate::compiler::types::is_reference_type(value_type) {
+                *value
+            } else {
+                // For non-reference types, we need to allocate memory and store the value
+                let value_alloca = self.builder.build_alloca(
+                    value.get_type(),
+                    &format!("dict_value_{}", i)
+                ).unwrap();
+                self.builder.build_store(value_alloca, *value).unwrap();
+                value_alloca.into()
+            };
+
+            // Call dict_set to add the key-value pair to the dictionary
+            self.builder.build_call(
+                dict_set_fn,
+                &[dict_ptr.into(), key_ptr.into(), value_ptr.into()],
+                &format!("dict_set_{}", i)
+            ).unwrap();
+        }
+
+        Ok(dict_ptr)
     }
 
     fn build_empty_set(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
@@ -1549,10 +1678,36 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         key: BasicValueEnum<'ctx>,
         key_type: &Type
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let _ = dict_ptr;
-        let _ = key;
-        let _ = key_type;
-        Err("Dict operations require runtime support (not yet implemented)".to_string())
+        // Get the dict_get function
+        let dict_get_fn = match self.module.get_function("dict_get") {
+            Some(f) => f,
+            None => return Err("dict_get function not found".to_string()),
+        };
+
+        // Convert the key to a pointer if needed
+        let key_ptr = if crate::compiler::types::is_reference_type(key_type) {
+            key
+        } else {
+            // For non-reference types, we need to allocate memory and store the value
+            let key_alloca = self.builder.build_alloca(
+                key.get_type(),
+                "dict_key_temp"
+            ).unwrap();
+            self.builder.build_store(key_alloca, key).unwrap();
+            key_alloca.into()
+        };
+
+        // Call dict_get to get the value from the dictionary
+        let call_site_value = self.builder.build_call(
+            dict_get_fn,
+            &[dict_ptr.into(), key_ptr.into()],
+            "dict_get_result"
+        ).unwrap();
+
+        let value_ptr = call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to get value from dictionary".to_string())?;
+
+        Ok(value_ptr.into_pointer_value())
     }
 
     fn build_string_get_char(
@@ -3389,6 +3544,54 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                                 value_alloca.into()
                             ],
                             "list_set_result"
+                        ).unwrap();
+
+                        Ok(())
+                    },
+                    Type::Dict(key_type, _) => {
+                        // Check if the key type is compatible
+                        if !index_type.can_coerce_to(key_type) {
+                            return Err(format!("Dictionary key type mismatch: expected {:?}, got {:?}", key_type, index_type));
+                        }
+
+                        // Get the dict_set function
+                        let dict_set_fn = match self.module.get_function("dict_set") {
+                            Some(f) => f,
+                            None => return Err("dict_set function not found".to_string()),
+                        };
+
+                        // Convert the key to a pointer if needed
+                        let key_ptr = if crate::compiler::types::is_reference_type(&index_type) {
+                            index_val
+                        } else {
+                            // For non-reference types, we need to allocate memory and store the value
+                            let key_alloca = self.builder.build_alloca(
+                                index_val.get_type(),
+                                "dict_key_temp"
+                            ).unwrap();
+                            self.builder.build_store(key_alloca, index_val).unwrap();
+                            key_alloca.into()
+                        };
+
+                        // Compile the value to be stored
+                        let (value_val, _value_type) = self.compile_expr(target)?;
+
+                        // Store the value in memory and pass a pointer to it
+                        let value_alloca = self.builder.build_alloca(
+                            value_val.get_type(),
+                            "dict_value_temp"
+                        ).unwrap();
+                        self.builder.build_store(value_alloca, value_val).unwrap();
+
+                        // Call dict_set to set the item in the dictionary
+                        self.builder.build_call(
+                            dict_set_fn,
+                            &[
+                                container_val.into_pointer_value().into(),
+                                key_ptr.into(),
+                                value_alloca.into()
+                            ],
+                            "dict_set_result"
                         ).unwrap();
 
                         Ok(())
