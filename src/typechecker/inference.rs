@@ -253,6 +253,73 @@ impl TypeInference {
                         },
                         "range" => {
                             // range() returns an iterable of integers
+                            // Check the number of arguments to determine which range function to use
+                            match args.len() {
+                                1 => {
+                                    // range(stop)
+                                    let arg_type = Self::infer_expr(env, &args[0])?;
+                                    if !arg_type.can_coerce_to(&Type::Int) {
+                                        return Err(TypeError::IncompatibleTypes {
+                                            expected: Type::Int,
+                                            got: arg_type,
+                                            operation: "range stop argument".to_string(),
+                                        });
+                                    }
+                                },
+                                2 => {
+                                    // range(start, stop)
+                                    let start_type = Self::infer_expr(env, &args[0])?;
+                                    let stop_type = Self::infer_expr(env, &args[1])?;
+                                    if !start_type.can_coerce_to(&Type::Int) {
+                                        return Err(TypeError::IncompatibleTypes {
+                                            expected: Type::Int,
+                                            got: start_type,
+                                            operation: "range start argument".to_string(),
+                                        });
+                                    }
+                                    if !stop_type.can_coerce_to(&Type::Int) {
+                                        return Err(TypeError::IncompatibleTypes {
+                                            expected: Type::Int,
+                                            got: stop_type,
+                                            operation: "range stop argument".to_string(),
+                                        });
+                                    }
+                                },
+                                3 => {
+                                    // range(start, stop, step)
+                                    let start_type = Self::infer_expr(env, &args[0])?;
+                                    let stop_type = Self::infer_expr(env, &args[1])?;
+                                    let step_type = Self::infer_expr(env, &args[2])?;
+                                    if !start_type.can_coerce_to(&Type::Int) {
+                                        return Err(TypeError::IncompatibleTypes {
+                                            expected: Type::Int,
+                                            got: start_type,
+                                            operation: "range start argument".to_string(),
+                                        });
+                                    }
+                                    if !stop_type.can_coerce_to(&Type::Int) {
+                                        return Err(TypeError::IncompatibleTypes {
+                                            expected: Type::Int,
+                                            got: stop_type,
+                                            operation: "range stop argument".to_string(),
+                                        });
+                                    }
+                                    if !step_type.can_coerce_to(&Type::Int) {
+                                        return Err(TypeError::IncompatibleTypes {
+                                            expected: Type::Int,
+                                            got: step_type,
+                                            operation: "range step argument".to_string(),
+                                        });
+                                    }
+                                },
+                                _ => {
+                                    return Err(TypeError::InvalidArgumentCount {
+                                        expected: "1, 2, or 3".to_string(),
+                                        got: args.len(),
+                                        function: "range".to_string(),
+                                    });
+                                }
+                            }
                             return Ok(Type::List(Box::new(Type::Int)));
                         },
                         _ => {

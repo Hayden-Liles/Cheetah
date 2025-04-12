@@ -41,6 +41,13 @@ pub enum TypeError {
         got: usize,
     },
 
+    /// When a function is called with an invalid number of arguments
+    InvalidArgumentCount {
+        function: String,
+        expected: String,
+        got: usize,
+    },
+
     /// When a member is accessed on a non-class type
     NotAClass {
         expr_type: Type,
@@ -100,6 +107,10 @@ impl fmt::Display for TypeError {
             },
             TypeError::NotIndexable(ty) => {
                 write!(f, "Type {} is not indexable", ty)
+            },
+            TypeError::InvalidArgumentCount { function, expected, got } => {
+                write!(f, "Invalid number of arguments in call to '{}': expected {}, got {}",
+                      function, expected, got)
             },
         }
     }

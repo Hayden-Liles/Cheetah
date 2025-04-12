@@ -70,8 +70,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 ### Essential Built-ins
 8. [x] Support for the range() built-in function
 9. [ ] Implement basic built-in functions (print, len, etc.)
-10. [ ] Add dictionary support
 11. [ ] Implement string manipulation functions
+10. [ ] Add dictionary support
 
 ### Testing Improvements
 12. [ ] Add more comprehensive test cases for new features

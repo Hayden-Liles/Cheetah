@@ -567,10 +567,40 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     None => return Err(format!("Undefined nested function: {}", qualified_name)),
                                 }
                             } else {
-                                // Use the original name for regular functions
-                                match self.functions.get(id) {
-                                    Some(f) => *f,
-                                    None => return Err(format!("Undefined function: {}", id)),
+                                // Special handling for range function with different argument counts
+                                if id == "range" {
+                                    match args.len() {
+                                        1 => {
+                                            // range(stop)
+                                            match self.module.get_function("range_1") {
+                                                Some(f) => f,
+                                                None => return Err("range_1 function not found".to_string()),
+                                            }
+                                        },
+                                        2 => {
+                                            // range(start, stop)
+                                            match self.module.get_function("range_2") {
+                                                Some(f) => f,
+                                                None => return Err("range_2 function not found".to_string()),
+                                            }
+                                        },
+                                        3 => {
+                                            // range(start, stop, step)
+                                            match self.module.get_function("range_3") {
+                                                Some(f) => f,
+                                                None => return Err("range_3 function not found".to_string()),
+                                            }
+                                        },
+                                        _ => {
+                                            return Err(format!("Invalid number of arguments for range: expected 1, 2, or 3, got {}", args.len()));
+                                        }
+                                    }
+                                } else {
+                                    // Use the original name for regular functions
+                                    match self.functions.get(id) {
+                                        Some(f) => *f,
+                                        None => return Err(format!("Undefined function: {}", id)),
+                                    }
                                 }
                             };
 

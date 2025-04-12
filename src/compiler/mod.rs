@@ -144,10 +144,37 @@ impl<'ctx> Compiler<'ctx> {
             module.add_function("bool_to_string", fn_type, None);
         }
 
-        // range function
-        if module.get_function("range").is_none() {
+        // range functions with different argument counts
+        // range(stop)
+        if module.get_function("range_1").is_none() {
             let fn_type = context.i64_type().fn_type(&[context.i64_type().into()], false);
-            let range_func = module.add_function("range", fn_type, None);
+            let range_func = module.add_function("range_1", fn_type, None);
+            self.context.functions.insert("range_1".to_string(), range_func);
+        }
+
+        // range(start, stop)
+        if module.get_function("range_2").is_none() {
+            let fn_type = context.i64_type().fn_type(&[
+                context.i64_type().into(),
+                context.i64_type().into(),
+            ], false);
+            let range_func = module.add_function("range_2", fn_type, None);
+            self.context.functions.insert("range_2".to_string(), range_func);
+        }
+
+        // range(start, stop, step)
+        if module.get_function("range_3").is_none() {
+            let fn_type = context.i64_type().fn_type(&[
+                context.i64_type().into(),
+                context.i64_type().into(),
+                context.i64_type().into(),
+            ], false);
+            let range_func = module.add_function("range_3", fn_type, None);
+            self.context.functions.insert("range_3".to_string(), range_func);
+        }
+
+        // Register the default range function (with one argument)
+        if let Some(range_func) = module.get_function("range_1") {
             self.context.functions.insert("range".to_string(), range_func);
         }
     }
