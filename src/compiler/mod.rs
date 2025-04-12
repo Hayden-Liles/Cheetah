@@ -7,6 +7,7 @@ pub mod stmt;
 pub mod runtime;
 pub mod scope;
 pub mod closure;
+pub mod builtins;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;
@@ -144,7 +145,10 @@ impl<'ctx> Compiler<'ctx> {
         self.create_string_conversion_functions();
 
         // Register list operation functions
-        runtime::list_ops::register_list_functions(self.context.llvm_context, &mut self.context.module);
+        runtime::register_runtime_functions(self.context.llvm_context, &mut self.context.module);
+
+        // Register built-in functions
+        self.context.register_len_function();
     }
 
     fn create_conversion_functions(&mut self) {

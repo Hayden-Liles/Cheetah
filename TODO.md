@@ -76,7 +76,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Define slice syntax and semantics
    - [x] Update the parser to handle slice notation
    - [x] Implement slice operations for lists in the compiler
-   - [ ] Implement slice operations for strings in the compiler (future work)
+   - [x] Implement slice operations for strings in the compiler
    - [x] Create tests for slice operations
 6. [ ] Add support for list comprehensions
 7. [ ] Add dictionary support

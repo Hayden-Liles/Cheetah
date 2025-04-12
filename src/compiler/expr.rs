@@ -19,6 +19,7 @@ pub trait ExprCompiler<'ctx> {
     fn build_list_slice(&self, list_ptr: inkwell::values::PointerValue<'ctx>, start: inkwell::values::IntValue<'ctx>, stop: inkwell::values::IntValue<'ctx>, step: inkwell::values::IntValue<'ctx>) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn build_dict_get_item(&self, dict_ptr: inkwell::values::PointerValue<'ctx>, key: BasicValueEnum<'ctx>, key_type: &Type) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn build_string_get_char(&self, str_ptr: inkwell::values::PointerValue<'ctx>, index: inkwell::values::IntValue<'ctx>) -> Result<BasicValueEnum<'ctx>, String>;
+    fn build_string_slice(&self, str_ptr: inkwell::values::PointerValue<'ctx>, start: inkwell::values::IntValue<'ctx>, stop: inkwell::values::IntValue<'ctx>, step: inkwell::values::IntValue<'ctx>) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn compile_slice_operation(&mut self, value_val: BasicValueEnum<'ctx>, value_type: Type, lower: Option<&Expr>, upper: Option<&Expr>, step: Option<&Expr>) -> Result<(BasicValueEnum<'ctx>, Type), String>;
     /// Compile an expression and return the resulting LLVM value with its type
     fn compile_expr(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String>;
@@ -1086,6 +1087,21 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Return the item and its type
                 Ok((item_ptr.into(), element_type.as_ref().clone()))
             },
+            Type::String => {
+                // For strings, we need an integer index
+                if !matches!(index_type, Type::Int) {
+                    return Err(format!("String index must be an integer, got {:?}", index_type));
+                }
+
+                // Get the character from the string
+                let char_val = self.build_string_get_char(
+                    value_val.into_pointer_value(),
+                    index_val.into_int_value()
+                )?;
+
+                // Return the character as an integer
+                Ok((char_val, Type::Int))
+            },
             // Special case for function parameters that might be lists
             Type::Int | Type::Any => {
                 // Try to treat the value as a list
@@ -1450,8 +1466,65 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 Ok((slice_ptr.into(), Type::List(element_type.clone())))
             },
             Type::String => {
-                // String slicing is not implemented yet
-                Err("String slicing not yet implemented".to_string())
+                // Get the string length
+                let string_len_fn = match self.module.get_function("string_len") {
+                    Some(f) => f,
+                    None => return Err("string_len function not found".to_string()),
+                };
+
+                let str_ptr = value_val.into_pointer_value();
+                let call_site_value = self.builder.build_call(
+                    string_len_fn,
+                    &[str_ptr.into()],
+                    "string_len_result"
+                ).unwrap();
+
+                let string_len = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to get string length".to_string())?;
+
+                let string_len = string_len.into_int_value();
+
+                // Compile the slice bounds
+                let i64_type = self.llvm_context.i64_type();
+
+                // Default start = 0
+                let start = if let Some(expr) = lower {
+                    let (start_val, start_type) = self.compile_expr(expr)?;
+                    if !matches!(start_type, Type::Int) {
+                        return Err(format!("Slice start index must be an integer, got {:?}", start_type));
+                    }
+                    start_val.into_int_value()
+                } else {
+                    i64_type.const_int(0, false)
+                };
+
+                // Default stop = string length
+                let stop = if let Some(expr) = upper {
+                    let (stop_val, stop_type) = self.compile_expr(expr)?;
+                    if !matches!(stop_type, Type::Int) {
+                        return Err(format!("Slice stop index must be an integer, got {:?}", stop_type));
+                    }
+                    stop_val.into_int_value()
+                } else {
+                    string_len
+                };
+
+                // Default step = 1
+                let step_val = if let Some(expr) = step {
+                    let (step_val, step_type) = self.compile_expr(expr)?;
+                    if !matches!(step_type, Type::Int) {
+                        return Err(format!("Slice step must be an integer, got {:?}", step_type));
+                    }
+                    step_val.into_int_value()
+                } else {
+                    i64_type.const_int(1, false)
+                };
+
+                // Call the string_slice function
+                let slice_ptr = self.build_string_slice(str_ptr, start, stop, step_val)?;
+
+                // Return the slice and its type
+                Ok((slice_ptr.into(), Type::String))
             },
             _ => Err(format!("Type {:?} does not support slicing", value_type)),
         }
@@ -1474,9 +1547,51 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         str_ptr: inkwell::values::PointerValue<'ctx>,
         index: inkwell::values::IntValue<'ctx>
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        let _ = str_ptr;
-        let _ = index;
-        Err("String operations require runtime support (not yet implemented)".to_string())
+        // Get the string_get_char function
+        let string_get_char_fn = match self.module.get_function("string_get_char") {
+            Some(f) => f,
+            None => return Err("string_get_char function not found".to_string()),
+        };
+
+        // Call the string_get_char function
+        let call_site_value = self.builder.build_call(
+            string_get_char_fn,
+            &[str_ptr.into(), index.into()],
+            "string_get_char_result"
+        ).unwrap();
+
+        // Convert the result to an integer value
+        let result = call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to get character from string".to_string())?;
+
+        Ok(result)
+    }
+
+    fn build_string_slice(
+        &self,
+        str_ptr: inkwell::values::PointerValue<'ctx>,
+        start: inkwell::values::IntValue<'ctx>,
+        stop: inkwell::values::IntValue<'ctx>,
+        step: inkwell::values::IntValue<'ctx>
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        // Get the string_slice function
+        let string_slice_fn = match self.module.get_function("string_slice") {
+            Some(f) => f,
+            None => return Err("string_slice function not found".to_string()),
+        };
+
+        // Call the string_slice function
+        let call_site_value = self.builder.build_call(
+            string_slice_fn,
+            &[str_ptr.into(), start.into(), stop.into(), step.into()],
+            "string_slice_result"
+        ).unwrap();
+
+        // Convert the result to a pointer value
+        let result = call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to get slice from string".to_string())?;
+
+        Ok(result.into_pointer_value())
     }
 
     fn compile_number(&mut self, num: &Number) -> Result<(BasicValueEnum<'ctx>, Type), String> {
