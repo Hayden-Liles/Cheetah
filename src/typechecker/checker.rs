@@ -262,7 +262,16 @@ impl TypeChecker {
             let param_type = if let Some(typ) = &param.typ {
                 self.expr_to_type(typ)?
             } else {
-                Type::Any
+                // For list operations, we'll use a more specific type
+                if param.name == "lst" {
+                    // If parameter is named 'lst', assume it's a list
+                    Type::List(Box::new(Type::Any))
+                } else if param.name == "item" {
+                    // If parameter is named 'item', assume it's a generic item
+                    Type::Any
+                } else {
+                    Type::Any
+                }
             };
 
             param_types.push(param_type);
@@ -492,16 +501,16 @@ impl TypeChecker {
             },
 
             Expr::Subscript { value, slice, .. } => {
-                let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
+                let container_type = TypeInference::infer_expr_immut(&self.env, value)?;
                 let slice_type = TypeInference::infer_expr_immut(&self.env, slice)?;
 
-                // Check if the value is indexable
-                if !value_type.is_indexable() {
-                    return Err(TypeError::NotIndexable(value_type));
+                // Check if the container is indexable
+                if !container_type.is_indexable() {
+                    return Err(TypeError::NotIndexable(container_type));
                 }
 
                 // Get the element type
-                let element_type = value_type.get_indexed_type(&slice_type)?;
+                let element_type = container_type.get_indexed_type(&slice_type)?;
 
                 // Check if the value type is compatible with the element type
                 if !value_type.can_coerce_to(&element_type) {

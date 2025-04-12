@@ -1121,6 +1121,7 @@ impl ExprParser for Parser {
         let line = self.current.as_ref().map_or(0, |t| t.line);
         let column = self.current.as_ref().map_or(0, |t| t.column);
 
+        // Handle the ellipsis case
         if self.match_token(TokenType::Ellipsis) {
             let ellipsis_expr = Expr::Ellipsis { line, column };
 
@@ -1149,25 +1150,26 @@ impl ExprParser for Parser {
             return Ok(ellipsis_expr);
         }
 
-        let start_expr = if !self.check(TokenType::Colon) {
-            Some(self.parse_expression()?)
+        // Parse the lower bound (start) if present
+        let lower = if !self.check(TokenType::Colon) && !self.check(TokenType::RightBracket) {
+            Some(Box::new(self.parse_expression()?))
         } else {
             None
         };
 
+        // Check if this is a slice (contains a colon)
         if self.match_token(TokenType::Colon) {
-            let stop_expr = if !self.check(TokenType::Colon)
-                && !self.check(TokenType::RightBracket)
-                && !self.check(TokenType::Comma)
-            {
-                Some(self.parse_expression()?)
+            // Parse the upper bound (stop) if present
+            let upper = if !self.check(TokenType::Colon) && !self.check(TokenType::RightBracket) && !self.check(TokenType::Comma) {
+                Some(Box::new(self.parse_expression()?))
             } else {
                 None
             };
 
-            let step_expr = if self.match_token(TokenType::Colon) {
+            // Parse the step if present
+            let step = if self.match_token(TokenType::Colon) {
                 if !self.check(TokenType::RightBracket) && !self.check(TokenType::Comma) {
-                    Some(self.parse_expression()?)
+                    Some(Box::new(self.parse_expression()?))
                 } else {
                     None
                 }
@@ -1175,54 +1177,16 @@ impl ExprParser for Parser {
                 None
             };
 
-            let slice = Expr::Dict {
-                keys: vec![
-                    Some(Box::new(Expr::Str {
-                        value: "start".to_string(),
-                        line,
-                        column,
-                    })),
-                    Some(Box::new(Expr::Str {
-                        value: "stop".to_string(),
-                        line,
-                        column,
-                    })),
-                    Some(Box::new(Expr::Str {
-                        value: "step".to_string(),
-                        line,
-                        column,
-                    })),
-                ],
-                values: vec![
-                    Box::new(match start_expr {
-                        Some(expr) => expr,
-                        None => Expr::NameConstant {
-                            value: NameConstant::None,
-                            line,
-                            column,
-                        },
-                    }),
-                    Box::new(match stop_expr {
-                        Some(expr) => expr,
-                        None => Expr::NameConstant {
-                            value: NameConstant::None,
-                            line,
-                            column,
-                        },
-                    }),
-                    Box::new(match step_expr {
-                        Some(expr) => expr,
-                        None => Expr::NameConstant {
-                            value: NameConstant::None,
-                            line,
-                            column,
-                        },
-                    }),
-                ],
+            // Create a Slice expression
+            let slice = Expr::Slice {
+                lower,
+                upper,
+                step,
                 line,
                 column,
             };
 
+            // Handle tuple of slices if there's a comma
             if self.match_token(TokenType::Comma) {
                 let mut indices = vec![Box::new(slice)];
 
@@ -1247,7 +1211,20 @@ impl ExprParser for Parser {
 
             Ok(slice)
         } else if self.match_token(TokenType::Comma) {
-            let mut indices = vec![Box::new(start_expr.unwrap())];
+            // Handle tuple of expressions
+            let mut indices = Vec::new();
+
+            // Add the lower bound as the first element of the tuple
+            if let Some(expr) = lower {
+                indices.push(expr);
+            } else {
+                return Err(ParseError::invalid_syntax_with_suggestion(
+                    "Expected expression before comma in subscription",
+                    line,
+                    column,
+                    "Subscript operations with commas require expressions between the commas"
+                ));
+            }
 
             if !self.check(TokenType::RightBracket) {
                 indices.push(Box::new(self.parse_expression()?));
@@ -1267,12 +1244,17 @@ impl ExprParser for Parser {
                 column,
             })
         } else {
-            start_expr.ok_or_else(|| ParseError::invalid_syntax_with_suggestion(
-                "Expected expression in subscription",
-                line,
-                column,
-                "Subscript operations require an index expression between the brackets"
-            ))
+            // Single index case
+            if let Some(expr) = lower {
+                Ok(*expr)
+            } else {
+                Err(ParseError::invalid_syntax_with_suggestion(
+                    "Expected expression in subscription",
+                    line,
+                    column,
+                    "Subscript operations require an index expression between the brackets"
+                ))
+            }
         }
     }
 

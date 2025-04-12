@@ -1,4 +1,5 @@
-// runtime.rs
+// string_ops.rs - Runtime support for string operations
+
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 

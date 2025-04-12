@@ -163,6 +163,13 @@ pub enum Expr {
         line: usize,
         column: usize,
     },
+    Slice {
+        lower: Option<Box<Expr>>,
+        upper: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,
+        line: usize,
+        column: usize,
+    },
     UnaryOp {
         op: UnaryOperator,
         operand: Box<Expr>,
@@ -521,7 +528,8 @@ impl fmt::Display for Expr {
             Expr::Tuple { .. } => write!(f, "Tuple"),
             Expr::NamedExpr { target, value, .. } => {
                 write!(f, "NamedExpr({} := {})", target, value)
-            }
+            },
+            Expr::Slice { .. } => write!(f, "Slice")
         }
     }
 }

@@ -102,7 +102,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
     fn visit_module(&mut self, module: &'ast Module) -> () {
         for (i, stmt) in module.body.iter().enumerate() {
             self.visit_stmt(stmt);
-            
+
             // Add blank line between top-level statements, except for consecutive
             // imports or consecutive simple statements
             if i < module.body.len() - 1 {
@@ -112,16 +112,16 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                     (Stmt::ImportFrom { .. }, Stmt::ImportFrom { .. }) => {},
                     (Stmt::Import { .. }, Stmt::ImportFrom { .. }) => {},
                     (Stmt::ImportFrom { .. }, Stmt::Import { .. }) => {},
-                    
+
                     (Stmt::Expr { .. }, Stmt::Expr { .. }) => {},
                     (Stmt::Assign { .. }, Stmt::Assign { .. }) => {},
                     (Stmt::AugAssign { .. }, Stmt::AugAssign { .. }) => {},
-                    
+
                     // Add TWO newlines after function or class definitions
                     (Stmt::FunctionDef { .. }, _) | (Stmt::ClassDef { .. }, _) => {
                         self.write("\n\n");
                     },
-                    
+
                     // Default case - add one newline
                     _ => self.write("\n"),
                 }
@@ -138,44 +138,44 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                     self.visit_expr(&**decorator); // Dereference Box<Expr>
                     self.write("\n");
                 }
-                
+
                 // Write function definition
                 self.write_indented("def ");
                 self.write(name);
                 self.write("(");
-                
+
                 // Write parameters
                 for (i, param) in params.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     self.write(&param.name);
-                    
+
                     if let Some(typ) = &param.typ {
                         self.write(": ");
                         self.visit_expr(&**typ);
                     }
-                    
+
                     if let Some(default) = &param.default {
                         self.write(" = ");
                         self.visit_expr(&**default);
                     }
                 }
-                
+
                 self.write(")");
-                
+
                 // Write return type annotation
                 if let Some(ret) = returns {
                     self.write(" -> ");
                     self.visit_expr(&**ret);
                 }
-                
+
                 self.write(":\n");
-                
+
                 // Write function body
                 self.increase_indent();
-                
+
                 if body.is_empty() {
                     self.write_line("pass");
                 } else {
@@ -183,7 +183,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_stmt(&**stmt);
                     }
                 }
-                
+
                 self.decrease_indent();
             },
             Stmt::ClassDef { name, bases, keywords, body, decorator_list, line: _line, column: _column } => {
@@ -193,14 +193,14 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                     self.visit_expr(&**decorator);
                     self.write("\n");
                 }
-                
+
                 // Write class definition
                 self.write_indented("class ");
                 self.write(name);
-                
+
                 if !bases.is_empty() || !keywords.is_empty() {
                     self.write("(");
-                    
+
                     // Write base classes
                     for (i, base) in bases.iter().enumerate() {
                         if i > 0 {
@@ -208,17 +208,17 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         }
                         self.visit_expr(&**base);
                     }
-                    
+
                     // Write keyword arguments
                     if !bases.is_empty() && !keywords.is_empty() {
                         self.write(", ");
                     }
-                    
+
                     for (i, (key, value)) in keywords.iter().enumerate() {
                         if i > 0 {
                             self.write(", ");
                         }
-                        
+
                         // Handle **kwargs vs regular keyword arguments
                         if let Some(key_name) = key {
                             self.write(key_name);
@@ -226,18 +226,18 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         } else {
                             self.write("**"); // This is the **kwargs case
                         }
-                        
+
                         self.visit_expr(&**value);
                     }
-                    
+
                     self.write(")");
                 }
-                
+
                 self.write(":\n");
-                
+
                 // Write class body
                 self.increase_indent();
-                
+
                 if body.is_empty() {
                     self.write_line("pass");
                 } else {
@@ -245,41 +245,41 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_stmt(&**stmt);
                     }
                 }
-                
+
                 self.decrease_indent();
             },
             Stmt::Return { value, line: _, column: _ } => {
                 self.write_indented("return");
-                
+
                 if let Some(value) = value {
                     self.write(" ");
                     self.visit_expr(&**value);
                 }
-                
+
                 self.write("\n");
             },
             Stmt::Delete { targets, line: _, column: _ } => {
                 self.write_indented("del ");
-                
+
                 for (i, target) in targets.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
                     self.visit_expr(&**target);
                 }
-                
+
                 self.write("\n");
             },
             Stmt::Assign { targets, value, line: _, column: _ } => {
                 self.write_indented("");
-                
+
                 for (i, target) in targets.iter().enumerate() {
                     if i > 0 {
                         self.write(" = ");
                     }
                     self.visit_expr(&**target);
                 }
-                
+
                 self.write(" = ");
                 self.visit_expr(&**value);
                 self.write("\n");
@@ -298,12 +298,12 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 self.visit_expr(&**target);
                 self.write(": ");
                 self.visit_expr(&**annotation);
-                
+
                 if let Some(value) = value {
                     self.write(" = ");
                     self.visit_expr(&**value);
                 }
-                
+
                 self.write("\n");
             },
             Stmt::For { target, iter, body, orelse, line: _, column: _, is_async: _is_async } => {
@@ -312,9 +312,9 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 self.write(" in ");
                 self.visit_expr(&**iter);
                 self.write(":\n");
-                
+
                 self.increase_indent();
-                
+
                 if body.is_empty() {
                     self.write_line("pass");
                 } else {
@@ -322,17 +322,17 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_stmt(&**stmt);
                     }
                 }
-                
+
                 self.decrease_indent();
-                
+
                 if !orelse.is_empty() {
                     self.write_line("else:");
                     self.increase_indent();
-                    
+
                     for stmt in orelse {
                         self.visit_stmt(&**stmt);
                     }
-                    
+
                     self.decrease_indent();
                 }
             },
@@ -340,9 +340,9 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 self.write_indented("while ");
                 self.visit_expr(&**test);
                 self.write(":\n");
-                
+
                 self.increase_indent();
-                
+
                 if body.is_empty() {
                     self.write_line("pass");
                 } else {
@@ -350,17 +350,17 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_stmt(&**stmt);
                     }
                 }
-                
+
                 self.decrease_indent();
-                
+
                 if !orelse.is_empty() {
                     self.write_line("else:");
                     self.increase_indent();
-                    
+
                     for stmt in orelse {
                         self.visit_stmt(&**stmt);
                     }
-                    
+
                     self.decrease_indent();
                 }
             },
@@ -368,9 +368,9 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 self.write_indented("if ");
                 self.visit_expr(&**test);
                 self.write(":\n");
-                
+
                 self.increase_indent();
-                
+
                 if body.is_empty() {
                     self.write_line("pass");
                 } else {
@@ -378,9 +378,9 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_stmt(&**stmt);
                     }
                 }
-                
+
                 self.decrease_indent();
-                
+
                 // Handle elif blocks
                 if orelse.len() == 1 {
                     // Need to use as_ref() to get a reference to the inner Stmt
@@ -390,38 +390,38 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         return;
                     }
                 }
-                
+
                 if !orelse.is_empty() {
                     self.write_line("else:");
                     self.increase_indent();
-                    
+
                     for stmt in orelse {
                         self.visit_stmt(&**stmt);
                     }
-                    
+
                     self.decrease_indent();
                 }
             },
             Stmt::With { items, body, line: _, column: _, is_async: _ } => {
                 self.write_indented("with ");
-                
+
                 for (i, (item, target)) in items.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     self.visit_expr(&**item);
-                    
+
                     if let Some(target) = target {
                         self.write(" as ");
                         self.visit_expr(&**target);
                     }
                 }
-                
+
                 self.write(":\n");
-                
+
                 self.increase_indent();
-                
+
                 if body.is_empty() {
                     self.write_line("pass");
                 } else {
@@ -429,29 +429,29 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_stmt(&**stmt);
                     }
                 }
-                
+
                 self.decrease_indent();
             },
             Stmt::Raise { exc, cause, line: _, column: _ } => {
                 self.write_indented("raise");
-                
+
                 if let Some(exc) = exc {
                     self.write(" ");
                     self.visit_expr(&**exc);
-                    
+
                     if let Some(cause) = cause {
                         self.write(" from ");
                         self.visit_expr(&**cause);
                     }
                 }
-                
+
                 self.write("\n");
             },
             Stmt::Try { body, handlers, orelse, finalbody, line: _, column: _ } => {
                 self.write_line("try:");
-                
+
                 self.increase_indent();
-                
+
                 if body.is_empty() {
                     self.write_line("pass");
                 } else {
@@ -459,26 +459,26 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_stmt(&**stmt);
                     }
                 }
-                
+
                 self.decrease_indent();
-                
+
                 for handler in handlers {
                     self.write_indented("except");
-                    
+
                     if let Some(typ) = &handler.typ {
                         self.write(" ");
                         self.visit_expr(&**typ);
-                        
+
                         if let Some(name) = &handler.name {
                             self.write(" as ");
                             self.write(name);
                         }
                     }
-                    
+
                     self.write(":\n");
-                    
+
                     self.increase_indent();
-                    
+
                     if handler.body.is_empty() {
                         self.write_line("pass");
                     } else {
@@ -486,75 +486,75 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                             self.visit_stmt(&**stmt);
                         }
                     }
-                    
+
                     self.decrease_indent();
                 }
-                
+
                 if !orelse.is_empty() {
                     self.write_line("else:");
                     self.increase_indent();
-                    
+
                     for stmt in orelse {
                         self.visit_stmt(&**stmt);
                     }
-                    
+
                     self.decrease_indent();
                 }
-                
+
                 if !finalbody.is_empty() {
                     self.write_line("finally:");
                     self.increase_indent();
-                    
+
                     for stmt in finalbody {
                         self.visit_stmt(&**stmt);
                     }
-                    
+
                     self.decrease_indent();
                 }
             },
             Stmt::Assert { test, msg, line: _, column: _ } => {
                 self.write_indented("assert ");
                 self.visit_expr(&**test);
-                
+
                 if let Some(msg) = msg {
                     self.write(", ");
                     self.visit_expr(&**msg);
                 }
-                
+
                 self.write("\n");
             },
             Stmt::Import { names, line: _, column: _ } => {
                 self.write_indented("import ");
-                
+
                 for (i, alias) in names.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     self.write(&alias.name);
-                    
+
                     if let Some(asname) = &alias.asname {
                         self.write(" as ");
                         self.write(asname);
                     }
                 }
-                
+
                 self.write("\n");
             },
             Stmt::ImportFrom { module, names, level, line: _, column: _ } => {
                 self.write_indented("from ");
-                
+
                 // Write relative import dots
                 for _ in 0..*level {
                     self.write(".");
                 }
-                
+
                 if let Some(module) = module {
                     self.write(module);
                 }
-                
+
                 self.write(" import ");
-                
+
                 if names.len() == 1 && names[0].name == "*" {
                     self.write("*");
                 } else {
@@ -562,42 +562,42 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         if i > 0 {
                             self.write(", ");
                         }
-                        
+
                         self.write(&alias.name);
-                        
+
                         if let Some(asname) = &alias.asname {
                             self.write(" as ");
                             self.write(asname);
                         }
                     }
                 }
-                
+
                 self.write("\n");
             },
             Stmt::Global { names, line: _, column: _ } => {
                 self.write_indented("global ");
-                
+
                 for (i, name) in names.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     self.write(name);
                 }
-                
+
                 self.write("\n");
             },
             Stmt::Nonlocal { names, line: _, column: _ } => {
                 self.write_indented("nonlocal ");
-                
+
                 for (i, name) in names.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     self.write(name);
                 }
-                
+
                 self.write("\n");
             },
             Stmt::Expr { value, line: _, column: _ } => {
@@ -618,22 +618,22 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 self.write_indented("match ");
                 self.visit_expr(&**subject);
                 self.write(":\n");
-                
+
                 self.increase_indent();
-                
+
                 for (pattern, guard, body) in cases {
                     self.write_indented("case ");
                     self.visit_expr(&**pattern);
-                    
+
                     if let Some(guard_expr) = guard {
                         self.write(" if ");
                         self.visit_expr(&**guard_expr);
                     }
-                    
+
                     self.write(":\n");
-                    
+
                     self.increase_indent();
-                    
+
                     if body.is_empty() {
                         self.write_line("pass");
                     } else {
@@ -641,10 +641,10 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                             self.visit_stmt(&**stmt);
                         }
                     }
-                    
+
                     self.decrease_indent();
                 }
-                
+
                 self.decrease_indent();
             }
         }
@@ -654,19 +654,19 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
         match expr {
             Expr::BoolOp { op, values, line: _, column: _ } => {
                 let op_str = self.format_bool_operator(op);
-                
+
                 self.write("(");
-                
+
                 for (i, value) in values.iter().enumerate() {
                     if i > 0 {
                         self.write(" ");
                         self.write(op_str);
                         self.write(" ");
                     }
-                    
+
                     self.visit_expr(&**value);
                 }
-                
+
                 self.write(")");
             },
             Expr::BinOp { left, op, right, line: _, column: _ } => {
@@ -686,20 +686,20 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
             },
             Expr::Lambda { args, body, line: _, column: _ } => {
                 self.write("lambda ");
-                
+
                 for (i, param) in args.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     self.write(&param.name);
-                    
+
                     if let Some(default) = &param.default {
                         self.write("=");
                         self.visit_expr(&**default);
                     }
                 }
-                
+
                 self.write(": ");
                 self.visit_expr(&**body);
             },
@@ -714,12 +714,12 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
             },
             Expr::Dict { keys, values, line: _, column: _ } => {
                 self.write("{");
-                
+
                 for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     if let Some(key) = key {
                         self.visit_expr(&**key);
                         self.write(": ");
@@ -730,7 +730,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_expr(&**value);
                     }
                 }
-                
+
                 self.write("}");
             },
             Expr::Set { elts, line: _, column: _ } => {
@@ -738,52 +738,52 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                     self.write("set()");
                 } else {
                     self.write("{");
-                    
+
                     for (i, elt) in elts.iter().enumerate() {
                         if i > 0 {
                             self.write(", ");
                         }
-                        
+
                         self.visit_expr(&**elt);
                     }
-                    
+
                     self.write("}");
                 }
             },
             Expr::ListComp { elt, generators, line: _, column: _ } => {
                 self.write("[");
                 self.visit_expr(&**elt);
-                
+
                 for comp in generators {
                     self.write(" for ");
                     self.visit_expr(&comp.target);
                     self.write(" in ");
                     self.visit_expr(&comp.iter);
-                    
+
                     for if_expr in &comp.ifs {
                         self.write(" if ");
                         self.visit_expr(&**if_expr);
                     }
                 }
-                
+
                 self.write("]");
             },
             Expr::SetComp { elt, generators, line: _, column: _ } => {
                 self.write("{");
                 self.visit_expr(&**elt);
-                
+
                 for comp in generators {
                     self.write(" for ");
                     self.visit_expr(&comp.target);
                     self.write(" in ");
                     self.visit_expr(&comp.iter);
-                    
+
                     for if_expr in &comp.ifs {
                         self.write(" if ");
                         self.visit_expr(&**if_expr);
                     }
                 }
-                
+
                 self.write("}");
             },
             Expr::DictComp { key, value, generators, line: _, column: _ } => {
@@ -791,37 +791,37 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 self.visit_expr(&**key);
                 self.write(": ");
                 self.visit_expr(&**value);
-                
+
                 for comp in generators {
                     self.write(" for ");
                     self.visit_expr(&comp.target);
                     self.write(" in ");
                     self.visit_expr(&comp.iter);
-                    
+
                     for if_expr in &comp.ifs {
                         self.write(" if ");
                         self.visit_expr(&**if_expr);
                     }
                 }
-                
+
                 self.write("}");
             },
             Expr::GeneratorExp { elt, generators, line: _, column: _ } => {
                 self.write("(");
                 self.visit_expr(&**elt);
-                
+
                 for comp in generators {
                     self.write(" for ");
                     self.visit_expr(&comp.target);
                     self.write(" in ");
                     self.visit_expr(&comp.iter);
-                    
+
                     for if_expr in &comp.ifs {
                         self.write(" if ");
                         self.visit_expr(&**if_expr);
                     }
                 }
-                
+
                 self.write(")");
             },
             Expr::Await { value, line: _, column: _ } => {
@@ -830,7 +830,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
             },
             Expr::Yield { value, line: _, column: _ } => {
                 self.write("yield");
-                
+
                 if let Some(value) = value {
                     self.write(" ");
                     self.visit_expr(&**value);
@@ -842,7 +842,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
             },
             Expr::Compare { left, ops, comparators, line: _, column: _ } => {
                 self.visit_expr(&**left);
-                
+
                 for (op, comparator) in ops.iter().zip(comparators.iter()) {
                     self.write(" ");
                     self.write(self.format_cmp_operator(op));
@@ -853,12 +853,12 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
             Expr::Call { func, args, keywords, line: _, column: _ } => {
                 self.visit_expr(&**func);
                 self.write("(");
-                
+
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     if let Expr::Starred { value, .. } = &**arg {
                         self.write("*");
                         self.visit_expr(&**value);
@@ -866,16 +866,16 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_expr(&**arg);
                     }
                 }
-                
+
                 if !args.is_empty() && !keywords.is_empty() {
                     self.write(", ");
                 }
-                
+
                 for (i, (key, value)) in keywords.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     if let Some(key) = key {
                         self.write(key);
                         self.write("=");
@@ -885,7 +885,7 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                         self.visit_expr(&**value);
                     }
                 }
-                
+
                 self.write(")");
             },
             Expr::Num { value, line: _, column: _ } => {
@@ -904,25 +904,25 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 // This is used inside f-strings
                 self.write("{");
                 self.visit_expr(&**value);
-                
+
                 if *conversion != '\0' {
                     self.write(&format!("!{}", conversion));
                 }
-                
+
                 if let Some(spec) = format_spec {
                     self.write(":");
                     self.visit_expr(&**spec);
                 }
-                
+
                 self.write("}");
             },
             Expr::JoinedStr { values, line: _, column: _ } => {
                 self.write("f\"");
-                
+
                 for value in values {
                     self.visit_expr(&**value);
                 }
-                
+
                 self.write("\"");
             },
             Expr::Bytes { value, line: _, column: _ } => {
@@ -998,15 +998,15 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
             },
             Expr::List { elts, ctx: _, line: _, column: _ } => {
                 self.write("[");
-                
+
                 for (i, elt) in elts.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
-                    
+
                     self.visit_expr(&**elt);
                 }
-                
+
                 self.write("]");
             },
             Expr::Tuple { elts, ctx: _, line: _, column: _ } => {
@@ -1017,15 +1017,15 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                     self.write(",");
                 } else {
                     self.write("(");
-                    
+
                     for (i, elt) in elts.iter().enumerate() {
                         if i > 0 {
                             self.write(", ");
                         }
-                        
+
                         self.visit_expr(&**elt);
                     }
-                    
+
                     self.write(")");
                 }
             },
@@ -1035,6 +1035,21 @@ impl<'ast> Visitor<'ast, ()> for CodeFormatter {
                 self.write(" := ");
                 self.visit_expr(value);
                 self.write(")");
+            },
+            Expr::Slice { lower, upper, step, line: _, column: _ } => {
+                self.write("[");
+                if let Some(lower_expr) = lower {
+                    self.visit_expr(lower_expr);
+                }
+                self.write(":");
+                if let Some(upper_expr) = upper {
+                    self.visit_expr(upper_expr);
+                }
+                if let Some(step_expr) = step {
+                    self.write(":");
+                    self.visit_expr(step_expr);
+                }
+                self.write("]");
             },
         }
     }

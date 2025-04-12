@@ -6,16 +6,16 @@ use crate::ast::Expr;
 pub enum ParserContext {
     /// Normal parsing context
     Normal,
-    
+
     /// Inside a function
     Function,
-    
+
     /// Inside a loop
     Loop,
-    
+
     /// Inside a comprehension
     Comprehension,
-    
+
     /// Inside a match statement
     Match,
 }
@@ -26,19 +26,19 @@ pub enum ParameterKind {
     /// Normal parameter
     #[allow(dead_code)]
     Normal,
-    
+
     /// Position-only parameter (before /)
     #[allow(dead_code)]
     PositionalOnly,
-    
+
     /// Variadic positional parameter (*args)
     #[allow(dead_code)]
     VarArgs,
-    
+
     /// Keyword-only parameter (after *)
     #[allow(dead_code)]
     KeywordOnly,
-    
+
     /// Variadic keyword parameter (**kwargs)
     #[allow(dead_code)]
     KwArgs,
@@ -56,7 +56,7 @@ impl SourcePos {
     pub fn new(line: usize, column: usize) -> Self {
         Self { line, column }
     }
-    
+
     /// Create a source position from a token
     #[allow(dead_code)]
     pub fn from_token(token: &crate::lexer::Token) -> Self {
@@ -81,7 +81,7 @@ impl GetSourcePos for Expr {
 pub trait GetLocation {
     /// Get the line number of this node
     fn get_line(&self) -> usize;
-    
+
     /// Get the column number of this node
     fn get_column(&self) -> usize;
 }
@@ -120,6 +120,7 @@ impl GetLocation for Expr {
             Expr::List { line, .. } => *line,
             Expr::Tuple { line, .. } => *line,
             Expr::NamedExpr { line, .. } => *line,
+            Expr::Slice { line, .. } => *line,
         }
     }
 
@@ -156,6 +157,7 @@ impl GetLocation for Expr {
             Expr::List { column, .. } => *column,
             Expr::Tuple { column, .. } => *column,
             Expr::NamedExpr { column, .. } => *column,
+            Expr::Slice { column, .. } => *column,
         }
     }
 }
@@ -179,13 +181,13 @@ impl<T> Located<T> {
             pos: SourcePos::new(line, column),
         }
     }
-    
+
     /// Create a new located node from a source position
     #[allow(dead_code)]
     pub fn with_pos(node: T, pos: SourcePos) -> Self {
         Self { node, pos }
     }
-    
+
     /// Map the inner value while preserving the location
     #[allow(dead_code)]
     pub fn map<U, F>(self, f: F) -> Located<U>

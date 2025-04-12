@@ -91,7 +91,7 @@ pub struct SymbolTableBuilder {
 impl SymbolTableBuilder {
     pub fn new() -> Self {
         let root_scope = Box::new(Scope::new("module", false, false));
-        
+
         SymbolTableBuilder {
             current_scope: root_scope.clone(),
             root_scope: Some(root_scope),
@@ -102,16 +102,16 @@ impl SymbolTableBuilder {
 
     pub fn enter_scope(&mut self, name: &str, is_function: bool, is_class: bool) {
         let new_scope = Box::new(Scope::new(name, is_function, is_class));
-        
+
         // Save current scope as parent
         let mut old_scope = self.current_scope.clone();
-        
+
         // Make new scope current
         self.current_scope = new_scope;
-        
+
         // Add current scope as child of old scope
         old_scope.add_child(self.current_scope.clone());
-        
+
         // Update the root if needed
         if self.root_scope.is_some() && self.root_scope.as_ref().unwrap().name == old_scope.name {
             self.root_scope = Some(old_scope);
@@ -129,7 +129,7 @@ impl SymbolTableBuilder {
     pub fn define_symbol(&mut self, name: &str, symbol_type: SymbolType, line: usize, column: usize) {
         let mut symbol = Symbol::new(name, symbol_type, line, column);
         symbol.is_defined = true;
-        
+
         // Check if symbol already exists in current scope
         if let Some(existing) = self.current_scope.get_symbol_mut(name) {
             // Update existing symbol
@@ -140,7 +140,7 @@ impl SymbolTableBuilder {
             // Add new symbol
             self.current_scope.add_symbol(symbol);
         }
-        
+
         // Add to used names
         self.used_names.insert(name.to_string());
     }
@@ -153,17 +153,17 @@ impl SymbolTableBuilder {
             }
             return false;
         }
-        
+
         // Create a vector to track which children were modified
         let mut modified_indices = Vec::new();
-        
+
         // Check each child
         for (i, child) in scope.children.iter_mut().enumerate() {
             if self.mark_symbol_in_scope_tree_helper(child, name, target_scope_name) {
                 modified_indices.push(i);
             }
         }
-        
+
         !modified_indices.is_empty()
     }
 
@@ -172,10 +172,10 @@ impl SymbolTableBuilder {
         if let Some(root) = self.root_scope.clone() {
             // Create a mutable clone that we can modify
             let mut root_clone = root.clone();
-            
+
             // Call helper method that doesn't borrow self
             let was_modified = self.mark_symbol_in_scope_tree_helper(&mut root_clone, name, &parent_scope_name);
-            
+
             // Update the root scope if needed
             if was_modified {
                 self.root_scope = Some(root_clone);
@@ -186,7 +186,7 @@ impl SymbolTableBuilder {
     pub fn reference_symbol(&mut self, name: &str, line: usize, column: usize) {
         // First, check if the symbol exists in current scope without borrowing self mutably
         let found_in_current = self.current_scope.symbols.contains_key(name);
-        
+
         if found_in_current {
             // Get the symbol from current scope and mark it as referenced
             if let Some(existing) = self.current_scope.get_symbol_mut(name) {
@@ -194,11 +194,11 @@ impl SymbolTableBuilder {
                 return;
             }
         }
-        
+
         // Walk up the parent chain checking for the symbol
         let mut found = false;
         let mut parent_scope_name = None;
-        
+
         {
             // Use a separate scope for this check to limit the borrow
             let mut scope = &self.current_scope;
@@ -211,7 +211,7 @@ impl SymbolTableBuilder {
                 scope = parent;
             }
         }
-        
+
         if found {
             // If we found the symbol in a parent scope, mark it as referenced
             if let Some(scope_name) = parent_scope_name {
@@ -219,10 +219,10 @@ impl SymbolTableBuilder {
             }
             return;
         }
-        
+
         // If not found, add to undefined names
         self.undefined_names.insert(name.to_string());
-        
+
         // Also add as a referenced but undefined symbol in current scope
         let mut symbol = Symbol::new(name, SymbolType::Variable, line, column);
         symbol.is_referenced = true;
@@ -265,7 +265,7 @@ impl SymbolTableBuilder {
 
     fn print_scope(&self, scope: &Box<Scope>, indent: usize) {
         println!("{}Scope: {}", "  ".repeat(indent), scope.name);
-        
+
         for (name, symbol) in &scope.symbols {
             println!("{}{}: {:?} (defined: {}, referenced: {}, global: {}, nonlocal: {})",
                 "  ".repeat(indent + 1),
@@ -277,7 +277,7 @@ impl SymbolTableBuilder {
                 symbol.is_nonlocal
             );
         }
-        
+
         for child in &scope.children {
             self.print_scope(child, indent + 1);
         }
@@ -296,68 +296,68 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             Stmt::FunctionDef { name, params, body, decorator_list, returns, line, column, is_async: _is_async } => {
                 // Define function in current scope
                 self.define_symbol(name, SymbolType::Function, *line, *column);
-                
+
                 // Visit decorators in current scope
                 for decorator in decorator_list {
                     self.visit_expr(decorator);
                 }
-                
+
                 // Enter new function scope
                 self.enter_scope(name, true, false);
-                
+
                 // Visit parameters in function scope
                 for param in params {
                     self.define_symbol(&param.name, SymbolType::Parameter, *line, *column);
-                    
+
                     if let Some(typ) = &param.typ {
                         self.visit_expr(typ);
                     }
-                    
+
                     if let Some(default) = &param.default {
                         self.visit_expr(default);
                     }
                 }
-                
+
                 // Visit return annotation if present
                 if let Some(ret) = returns {
                     self.visit_expr(ret);
                 }
-                
+
                 // Visit function body
                 for stmt in body {
                     self.visit_stmt(stmt);
                 }
-                
+
                 // Exit function scope
                 self.exit_scope();
             },
             Stmt::ClassDef { name, bases, keywords, body, decorator_list, line, column } => {
                 // Define class in current scope
                 self.define_symbol(name, SymbolType::Class, *line, *column);
-                
+
                 // Visit decorators in current scope
                 for decorator in decorator_list {
                     self.visit_expr(decorator);
                 }
-                
+
                 // Visit bases in current scope
                 for base in bases {
                     self.visit_expr(base);
                 }
-                
+
                 // Visit keywords in current scope
                 for (_, value) in keywords {
                     self.visit_expr(value);
                 }
-                
+
                 // Enter new class scope
                 self.enter_scope(name, false, true);
-                
+
                 // Visit class body
                 for stmt in body {
                     self.visit_stmt(stmt);
                 }
-                
+
                 // Exit class scope
                 self.exit_scope();
             },
@@ -374,7 +374,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             Stmt::Assign { targets, value, .. } => {
                 // Visit value first, as it might reference symbols
                 self.visit_expr(value);
-                
+
                 // Visit targets as definitions
                 for target in targets {
                     self.visit_expr_as_target(target);
@@ -394,33 +394,33 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             Stmt::For { target, iter, body, orelse, .. } => {
                 self.visit_expr(iter);
                 self.visit_expr_as_target(target);
-                
+
                 for stmt in body {
                     self.visit_stmt(stmt);
                 }
-                
+
                 for stmt in orelse {
                     self.visit_stmt(stmt);
                 }
             },
             Stmt::While { test, body, orelse, .. } => {
                 self.visit_expr(test);
-                
+
                 for stmt in body {
                     self.visit_stmt(stmt);
                 }
-                
+
                 for stmt in orelse {
                     self.visit_stmt(stmt);
                 }
             },
             Stmt::If { test, body, orelse, .. } => {
                 self.visit_expr(test);
-                
+
                 for stmt in body {
                     self.visit_stmt(stmt);
                 }
-                
+
                 for stmt in orelse {
                     self.visit_stmt(stmt);
                 }
@@ -432,7 +432,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
                         self.visit_expr_as_target(target);
                     }
                 }
-                
+
                 for stmt in body {
                     self.visit_stmt(stmt);
                 }
@@ -441,7 +441,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
                 if let Some(exc) = exc {
                     self.visit_expr(exc);
                 }
-                
+
                 if let Some(cause) = cause {
                     self.visit_expr(cause);
                 }
@@ -450,22 +450,22 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
                 for stmt in body {
                     self.visit_stmt(stmt);
                 }
-                
+
                 for handler in handlers {
                     self.visit_except_handler(handler);
                 }
-                
+
                 for stmt in orelse {
                     self.visit_stmt(stmt);
                 }
-                
+
                 for stmt in finalbody {
                     self.visit_stmt(stmt);
                 }
             },
             Stmt::Assert { test, msg, .. } => {
                 self.visit_expr(test);
-                
+
                 if let Some(msg) = msg {
                     self.visit_expr(msg);
                 }
@@ -477,7 +477,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
                     } else {
                         &alias.name
                     };
-                    
+
                     self.define_symbol(import_name, SymbolType::Import, 0, 0);
                 }
             },
@@ -488,7 +488,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
                     } else {
                         &alias.name
                     };
-                    
+
                     self.define_symbol(import_name, SymbolType::ImportFrom, 0, 0);
                 }
             },
@@ -511,15 +511,15 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             Stmt::Match { subject, cases, .. } => {
                 // Visit the subject expression
                 self.visit_expr(subject);
-                
+
                 // Visit each case's pattern, guard, and body
                 for (pattern, guard, body) in cases {
                     self.visit_expr(pattern);
-                    
+
                     if let Some(guard_expr) = guard {
                         self.visit_expr(guard_expr);
                     }
-                    
+
                     for stmt in body {
                         self.visit_stmt(stmt);
                     }
@@ -549,23 +549,23 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             Expr::Lambda { args, body, line, column } => {
                 // Enter a new anonymous function scope
                 self.enter_scope("lambda", true, false);
-                
+
                 // Define parameters
                 for param in args {
                     self.define_symbol(&param.name, SymbolType::Parameter, *line, *column);
-                    
+
                     if let Some(typ) = &param.typ {
                         self.visit_expr(typ);
                     }
-                    
+
                     if let Some(default) = &param.default {
                         self.visit_expr(default);
                     }
                 }
-                
+
                 // Visit body
                 self.visit_expr(body);
-                
+
                 // Exit lambda scope
                 self.exit_scope();
             },
@@ -580,7 +580,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
                         self.visit_expr(key);
                     }
                 }
-                
+
                 for value in values {
                     self.visit_expr(value);
                 }
@@ -593,50 +593,50 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             Expr::ListComp { elt, generators, .. } => {
                 // Handle list comprehension with its own scope
                 self.enter_scope("listcomp", true, false);
-                
+
                 for comp in generators {
                     self.visit_comprehension(comp);
                 }
-                
+
                 self.visit_expr(elt);
-                
+
                 self.exit_scope();
             },
             Expr::SetComp { elt, generators, .. } => {
                 // Handle set comprehension with its own scope
                 self.enter_scope("setcomp", true, false);
-                
+
                 for comp in generators {
                     self.visit_comprehension(comp);
                 }
-                
+
                 self.visit_expr(elt);
-                
+
                 self.exit_scope();
             },
             Expr::DictComp { key, value, generators, .. } => {
                 // Handle dict comprehension with its own scope
                 self.enter_scope("dictcomp", true, false);
-                
+
                 for comp in generators {
                     self.visit_comprehension(comp);
                 }
-                
+
                 self.visit_expr(key);
                 self.visit_expr(value);
-                
+
                 self.exit_scope();
             },
             Expr::GeneratorExp { elt, generators, .. } => {
                 // Handle generator expression with its own scope
                 self.enter_scope("genexpr", true, false);
-                
+
                 for comp in generators {
                     self.visit_comprehension(comp);
                 }
-                
+
                 self.visit_expr(elt);
-                
+
                 self.exit_scope();
             },
             Expr::Await { value, .. } => {
@@ -652,18 +652,18 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
             },
             Expr::Compare { left, comparators, .. } => {
                 self.visit_expr(left);
-                
+
                 for comparator in comparators {
                     self.visit_expr(comparator);
                 }
             },
             Expr::Call { func, args, keywords, .. } => {
                 self.visit_expr(func);
-                
+
                 for arg in args {
                     self.visit_expr(arg);
                 }
-                
+
                 for (_, value) in keywords {
                     self.visit_expr(value);
                 }
@@ -689,15 +689,27 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
                 }
             },
             // Literals and constants don't introduce or reference symbols
-            Expr::Num { .. } | Expr::Str { .. } | Expr::Bytes { .. } | 
-            Expr::NameConstant { .. } | Expr::Ellipsis { .. } | 
-            Expr::Constant { .. } | Expr::FormattedValue { .. } | 
+            Expr::Num { .. } | Expr::Str { .. } | Expr::Bytes { .. } |
+            Expr::NameConstant { .. } | Expr::Ellipsis { .. } |
+            Expr::Constant { .. } | Expr::FormattedValue { .. } |
             Expr::JoinedStr { .. } => {},
             Expr::NamedExpr { target, value, .. } => {
                 // Visit the value first
                 self.visit_expr(value);
                 // Visit target as a definition
                 self.visit_expr_as_target(target);
+            },
+            Expr::Slice { lower, upper, step, .. } => {
+                // Visit the slice components
+                if let Some(lower_expr) = lower {
+                    self.visit_expr(lower_expr);
+                }
+                if let Some(upper_expr) = upper {
+                    self.visit_expr(upper_expr);
+                }
+                if let Some(step_expr) = step {
+                    self.visit_expr(step_expr);
+                }
             },
         }
     }
@@ -718,7 +730,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
                 self.visit_expr_as_target(value);
             },
             Expr::Attribute { value, .. } => {
-                // For attribute assignments, we don't define a symbol but 
+                // For attribute assignments, we don't define a symbol but
                 // we need to visit the value expression
                 self.visit_expr(value);
             },
@@ -739,11 +751,11 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
         if let Some(typ) = &handler.typ {
             self.visit_expr(typ);
         }
-        
+
         if let Some(name) = &handler.name {
             self.define_symbol(name, SymbolType::Variable, handler.line, handler.column);
         }
-        
+
         for stmt in &handler.body {
             self.visit_stmt(stmt);
         }
@@ -752,7 +764,7 @@ impl<'ast> Visitor<'ast, ()> for SymbolTableBuilder {
     fn visit_comprehension(&mut self, comp: &'ast crate::ast::Comprehension) -> () {
         self.visit_expr(comp.iter.as_ref());
         self.visit_expr_as_target(comp.target.as_ref());
-        
+
         for if_expr in &comp.ifs {
             self.visit_expr(if_expr);
         }

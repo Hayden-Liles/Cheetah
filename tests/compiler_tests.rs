@@ -106,3 +106,11 @@ mod comprehensive_for_loop_test;
 // Include the range tests
 #[path = "more_tests/compiler/range_test.rs"]
 mod range_test;
+
+// Include the list operations tests
+#[path = "more_tests/compiler/list_operations_test.rs"]
+mod list_operations_test;
+
+// Include the slice operations tests
+#[path = "more_tests/compiler/slice_operations_test.rs"]
+mod slice_operations_test;

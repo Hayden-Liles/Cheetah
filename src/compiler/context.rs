@@ -244,6 +244,13 @@ impl<'ctx> CompilationContext<'ctx> {
             return Ok(value);
         }
 
+        // Special case for list repetition
+        if let (Type::Int, Type::List(_)) = (from_type, to_type) {
+            // This is a special case for list repetition (int * list)
+            // We don't actually need to convert the int value, as it will be used directly
+            return Ok(value);
+        }
+
         // Check if conversion is valid using existing can_coerce_to method
         if !from_type.can_coerce_to(to_type) {
             return Err(format!("Cannot convert from {:?} to {:?}", from_type, to_type));
@@ -394,6 +401,11 @@ impl<'ctx> CompilationContext<'ctx> {
             (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
             (Type::Int, Type::Bool) | (Type::Bool, Type::Int) => Ok(Type::Int),
             (Type::Float, Type::Bool) | (Type::Bool, Type::Float) => Ok(Type::Float),
+
+            // Special cases for list operations
+            (Type::List(_), Type::Int) => Ok(type1.clone()), // For list repetition (list * int)
+            (Type::Int, Type::List(_)) => Ok(type2.clone()), // For list repetition (int * list)
+
             // Add more special cases if needed
             _ => Err(format!("No common type for {:?} and {:?}", type1, type2)),
         }

@@ -987,8 +987,12 @@ impl Type {
         // Handle collection types
         match (type1, type2) {
             (Type::List(elem1), Type::List(elem2)) => {
-                Type::unify(elem1, elem2)
-                    .map(|unified_elem| Type::List(Box::new(unified_elem)))
+                // For list types, we can be more permissive
+                // If we can't unify the element types, use Any as the element type
+                match Type::unify(elem1, elem2) {
+                    Some(unified_elem) => Some(Type::List(Box::new(unified_elem))),
+                    None => Some(Type::List(Box::new(Type::Any)))
+                }
             },
 
             (Type::Tuple(elems1), Type::Tuple(elems2)) => {
@@ -1055,7 +1059,9 @@ impl Type {
     pub fn get_indexed_type(&self, index_type: &Type) -> Result<Type, TypeError> {
         match self {
             Type::List(elem_type) => {
-                if matches!(index_type, Type::Int) {
+                // For lists, we'll be more permissive with the index type
+                // As long as the index can be coerced to an integer, it's valid
+                if index_type.can_coerce_to(&Type::Int) {
                     Ok(*elem_type.clone())
                 } else {
                     Err(TypeError::InvalidOperator {

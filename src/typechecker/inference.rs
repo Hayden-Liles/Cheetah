@@ -447,6 +447,13 @@ impl TypeInference {
                     }
                 }
 
+                // Special case for list indexing
+                if let Type::List(elem_type) = &value_type {
+                    if matches!(slice_type, Type::Int) {
+                        return Ok(*elem_type.clone());
+                    }
+                }
+
                 // Check if the value is indexable
                 if !value_type.is_indexable() {
                     return Err(TypeError::NotIndexable(value_type));

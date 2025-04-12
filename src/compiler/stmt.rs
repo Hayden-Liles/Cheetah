@@ -317,20 +317,36 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 self.builder.position_at_end(init_block);
 
                 // Compile the iterator expression
-                let (iter_val, _iter_type) = self.compile_expr(iter)?;
-
-                // For now, we'll implement a simple integer-based loop
-                // In a full implementation, we would handle different iterator types
+                let (iter_val, iter_type) = self.compile_expr(iter)?;
 
                 // Create an index variable initialized to 0
                 let i64_type = self.llvm_context.i64_type();
                 let index_ptr = self.builder.build_alloca(i64_type, "for.index").unwrap();
                 self.builder.build_store(index_ptr, i64_type.const_int(0, false)).unwrap();
 
-                // For range(n), we'll use n as the upper bound
-                // For now, we'll just use the iterator value directly as the upper bound
-                // In a full implementation, we would extract the upper bound from the range object
-                let len_val = iter_val;
+                // Get the length of the iterable
+                let len_val = match iter_type {
+                    Type::List(_) => {
+                        // For lists, get the length using list_len function
+                        let list_len_fn = match self.module.get_function("list_len") {
+                            Some(f) => f,
+                            None => return Err("list_len function not found".to_string()),
+                        };
+
+                        let call_site_value = self.builder.build_call(
+                            list_len_fn,
+                            &[iter_val.into_pointer_value().into()],
+                            "list_len_result"
+                        ).unwrap();
+
+                        call_site_value.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to get list length".to_string())?
+                    },
+                    _ => {
+                        // For other types (like range), use the value directly
+                        iter_val
+                    }
+                };
 
                 // Branch to the condition block
                 self.builder.build_unconditional_branch(cond_block).unwrap();
@@ -355,13 +371,56 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                     // Always create a new variable in the loop scope
                     println!("Creating loop variable: {}", id);
 
-                    // Allocate the loop variable
-                    let i64_type = self.llvm_context.i64_type();
-                    let target_ptr = self.builder.build_alloca(i64_type, id).unwrap();
-                    self.builder.build_store(target_ptr, index_val).unwrap();
+                    match iter_type {
+                        Type::List(elem_type) => {
+                            // Get the element from the list
+                            let list_ptr = iter_val.into_pointer_value();
+                            let element_ptr = self.build_list_get_item(list_ptr, index_val)?;
 
-                    // Register the variable in the current scope
-                    self.scope_stack.add_variable(id.clone(), target_ptr, Type::Int);
+                            // Allocate the loop variable based on the element type
+                            let target_ptr = match *elem_type {
+                                Type::Int => {
+                                    let i64_type = self.llvm_context.i64_type();
+                                    let ptr = self.builder.build_alloca(i64_type, id).unwrap();
+                                    let element_val = self.builder.build_load(i64_type, element_ptr, "element").unwrap();
+                                    self.builder.build_store(ptr, element_val).unwrap();
+                                    ptr
+                                },
+                                Type::Float => {
+                                    let f64_type = self.llvm_context.f64_type();
+                                    let ptr = self.builder.build_alloca(f64_type, id).unwrap();
+                                    let element_val = self.builder.build_load(f64_type, element_ptr, "element").unwrap();
+                                    self.builder.build_store(ptr, element_val).unwrap();
+                                    ptr
+                                },
+                                Type::Bool => {
+                                    let bool_type = self.llvm_context.bool_type();
+                                    let ptr = self.builder.build_alloca(bool_type, id).unwrap();
+                                    let element_val = self.builder.build_load(bool_type, element_ptr, "element").unwrap();
+                                    self.builder.build_store(ptr, element_val).unwrap();
+                                    ptr
+                                },
+                                _ => {
+                                    // For other types, use a generic pointer
+                                    let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                                    let ptr = self.builder.build_alloca(ptr_type, id).unwrap();
+                                    let element_val = self.builder.build_load(ptr_type, element_ptr, "element").unwrap();
+                                    self.builder.build_store(ptr, element_val).unwrap();
+                                    ptr
+                                }
+                            };
+
+                            // Register the variable in the current scope
+                            self.scope_stack.add_variable(id.clone(), target_ptr, *elem_type.clone());
+                        },
+                        _ => {
+                            // For other types (like range), use the index directly
+                            let i64_type = self.llvm_context.i64_type();
+                            let target_ptr = self.builder.build_alloca(i64_type, id).unwrap();
+                            self.builder.build_store(target_ptr, index_val).unwrap();
+                            self.scope_stack.add_variable(id.clone(), target_ptr, Type::Int);
+                        }
+                    }
                 } else {
                     // For now, we only support simple variable targets
                     // In a full implementation, we would handle tuple unpacking and other complex targets
@@ -515,6 +574,26 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                                     self.builder.build_return(Some(&return_val)).unwrap();
                                     return Ok(());
                                 }
+                            }
+                        }
+                    }
+
+                    // Get the function's return type
+                    if let Some(current_function) = self.current_function {
+                        let return_type = current_function.get_type().get_return_type();
+
+                        if let Some(ret_type) = return_type {
+                            // For list operations functions that return pointers
+                            if ret_type.is_pointer_type() && !ret_val.is_pointer_value() {
+                                // Convert the return value to a pointer if needed
+                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                                let ptr_val = self.builder.build_bit_cast(
+                                    ret_val,
+                                    ptr_type,
+                                    "to_ptr"
+                                ).unwrap();
+                                self.builder.build_return(Some(&ptr_val)).unwrap();
+                                return Ok(());
                             }
                         }
                     }

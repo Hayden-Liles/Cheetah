@@ -62,16 +62,30 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Add support for range() function
    - [x] Implement break and continue statements
    - [x] Support for loop else clause
-4. [ ] Implement list operations
-5. [ ] Implement slice operations for lists and strings
+4. [x] Implement list operations
+   - [x] Define list structure in LLVM
+   - [x] Implement list creation (empty and with elements)
+   - [x] Add list access (get item by index)
+   - [x] Implement list binary operations (concatenation and repetition)
+   - [x] Create comprehensive tests for list operations
+   - [x] Fix advanced list operations:
+     - [x] Fix list element assignment (numbers[0] = 100)
+     - [x] Fix list operations in loops (for num in numbers)
+     - [x] Fix list operations in functions (get_first, append_to_list)
+5. [x] Implement slice operations for lists and strings
+   - [x] Define slice syntax and semantics
+   - [x] Update the parser to handle slice notation
+   - [x] Implement slice operations for lists in the compiler
+   - [ ] Implement slice operations for strings in the compiler (future work)
+   - [x] Create tests for slice operations
 6. [ ] Add support for list comprehensions
-7. [ ] Implement a proper closure environment solution for nonlocal variables
+7. [ ] Add dictionary support
+8. [ ] Implement a proper closure environment solution for nonlocal variables
 
 ### Essential Built-ins
-8. [x] Support for the range() built-in function
-9. [ ] Implement basic built-in functions (print, len, etc.)
+9. [x] Support for the range() built-in function
+10. [ ] Implement basic built-in functions (print, len, etc.)
 11. [ ] Implement string manipulation functions
-10. [ ] Add dictionary support
 
 ### Testing Improvements
 12. [ ] Add more comprehensive test cases for new features
