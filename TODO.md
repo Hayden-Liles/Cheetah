@@ -39,15 +39,20 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 
 ### Core Language Features
 1. [ ] Implement a proper closure environment solution for nonlocal variables
-2. [ ] Enhance dictionary support further
+2. [x] Enhance dictionary support further
    - [x] Implement dictionary methods (keys, values, items)
    - [x] Add support for dictionary comprehensions
    - [x] Implement membership testing with 'in' operator for dictionaries
    - [x] Improve dictionary integration with functions
+3. [ ] Fix remaining dictionary integration issues
+   - [ ] Fix type mismatch issues with dictionary function parameters
+   - [ ] Resolve bitcast issues with dictionary methods in functions
+   - [ ] Improve type inference for nested dictionaries
+   - [ ] Enhance typechecker to better handle dictionary indexing
 
 ### Completed Core Language Features
-3. [x] Implement basic tuple support (creation, access)
-4. [x] Complete basic tuple support (function arguments, return values, unpacking)
+4. [x] Implement basic tuple support (creation, access)
+5. [x] Complete basic tuple support (function arguments, return values, unpacking)
    - [x] Fix variable registration for tuple unpacking with assignment
    - [x] Support direct variable creation from tuple unpacking
    - [x] Improve function parameter type inference for tuples
@@ -113,11 +118,16 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Add support for dictionary comprehensions
    - [x] Implement membership testing with 'in' operator for dictionaries
    - [x] Improve dictionary integration with functions
-11. [ ] Implement a proper closure environment solution for nonlocal variables
+11. [ ] Fix remaining dictionary integration issues
+   - [ ] Fix type mismatch issues with dictionary function parameters
+   - [ ] Resolve bitcast issues with dictionary methods in functions
+   - [ ] Improve type inference for nested dictionaries
+   - [ ] Enhance typechecker to better handle dictionary indexing
+12. [ ] Implement a proper closure environment solution for nonlocal variables
 
 ### Essential Built-ins
-12. [x] Support for the range() built-in function
-13. [x] Implement basic built-in functions (print, len, etc.)
+13. [x] Support for the range() built-in function
+14. [x] Implement basic built-in functions (print, len, etc.)
     - [x] Implement print() function
     - [x] Implement input() function
     - [x] Implement len() function for strings and lists
@@ -127,14 +137,14 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
       - [x] Extend len() function to support dictionaries and other collections
     - [x] Implement type conversion functions (int(), float(), bool(), str())
     - [ ] Implement other common built-in functions (min, max, etc.)
-14. [ ] Implement string manipulation functions
+15. [ ] Implement string manipulation functions
 
 ### Testing Improvements
-15. [x] Add comprehensive tests for dictionary operations
-16. [ ] Add more comprehensive test cases for new features
-17. [ ] Add tests for edge cases in type conversions
-18. [ ] Create a test suite for comparing compiled output with CPython execution
-19. [ ] Add tests for error handling and recovery
+16. [x] Add comprehensive tests for dictionary operations
+17. [ ] Add more comprehensive test cases for new features
+18. [ ] Add tests for edge cases in type conversions
+19. [ ] Create a test suite for comparing compiled output with CPython execution
+20. [ ] Add tests for error handling and recovery
 
 ## Next Steps (Medium Priority)
 
@@ -146,6 +156,10 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [ ] Implement context managers (with statement)
 - [ ] Add support for lambda functions
 - [ ] Implement proper error handling during compilation
+- [ ] Advanced dictionary features
+  - [ ] Add support for dictionary unpacking (**dict)
+  - [ ] Implement dictionary merging and update operations
+  - [ ] Add support for dictionary views (dict.keys() as a view)
 
 ### Optimizations
 - [ ] Implement constant folding
