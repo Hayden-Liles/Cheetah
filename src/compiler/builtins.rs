@@ -18,5 +18,31 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // Register the function in our context
         self.functions.insert("len".to_string(), function);
+
+        // Also register the len function for lists
+        let list_len_fn = match module.get_function("list_len") {
+            Some(f) => f,
+            None => {
+                // Create the list_len function if it doesn't exist
+                let list_len_type = context.i64_type().fn_type(&[ptr_type.into()], false);
+                module.add_function("list_len", list_len_type, None)
+            }
+        };
+
+        // Register the list_len function
+        self.functions.insert("list_len".to_string(), list_len_fn);
+
+        // Register the string_len function
+        let string_len_fn = match module.get_function("string_len") {
+            Some(f) => f,
+            None => {
+                // Create the string_len function if it doesn't exist
+                let string_len_type = context.i64_type().fn_type(&[ptr_type.into()], false);
+                module.add_function("string_len", string_len_type, None)
+            }
+        };
+
+        // Register the string_len function
+        self.functions.insert("string_len".to_string(), string_len_fn);
     }
 }
