@@ -119,6 +119,27 @@ pub fn register_dict_functions<'ctx>(context: &'ctx Context, module: &mut Module
         false,
     );
     module.add_function("dict_update", dict_update_type, None);
+
+    // Create dict_keys function (returns a list of keys from a dictionary)
+    let dict_keys_type = context.ptr_type(AddressSpace::default()).fn_type(
+        &[context.ptr_type(AddressSpace::default()).into()], // dict pointer
+        false,
+    );
+    module.add_function("dict_keys", dict_keys_type, None);
+
+    // Create dict_values function (returns a list of values from a dictionary)
+    let dict_values_type = context.ptr_type(AddressSpace::default()).fn_type(
+        &[context.ptr_type(AddressSpace::default()).into()], // dict pointer
+        false,
+    );
+    module.add_function("dict_values", dict_values_type, None);
+
+    // Create dict_items function (returns a list of key-value pairs from a dictionary)
+    let dict_items_type = context.ptr_type(AddressSpace::default()).fn_type(
+        &[context.ptr_type(AddressSpace::default()).into()], // dict pointer
+        false,
+    );
+    module.add_function("dict_items", dict_items_type, None);
 }
 
 /// Get the dictionary struct type

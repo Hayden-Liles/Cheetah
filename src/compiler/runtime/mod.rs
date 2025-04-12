@@ -4,6 +4,7 @@ pub mod list_ops;
 pub mod string_ops;
 pub mod string_ops_register;
 pub mod dict_ops;
+pub mod dict_methods;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
