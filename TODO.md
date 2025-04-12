@@ -45,7 +45,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Improve function parameter type inference for tuples
    - [x] Add support for nested tuple unpacking in functions
    - [x] Add support for multiple tuple parameters in functions
-   - [ ] Implement subscript access for tuples (e.g., tuple[0])
+   - [x] Implement subscript access for tuples (e.g., tuple[0])
    - [ ] Improve type inference for tuples in function parameters and returns
    - [ ] Add support for inferring tuple types from function calls
    - [ ] Add support for mixed-type tuples (elements of different types)

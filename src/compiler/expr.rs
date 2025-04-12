@@ -26,6 +26,9 @@ pub trait ExprCompiler<'ctx> {
 
     /// Compile a name constant (True, False, None)
     fn compile_name_constant(&mut self, constant: &NameConstant) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+
+    /// Compile a subscript expression (e.g., tuple[0])
+    fn compile_subscript(&mut self, value: &Expr, slice: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 }
 
 pub trait AssignmentCompiler<'ctx> {
@@ -830,7 +833,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             Expr::Dict { .. } => Err("Dictionary expressions not yet implemented".to_string()),
             Expr::Set { .. } => Err("Set expressions not yet implemented".to_string()),
             Expr::Attribute { .. } => Err("Attribute access not yet implemented".to_string()),
-            Expr::Subscript { .. } => Err("Subscript expressions not yet implemented".to_string()),
+            Expr::Subscript { value, slice, .. } => self.compile_subscript(value, slice),
 
             // Handle other expression types with appropriate placeholder errors
             _ => Err(format!("Unsupported expression type: {:?}", expr)),
@@ -892,6 +895,78 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         }
 
         Ok(tuple_ptr)
+    }
+
+    /// Compile a subscript expression (e.g., tuple[0])
+    fn compile_subscript(&mut self, value: &Expr, slice: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Compile the value being indexed
+        let (value_val, value_type) = self.compile_expr(value)?;
+
+        // Compile the index
+        let (_index_val, index_type) = self.compile_expr(slice)?;
+
+        // Check if the value is indexable
+        match &value_type {
+            Type::Tuple(element_types) => {
+                // For tuples, we need a constant integer index
+                if !matches!(index_type, Type::Int) {
+                    return Err(format!("Tuple index must be an integer, got {:?}", index_type));
+                }
+
+                // Check if the index is a constant integer
+                if let Expr::Num { value: Number::Integer(idx), .. } = slice {
+                    let idx = *idx as usize;
+
+                    // Check if the index is in bounds
+                    if idx >= element_types.len() {
+                        return Err(format!("Tuple index out of range: {} (tuple has {} elements)", idx, element_types.len()));
+                    }
+
+                    // Get the tuple struct type
+                    let llvm_types: Vec<BasicTypeEnum> = element_types
+                        .iter()
+                        .map(|ty| self.get_llvm_type(ty))
+                        .collect();
+
+                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+
+                    // Get a pointer to the element
+                    let tuple_ptr = if value_val.is_pointer_value() {
+                        value_val.into_pointer_value()
+                    } else {
+                        // If the value is not a pointer, allocate memory for it and store it
+                        let llvm_type = self.get_llvm_type(&value_type);
+                        let alloca = self.builder.build_alloca(llvm_type, "tuple_temp").unwrap();
+                        self.builder.build_store(alloca, value_val).unwrap();
+                        alloca
+                    };
+
+                    // Get a pointer to the indexed element
+                    let element_ptr = self.builder.build_struct_gep(
+                        tuple_struct,
+                        tuple_ptr,
+                        idx as u32,
+                        &format!("tuple_element_{}", idx)
+                    ).unwrap();
+
+                    // Load the element
+                    let element_type = &element_types[idx];
+                    let element_val = self.builder.build_load(
+                        self.get_llvm_type(element_type),
+                        element_ptr,
+                        &format!("load_tuple_element_{}", idx)
+                    ).unwrap();
+
+                    Ok((element_val, element_type.clone()))
+                } else {
+                    // For non-constant indices, we need to implement a runtime check
+                    // This is more complex and would require a switch or series of if-else statements
+                    // For now, we'll return an error
+                    Err("Dynamic tuple indexing not yet supported".to_string())
+                }
+            },
+            _ => Err(format!("Type {:?} is not indexable", value_type)),
+        }
     }
 
     fn build_empty_dict(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {

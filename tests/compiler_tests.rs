@@ -82,3 +82,11 @@ mod simple_nonlocal_test;
 // Include the tuple tests
 #[path = "more_tests/compiler/tuple_test.rs"]
 mod tuple_test;
+
+// Include the comprehensive tuple tests
+#[path = "more_tests/compiler/comprehensive_tuple_test.rs"]
+mod comprehensive_tuple_test;
+
+// Include the tuple subscript tests
+#[path = "more_tests/compiler/tuple_subscript_test.rs"]
+mod tuple_subscript_test;
