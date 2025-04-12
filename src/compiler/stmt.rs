@@ -394,7 +394,53 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
             Stmt::Return { value, .. } => {
                 if let Some(expr) = value {
                     // Compile the return value expression
-                    let (ret_val, _ret_type) = self.compile_expr(expr)?;
+                    let (ret_val, ret_type) = self.compile_expr(expr)?;
+
+                    // Check if we're returning a tuple from a function that expects an integer
+                    // This is a common case in our current implementation where all functions return i64
+                    if let Type::Tuple(_) = ret_type {
+                        // Get the current function
+                        if let Some(current_function) = self.current_function {
+                            // Get the return type of the function
+                            let return_type = current_function.get_type().get_return_type();
+
+                            // If the function returns an integer but we're returning a tuple,
+                            // we need to convert the tuple to a pointer and return that
+                            if let Some(ret_type) = return_type {
+                                if ret_type.is_int_type() {
+                                    // Convert the tuple to a pointer and return that
+                                    let ptr_val = if ret_val.is_pointer_value() {
+                                        // Already a pointer, just return it
+                                        ret_val
+                                    } else {
+                                        // Allocate memory for the tuple
+                                        let tuple_ptr = self.builder.build_alloca(
+                                            ret_val.get_type(),
+                                            "tuple_return"
+                                        ).unwrap();
+
+                                        // Store the tuple in the allocated memory
+                                        self.builder.build_store(tuple_ptr, ret_val).unwrap();
+
+                                        // Return the pointer
+                                        tuple_ptr.into()
+                                    };
+
+                                    // Convert the pointer to an integer
+                                    let ptr_int = self.builder.build_ptr_to_int(
+                                        ptr_val.into_pointer_value(),
+                                        self.llvm_context.i64_type(),
+                                        "ptr_to_int"
+                                    ).unwrap();
+
+                                    // Return the integer
+                                    let return_val: inkwell::values::BasicValueEnum = ptr_int.into();
+                                    self.builder.build_return(Some(&return_val)).unwrap();
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
 
                     // Build the return instruction with the value
                     self.builder.build_return(Some(&ret_val)).unwrap();

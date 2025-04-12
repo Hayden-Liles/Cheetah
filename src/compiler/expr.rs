@@ -3,6 +3,7 @@ use crate::compiler::context::CompilationContext;
 use crate::compiler::types::Type;
 use crate::compiler::types::is_reference_type;
 use inkwell::values::BasicValueEnum;
+use inkwell::types::BasicTypeEnum;
 
 /// Extension trait for handling expression code generation
 pub trait ExprCompiler<'ctx> {
@@ -585,12 +586,45 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     // Check if we need to convert the argument
                                     let arg_type = &arg_types[i];
 
-                                    // Special handling for boolean values
+                                    // Special handling for different types
                                     if arg_type == &Type::Bool && param_type.is_int_type() && param_type.into_int_type().get_bit_width() == 64 {
                                         // Convert boolean to i64
                                         let bool_val = arg_value.into_int_value();
                                         let int_val = self.builder.build_int_z_extend(bool_val, self.llvm_context.i64_type(), "bool_to_i64").unwrap();
                                         call_args.push(int_val.into());
+                                    } else if let Type::Tuple(_) = arg_type {
+                                        // For tuple arguments, we need to handle them specially
+                                        if param_type.is_int_type() {
+                                            // If the function expects an integer but we're passing a tuple,
+                                            // we need to convert the tuple to a pointer and pass that as an integer
+                                            let ptr_val = if arg_value.is_pointer_value() {
+                                                // Already a pointer, just use it
+                                                arg_value.into_pointer_value()
+                                            } else {
+                                                // Allocate memory for the tuple
+                                                let tuple_ptr = self.builder.build_alloca(
+                                                    arg_value.get_type(),
+                                                    "tuple_arg"
+                                                ).unwrap();
+
+                                                // Store the tuple in the allocated memory
+                                                self.builder.build_store(tuple_ptr, arg_value).unwrap();
+
+                                                tuple_ptr
+                                            };
+
+                                            // Convert the pointer to an integer
+                                            let ptr_int = self.builder.build_ptr_to_int(
+                                                ptr_val,
+                                                self.llvm_context.i64_type(),
+                                                "ptr_to_int"
+                                            ).unwrap();
+
+                                            call_args.push(ptr_int.into());
+                                        } else {
+                                            // If the function expects a pointer, we can pass the tuple pointer directly
+                                            call_args.push(arg_value.into());
+                                        }
                                     } else {
                                         // Use the argument as is
                                         call_args.push(arg_value.into());
@@ -771,7 +805,28 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
             // For the remaining expressions, we'll return a placeholder error since they're not yet implemented
             Expr::List { .. } => Err("List expressions not yet implemented".to_string()),
-            Expr::Tuple { .. } => Err("Tuple expressions not yet implemented".to_string()),
+            Expr::Tuple { elts, .. } => {
+                if elts.is_empty() {
+                    // Handle empty tuple
+                    let tuple_ptr = self.build_empty_tuple("empty_tuple")?;
+                    return Ok((tuple_ptr.into(), Type::Tuple(vec![])));
+                }
+
+                // Compile each element of the tuple
+                let mut element_values = Vec::with_capacity(elts.len());
+                let mut element_types = Vec::with_capacity(elts.len());
+
+                for elt in elts {
+                    let (value, ty) = self.compile_expr(elt)?;
+                    element_values.push(value);
+                    element_types.push(ty);
+                }
+
+                // Build the tuple
+                let tuple_ptr = self.build_tuple(element_values, &element_types)?;
+
+                Ok((tuple_ptr.into(), Type::Tuple(element_types)))
+            },
             Expr::Dict { .. } => Err("Dictionary expressions not yet implemented".to_string()),
             Expr::Set { .. } => Err("Set expressions not yet implemented".to_string()),
             Expr::Attribute { .. } => Err("Attribute access not yet implemented".to_string()),
@@ -801,8 +856,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     }
 
     fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let _ = name;
-        Err("Tuple operations require runtime support (not yet implemented)".to_string())
+        // Create an empty tuple struct type
+        let tuple_type = self.llvm_context.struct_type(&[], false);
+
+        // Allocate memory for the tuple
+        let tuple_ptr = self.builder.build_alloca(tuple_type, name).unwrap();
+
+        Ok(tuple_ptr)
     }
 
     fn build_tuple(
@@ -810,9 +870,28 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         elements: Vec<BasicValueEnum<'ctx>>,
         element_types: &[Type]
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let _ = elements;
-        let _ = element_types;
-        Err("Tuple operations require runtime support (not yet implemented)".to_string())
+        // Create LLVM types for each element
+        let llvm_types: Vec<BasicTypeEnum> = element_types
+            .iter()
+            .map(|ty| self.get_llvm_type(ty))
+            .collect();
+
+        // Create a struct type for the tuple
+        let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+
+        // Allocate memory for the tuple
+        let tuple_ptr = self.builder.build_alloca(tuple_struct, "tuple").unwrap();
+
+        // Store each element in the tuple
+        for (i, element) in elements.iter().enumerate() {
+            // Get a pointer to the i-th element of the tuple
+            let element_ptr = self.builder.build_struct_gep(tuple_struct, tuple_ptr, i as u32, &format!("tuple_element_{}", i)).unwrap();
+
+            // Store the element
+            self.builder.build_store(element_ptr, *element).unwrap();
+        }
+
+        Ok(tuple_ptr)
     }
 
     fn build_empty_dict(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
@@ -1618,6 +1697,78 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
     fn compile_assignment(&mut self, target: &Expr, value: BasicValueEnum<'ctx>,
         value_type: &Type) -> Result<(), String> {
         match target {
+            Expr::Tuple { elts, .. } => {
+                // Handle tuple unpacking
+                if let Type::Tuple(element_types) = value_type {
+                    // Check if the number of elements match
+                    if elts.len() != element_types.len() {
+                        return Err(format!("Tuple unpacking mismatch: expected {} elements, got {}", elts.len(), element_types.len()));
+                    }
+
+                    // Get the tuple struct type
+                    let llvm_types: Vec<BasicTypeEnum> = element_types
+                        .iter()
+                        .map(|ty| self.get_llvm_type(ty))
+                        .collect();
+
+                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+                    // For tuple unpacking, we need to handle both pointer values and struct values
+                    let tuple_ptr = if value.is_pointer_value() {
+                        // If it's already a pointer, use it directly
+                        value.into_pointer_value()
+                    } else if value.is_struct_value() {
+                        // If it's a struct value, we need to create a temporary variable to store it
+                        let temp_ptr = self.builder.build_alloca(tuple_struct, "temp_tuple").unwrap();
+                        self.builder.build_store(temp_ptr, value).unwrap();
+                        temp_ptr
+                    } else {
+                        return Err(format!("Cannot unpack value of type {:?} - expected a tuple", value_type));
+                    };
+
+                    // Unpack each element and assign it to the corresponding target
+                    for (i, target_expr) in elts.iter().enumerate() {
+                        // Get a pointer to the i-th element of the tuple
+                        let element_ptr = self.builder.build_struct_gep(tuple_struct, tuple_ptr, i as u32, &format!("tuple_element_{}", i)).unwrap();
+
+                        // Load the element
+                        let element_value = self.builder.build_load(self.get_llvm_type(&element_types[i]), element_ptr, &format!("load_tuple_element_{}", i)).unwrap();
+
+                        // Handle variable registration and allocation for name expressions
+                        if let Expr::Name { id, .. } = target_expr.as_ref() {
+                            // Register the variable type in the type environment
+                            self.register_variable(id.clone(), element_types[i].clone());
+
+                            // Check if the variable already exists in the current scope
+                            if self.get_variable_ptr(id).is_none() {
+                                // Variable doesn't exist yet, allocate storage for it
+                                let ptr = self.builder.build_alloca(
+                                    self.get_llvm_type(&element_types[i]),
+                                    id
+                                ).unwrap();
+
+                                // Store the element value in the allocated memory
+                                self.builder.build_store(ptr, element_value).unwrap();
+
+                                // Add the variable to the current scope
+                                self.add_variable_to_scope(id.clone(), ptr, element_types[i].clone());
+
+                                // Also add it to the variables map for backward compatibility
+                                self.variables.insert(id.clone(), ptr);
+
+                                // We've already handled the assignment, so continue to the next element
+                                continue;
+                            }
+                        }
+
+                        // For non-name expressions or existing variables, use the regular assignment
+                        self.compile_assignment(target_expr, element_value, &element_types[i])?;
+                    }
+
+                    Ok(())
+                } else {
+                    Err(format!("Cannot unpack non-tuple value of type {:?}", value_type))
+                }
+            },
             Expr::Name { id, .. } => {
                 // Check if the variable is declared as global in the current scope
                 let is_global = if let Some(current_scope) = self.scope_stack.current_scope() {
@@ -1783,6 +1934,15 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                 } else {
                     // Variable doesn't exist yet, allocate storage for it
                     let ptr = self.allocate_variable(id.clone(), value_type);
+
+                    // Register the variable type in the type environment
+                    self.register_variable(id.clone(), value_type.clone());
+
+                    // Add the variable to the current scope
+                    if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                        current_scope.add_variable(id.clone(), ptr, value_type.clone());
+                        println!("Added variable '{}' to current scope", id);
+                    }
 
                     // Store the value to the newly created variable
                     self.builder.build_store(ptr, value).unwrap();

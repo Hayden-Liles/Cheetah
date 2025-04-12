@@ -892,23 +892,6 @@ impl<'ctx> CompilationContext<'ctx> {
         malloc_fn
     }
 
-    /// Get or create the free function
-    fn get_or_create_free_function(&self) -> inkwell::values::FunctionValue<'ctx> {
-        // Check if free is already defined
-        if let Some(free_fn) = self.module.get_function("free") {
-            return free_fn;
-        }
-
-        // Define free function type: void free(void* ptr)
-        let free_type = self.llvm_context.void_type()
-            .fn_type(&[self.llvm_context.ptr_type(inkwell::AddressSpace::default()).into()], false);
-
-        // Create the function declaration
-        let free_fn = self.module.add_function("free", free_type, None);
-
-        free_fn
-    }
-
     /// Allocate a variable on the heap
     pub fn allocate_heap_variable(&mut self, name: &str, ty: &Type) -> inkwell::values::PointerValue<'ctx> {
         // Get the LLVM type for the variable

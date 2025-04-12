@@ -78,3 +78,7 @@ mod nonlocal_debug_test;
 // Include the simple nonlocal tests
 #[path = "more_tests/compiler/simple_nonlocal_test.rs"]
 mod simple_nonlocal_test;
+
+// Include the tuple tests
+#[path = "more_tests/compiler/tuple_test.rs"]
+mod tuple_test;

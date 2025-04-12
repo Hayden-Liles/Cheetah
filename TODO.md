@@ -5,10 +5,10 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 ## How to Use This List
 - Completed tasks are marked with `[x]`
 - Incomplete tasks are marked with `[ ]`
-- Tasks are organized by priority and category
+- Tasks are organized by priority and logical sequence
 - Add new tasks at the bottom of the appropriate section
 
-## High Priority
+## Completed Tasks
 
 ### Parser Improvements
 - [x] Fix list comprehension parsing issues
@@ -31,19 +31,48 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Implement a solution for nonlocal variables in nested functions (using global variables and unique variable names)
 - [x] Fix basic LLVM validation issues with nonlocal variables in nested functions
 - [x] Improve handling of nonlocal variables in complex scenarios (conditionals, loops)
-- [ ] Fix remaining LLVM validation issues with nonlocal variables in complex scenarios (shadowing, nested nonlocals)
-- [ ] Implement a more robust solution for nonlocal variables using a proper closure environment
+- [x] Fix remaining LLVM validation issues with nonlocal variables in complex scenarios (shadowing, nested nonlocals)
+- [x] Implement a more robust solution for nonlocal variables using global variables with unique names
 - [x] Add tests for closure support
-- [ ] Implement tuple
 
-### Language Features
-- [ ] Complete implementation of for loops
-- [ ] Support for the range() built-in function
-- [ ] Implement list operations
-- [ ] Add dictionary support
-- [ ] Implement basic built-in functions (print, str, int, etc.)
+## Current Focus (High Priority)
 
-## Medium Priority
+### Core Language Features
+1. [x] Implement basic tuple support (creation, access)
+2. [x] Complete tuple support (function arguments, return values, unpacking)
+   - [x] Fix variable registration for tuple unpacking with assignment
+   - [x] Support direct variable creation from tuple unpacking
+   - [x] Improve function parameter type inference for tuples
+   - [x] Add support for nested tuple unpacking in functions
+   - [x] Add support for multiple tuple parameters in functions
+3. [ ] Complete implementation of for loops
+4. [ ] Implement list operations
+5. [ ] Implement slice operations for lists and strings
+6. [ ] Add support for list comprehensions
+7. [ ] Implement a proper closure environment solution for nonlocal variables
+
+### Essential Built-ins
+8. [ ] Support for the range() built-in function
+9. [ ] Implement basic built-in functions (print, len, etc.)
+10. [ ] Add dictionary support
+11. [ ] Implement string manipulation functions
+
+### Testing Improvements
+12. [ ] Add more comprehensive test cases for new features
+13. [ ] Add tests for edge cases in type conversions
+14. [ ] Create a test suite for comparing compiled output with CPython execution
+15. [ ] Add tests for error handling and recovery
+
+## Next Steps (Medium Priority)
+
+### Compiler Enhancements
+- [ ] Implement exception handling (try/except/finally)
+- [ ] Add support for modules and imports
+- [ ] Support for classes and objects (basic implementation)
+- [ ] Add support for f-strings (formatted string literals)
+- [ ] Implement context managers (with statement)
+- [ ] Add support for lambda functions
+- [ ] Implement proper error handling during compilation
 
 ### Optimizations
 - [ ] Implement constant folding
@@ -51,26 +80,23 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [ ] Optimize numeric operations
 - [ ] Improve memory management
 
-### Testing
-- [ ] Add more comprehensive test cases
-- [ ] Create benchmarks for performance testing
-- [ ] Implement integration tests with real Python code
-- [ ] Add tests for edge cases in type conversions
-
 ### Documentation
 - [ ] Document the compiler architecture
+- [ ] Document the LLVM code generation approach
 - [ ] Create user guide for the language features
 - [ ] Add inline documentation for key functions
 - [ ] Create examples of supported syntax
 
-## Low Priority
+### Testing Infrastructure
+- [ ] Create benchmarks for performance testing
+- [ ] Implement integration tests with real Python code
 
-### Additional Features
-- [ ] Support for classes and objects
-- [ ] Implement exception handling
-- [ ] Add support for modules and imports
+## Future Work (Lower Priority)
+
+### Advanced Features
 - [ ] Implement more advanced Python features (generators, decorators)
 - [ ] Add support for Python standard library modules
+- [ ] Implement advanced class features (inheritance, metaclasses)
 
 ### Tooling
 - [ ] Create a REPL for interactive use

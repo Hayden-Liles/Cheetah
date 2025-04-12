@@ -134,6 +134,20 @@ impl TypeEnvironment {
         }
     }
 
+    /// Update a function's type in the environment
+    pub fn update_function(&mut self, name: String, ty: Type) {
+        // Search from innermost to outermost scope
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.functions.contains_key(&name) {
+                scope.functions.insert(name, ty);
+                return;
+            }
+        }
+
+        // If the function wasn't found, add it to the innermost scope
+        self.add_function(name, ty);
+    }
+
     /// Add a class to the innermost scope
     pub fn add_class(&mut self, name: String, ty: Type) {
         if let Some(scope) = self.scopes.last_mut() {

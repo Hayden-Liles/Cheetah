@@ -47,7 +47,7 @@ impl TypeChecker {
 
             Stmt::Assign { targets, value, .. } => {
                 // Infer the type of the value
-                let value_type = TypeInference::infer_expr(&self.env, value)?;
+                let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
 
                 // Check each target
                 for target in targets {
@@ -63,7 +63,7 @@ impl TypeChecker {
 
                 // If there's a value, check that it's compatible with the annotation
                 if let Some(value) = value {
-                    let value_type = TypeInference::infer_expr(&self.env, value)?;
+                    let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
 
                     if !value_type.can_coerce_to(&target_type) {
                         return Err(TypeError::IncompatibleTypes {
@@ -89,8 +89,8 @@ impl TypeChecker {
 
             Stmt::AugAssign { target, op, value, .. } => {
                 // Infer the types of the target and value
-                let target_type = TypeInference::infer_expr(&self.env, target)?;
-                let value_type = TypeInference::infer_expr(&self.env, value)?;
+                let target_type = TypeInference::infer_expr_immut(&self.env, target)?;
+                let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
 
                 // Check that the operation is valid for these types
                 let result_type = TypeInference::infer_binary_op(&target_type, op, &value_type)?;
@@ -109,7 +109,7 @@ impl TypeChecker {
 
             Stmt::For { target, iter, body, .. } => {
                 // Infer the type of the iterable
-                let iter_type = TypeInference::infer_expr(&self.env, iter)?;
+                let iter_type = TypeInference::infer_expr_immut(&self.env, iter)?;
 
                 // Check that the iterable is actually iterable
                 let element_type = self.get_element_type(&iter_type)?;
@@ -140,7 +140,7 @@ impl TypeChecker {
 
             Stmt::While { test, body, .. } => {
                 // Check that the test expression is boolean-compatible
-                let test_type = TypeInference::infer_expr(&self.env, test)?;
+                let test_type = TypeInference::infer_expr_immut(&self.env, test)?;
 
                 if !test_type.can_coerce_to(&Type::Bool) {
                     return Err(TypeError::IncompatibleTypes {
@@ -166,7 +166,7 @@ impl TypeChecker {
 
             Stmt::If { test, body, orelse, .. } => {
                 // Check that the test expression is boolean-compatible
-                let test_type = TypeInference::infer_expr(&self.env, test)?;
+                let test_type = TypeInference::infer_expr_immut(&self.env, test)?;
 
                 if !test_type.can_coerce_to(&Type::Bool) {
                     return Err(TypeError::IncompatibleTypes {
@@ -235,7 +235,7 @@ impl TypeChecker {
 
             Stmt::Expr { value, .. } => {
                 // Just infer the type of the expression
-                let _ = TypeInference::infer_expr(&self.env, value)?;
+                let _ = TypeInference::infer_expr_immut(&self.env, value)?;
                 Ok(())
             },
 
@@ -393,7 +393,7 @@ impl TypeChecker {
 
         // Check the return value
         if let Some(value) = value {
-            let value_type = TypeInference::infer_expr(&self.env, value)?;
+            let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
 
             if !value_type.can_coerce_to(&return_type) {
                 return Err(TypeError::IncompatibleTypes {
@@ -434,8 +434,35 @@ impl TypeChecker {
                 Ok(())
             },
 
+            Expr::Tuple { elts, .. } => {
+                // Handle tuple unpacking
+                if let Type::Tuple(element_types) = value_type {
+                    // Check if the number of elements match
+                    if elts.len() != element_types.len() {
+                        return Err(TypeError::IncompatibleTypes {
+                            expected: Type::Tuple(vec![Type::Any; elts.len()]),
+                            got: value_type.clone(),
+                            operation: "tuple unpacking".to_string(),
+                        });
+                    }
+
+                    // Check each element of the tuple
+                    for (i, elt) in elts.iter().enumerate() {
+                        self.check_assignment(elt, &element_types[i])?;
+                    }
+
+                    Ok(())
+                } else {
+                    Err(TypeError::IncompatibleTypes {
+                        expected: Type::Tuple(vec![Type::Any; elts.len()]),
+                        got: value_type.clone(),
+                        operation: "tuple unpacking".to_string(),
+                    })
+                }
+            },
+
             Expr::Attribute { value, attr, .. } => {
-                let value_type = TypeInference::infer_expr(&self.env, value)?;
+                let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
 
                 // Check if the value is a class
                 match &value_type {
@@ -461,8 +488,8 @@ impl TypeChecker {
             },
 
             Expr::Subscript { value, slice, .. } => {
-                let value_type = TypeInference::infer_expr(&self.env, value)?;
-                let slice_type = TypeInference::infer_expr(&self.env, slice)?;
+                let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
+                let slice_type = TypeInference::infer_expr_immut(&self.env, slice)?;
 
                 // Check if the value is indexable
                 if !value_type.is_indexable() {

@@ -7,8 +7,15 @@ use crate::typechecker::TypeResult;
 pub struct TypeInference;
 
 impl TypeInference {
+    /// Infer the type of an expression (immutable version)
+    pub fn infer_expr_immut(env: &TypeEnvironment, expr: &Expr) -> TypeResult<Type> {
+        // Create a clone of the environment to avoid mutating the original
+        let mut env_clone = env.clone();
+        Self::infer_expr(&mut env_clone, expr)
+    }
+
     /// Infer the type of an expression
-    pub fn infer_expr(env: &TypeEnvironment, expr: &Expr) -> TypeResult<Type> {
+    pub fn infer_expr(env: &mut TypeEnvironment, expr: &Expr) -> TypeResult<Type> {
         match expr {
             Expr::Num { value, .. } => Ok(match value {
                 Number::Integer(_) => Type::Int,
@@ -273,9 +280,45 @@ impl TypeInference {
                     let _ = Self::infer_expr(env, value)?;
                 }
 
-                // Get the return type of the function call
-                // For now, we'll be more permissive and just return Any for function calls
-                // This helps with tests that involve function calls
+                // Try to get the return type from the function type
+                if let Type::Function { return_type, param_types, .. } = &func_type {
+                    // If we have a function with defined parameter types, try to improve the parameter types
+                    // based on the actual argument types
+                    if !param_types.is_empty() && param_types.len() == arg_types.len() {
+                        // For each parameter, if it's Any and the corresponding argument is a more specific type,
+                        // we can use the argument type to refine the parameter type
+                        let mut refined_param_types = param_types.clone();
+
+                        for (i, (param_type, arg_type)) in param_types.iter().zip(arg_types.iter()).enumerate() {
+                            if *param_type == Type::Any {
+                                refined_param_types[i] = arg_type.clone();
+                            }
+                        }
+
+                        // Register the refined parameter types in the environment
+                        if let Expr::Name { id, .. } = &**func {
+                            if let Some(func_type) = env.lookup_function(id) {
+                                if let Type::Function { param_names, has_varargs, has_kwargs, default_values, .. } = func_type {
+                                    let refined_func_type = Type::Function {
+                                        param_types: refined_param_types,
+                                        param_names: param_names.clone(),
+                                        has_varargs: *has_varargs,
+                                        has_kwargs: *has_kwargs,
+                                        default_values: default_values.clone(),
+                                        return_type: return_type.clone(),
+                                    };
+
+                                    // Update the function type in the environment
+                                    env.update_function(id.clone(), refined_func_type);
+                                }
+                            }
+                        }
+                    }
+
+                    return Ok(*return_type.clone());
+                }
+
+                // If we couldn't determine the return type, fall back to Any
                 Ok(Type::Any)
             },
 
