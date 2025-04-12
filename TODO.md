@@ -85,6 +85,11 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Support for list comprehensions with strings
    - [x] Support for list comprehensions with lists
    - [x] Support for nested list comprehensions
+   - [x] Add comprehensive tests for list comprehensions
+     - [x] Test various expression types in list comprehensions
+     - [x] Test complex and deeply nested list comprehensions
+     - [x] Test edge cases like empty list comprehensions
+     - [ ] Support for advanced features (tuple unpacking in comprehensions, multiple for clauses)
 7. [ ] Add dictionary support
 8. [ ] Implement a proper closure environment solution for nonlocal variables
 
