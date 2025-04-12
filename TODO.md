@@ -84,7 +84,16 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 
 ### Essential Built-ins
 9. [x] Support for the range() built-in function
-10. [ ] Implement basic built-in functions (print, len, etc.)
+10. [x] Implement basic built-in functions (print, len, etc.)
+    - [x] Implement print() function
+    - [x] Implement input() function
+    - [x] Implement len() function for strings and lists
+      - [x] Basic len() function implementation
+      - [x] Support for len() in expressions and control flow
+      - [ ] Fix len() function in nested function calls with parameters
+      - [ ] Extend len() function to support dictionaries and other collections
+    - [x] Implement type conversion functions (int(), float(), bool(), str())
+    - [ ] Implement other common built-in functions (min, max, etc.)
 11. [ ] Implement string manipulation functions
 
 ### Testing Improvements
