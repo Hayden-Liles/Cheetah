@@ -44,11 +44,11 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Add support for dictionary comprehensions
    - [x] Implement membership testing with 'in' operator for dictionaries
    - [x] Improve dictionary integration with functions
-3. [ ] Fix remaining dictionary integration issues
-   - [ ] Fix type mismatch issues with dictionary function parameters
-   - [ ] Resolve bitcast issues with dictionary methods in functions
-   - [ ] Improve type inference for nested dictionaries
-   - [ ] Enhance typechecker to better handle dictionary indexing
+3. [x] Fix remaining dictionary integration issues
+   - [x] Fix type mismatch issues with dictionary function parameters
+   - [x] Resolve bitcast issues with dictionary methods in functions
+   - [x] Improve type inference for nested dictionaries
+   - [x] Enhance typechecker to better handle dictionary indexing
 
 ### Completed Core Language Features
 4. [x] Implement basic tuple support (creation, access)
@@ -118,11 +118,11 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Add support for dictionary comprehensions
    - [x] Implement membership testing with 'in' operator for dictionaries
    - [x] Improve dictionary integration with functions
-11. [ ] Fix remaining dictionary integration issues
-   - [ ] Fix type mismatch issues with dictionary function parameters
-   - [ ] Resolve bitcast issues with dictionary methods in functions
-   - [ ] Improve type inference for nested dictionaries
-   - [ ] Enhance typechecker to better handle dictionary indexing
+11. [x] Fix remaining dictionary integration issues
+   - [x] Fix type mismatch issues with dictionary function parameters
+   - [x] Resolve bitcast issues with dictionary methods in functions
+   - [x] Improve type inference for nested dictionaries
+   - [x] Enhance typechecker to better handle dictionary indexing
 12. [ ] Implement a proper closure environment solution for nonlocal variables
 
 ### Essential Built-ins
