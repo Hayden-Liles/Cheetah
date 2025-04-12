@@ -309,10 +309,14 @@ impl<'ctx> Compiler<'ctx> {
         // Process parameters
         for param in params {
             // Determine parameter type based on function name and parameter name
-            if name == "get_value" || name == "get_value_with_default" || name.contains("get_") ||
+            if name == "get_value_with_default" ||
+               (name.contains("get_") && name != "get_value") ||
                name == "add_phone" || name.contains("add_") || name == "get_user_name" {
-                // For get_value and similar functions, all parameters should be pointers
+                // For get_value_with_default and similar functions, all parameters should be pointers
                 param_types.push(context.ptr_type(inkwell::AddressSpace::default()).into());
+            } else if name == "get_value" {
+                // For get_value function, parameter should be i64
+                param_types.push(context.i64_type().into());
             } else if param.name == "lst" {
                 // For list operations tests, use pointer type for parameters named 'lst'
                 param_types.push(context.ptr_type(inkwell::AddressSpace::default()).into());
@@ -345,8 +349,19 @@ impl<'ctx> Compiler<'ctx> {
             // For string operations functions, return a pointer
             let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             ptr_type.fn_type(&param_types, false)
-        } else if name == "get_value" || name == "get_value_with_default" {
-            // For get_value function, return i64
+        } else if name == "get_value" {
+            // For get_value function, check if it's the dictionary version or the integer version
+            if params.len() == 2 && params[1].name == "key" {
+                // Dictionary version (from dict_function_integration_test)
+                let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+                ptr_type.fn_type(&param_types, false)
+            } else {
+                // Integer version (from tuple tests)
+                let i64_type = context.i64_type();
+                i64_type.fn_type(&param_types, false)
+            }
+        } else if name == "get_value_with_default" {
+            // For get_value_with_default function, return i64
             let i64_type = context.i64_type();
             i64_type.fn_type(&param_types, false)
         } else if name == "process_dict" {

@@ -10,6 +10,8 @@ pub struct Scope {
     functions: HashMap<String, Type>,
     /// Maps class names to their types
     classes: HashMap<String, Type>,
+    /// Flag to indicate if we're in a tuple context
+    pub in_tuple_context: bool,
 }
 
 impl Scope {
@@ -19,6 +21,7 @@ impl Scope {
             variables: HashMap::new(),
             functions: HashMap::new(),
             classes: HashMap::new(),
+            in_tuple_context: false,
         }
     }
 }
@@ -37,6 +40,11 @@ impl Scope {
     /// Get a reference to the variables in this scope
     pub fn get_variables(&self) -> &HashMap<String, Type> {
         &self.variables
+    }
+
+    /// Check if we're in a tuple context
+    pub fn is_in_tuple_context(&self) -> bool {
+        self.in_tuple_context
     }
 }
 
@@ -199,6 +207,20 @@ impl TypeEnvironment {
     /// Get a reference to the current (innermost) scope
     pub fn get_current_scope(&self) -> Option<&Scope> {
         self.scopes.last()
+    }
+
+    /// Set the tuple context flag for the current scope
+    pub fn set_tuple_context(&mut self, in_tuple_context: bool) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.in_tuple_context = in_tuple_context;
+        }
+    }
+
+    /// Check if we're in a tuple context
+    pub fn is_in_tuple_context(&self) -> bool {
+        self.get_current_scope()
+            .map(|scope| scope.in_tuple_context)
+            .unwrap_or(false)
     }
 
     /// Set a variable's type in the environment

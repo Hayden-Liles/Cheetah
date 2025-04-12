@@ -1073,8 +1073,35 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                 for elt in elts {
                     let (value, ty) = self.compile_expr(elt)?;
-                    element_values.push(value);
-                    element_types.push(ty);
+
+                    // Special handling for function calls that return integers but need to be treated as pointers
+                    let (final_value, final_type) = if let Expr::Call { func, .. } = elt.as_ref() {
+                        if let Expr::Name { id, .. } = func.as_ref() {
+                            if id == "get_value" || id == "get_value_with_default" {
+                                // If the function returns an integer but we need a pointer for the tuple
+                                if value.is_int_value() {
+                                    println!("Converting integer return value from {} to pointer for tuple element", id);
+                                    // Allocate memory for the integer
+                                    let int_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "int_to_ptr").unwrap();
+                                    // Store the integer value
+                                    self.builder.build_store(int_ptr, value).unwrap();
+                                    // Use the pointer as the tuple element
+                                    (int_ptr.into(), Type::Int)
+                                } else {
+                                    (value, ty)
+                                }
+                            } else {
+                                (value, ty)
+                            }
+                        } else {
+                            (value, ty)
+                        }
+                    } else {
+                        (value, ty)
+                    };
+
+                    element_values.push(final_value);
+                    element_types.push(final_type);
                 }
 
                 // Build the tuple

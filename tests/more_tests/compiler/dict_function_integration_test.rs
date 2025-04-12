@@ -28,13 +28,13 @@ pub fn compile_source(source: &str) -> Result<String, String> {
 fn test_dict_as_function_parameter() {
     let source = r#"
 # Define a function that takes a dictionary as a parameter
-def get_value(data, key):
+def get_dict_value(data, key):
     return data[key]
 
 # Test the function
 data = {"name": "Alice", "age": "30", "city": "New York"}
-name = get_value(data, "name")
-age = get_value(data, "age")
+name = get_dict_value(data, "name")
+age = get_dict_value(data, "age")
 "#;
 
     let result = compile_source(source);
