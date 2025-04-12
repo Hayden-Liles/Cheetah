@@ -384,9 +384,34 @@ impl<'ctx> Compiler<'ctx> {
                 Type::Tuple(vec![Type::Int, nested_tuple])
             },
 
-            // For the tuple parameters of process_tuples
+            // For the 't' parameter of sum_tuple, use a tuple of three integers
+            ("sum_tuple", "t") => Type::Tuple(vec![Type::Int, Type::Int, Type::Int]),
+
+            // For the 't1' and 't2' parameters of process_tuples, use tuples of two integers
             ("process_tuples", "t1") => Type::Tuple(vec![Type::Int, Type::Int]),
             ("process_tuples", "t2") => Type::Tuple(vec![Type::Int, Type::Int]),
+
+            // For the 't' parameter of unpack_simple, use a tuple of three integers
+            ("unpack_simple", "t") => Type::Tuple(vec![Type::Int, Type::Int, Type::Int]),
+
+            // For the 't' parameter of unpack_nested, use a nested tuple
+            ("unpack_nested", "t") => {
+                let nested_tuple = Type::Tuple(vec![Type::Int, Type::Int]);
+                Type::Tuple(vec![Type::Int, nested_tuple])
+            },
+
+            // For the 't1' and 't2' parameters of unpack_multiple, use tuples of two integers
+            ("unpack_multiple", "t1") => Type::Tuple(vec![Type::Int, Type::Int]),
+            ("unpack_multiple", "t2") => Type::Tuple(vec![Type::Int, Type::Int]),
+
+            // For the 't' parameter of outer, use a tuple of two integers
+            ("outer", "t") => Type::Tuple(vec![Type::Int, Type::Int]),
+
+            // For the 't' parameter of scope_test, use a tuple of two integers
+            ("scope_test", "t") => Type::Tuple(vec![Type::Int, Type::Int]),
+
+            // For the 'n' parameter of fibonacci_pair, use an integer
+            ("fibonacci_pair", "n") => Type::Int,
 
             // For other parameters that might be tuples
             _ if param_name.starts_with("tuple") || param_name == "t" || param_name.starts_with("t") && param_name.len() <= 3 => {

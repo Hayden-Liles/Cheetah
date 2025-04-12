@@ -2,7 +2,7 @@ use cheetah::parse;
 use cheetah::compiler::Compiler;
 use inkwell::context::Context;
 
-fn compile_source(source: &str) -> Result<String, String> {
+pub fn compile_source(source: &str) -> Result<String, String> {
     // Parse the source
     let ast = match parse(source) {
         Ok(ast) => ast,

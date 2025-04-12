@@ -452,6 +452,10 @@ impl TypeChecker {
                     }
 
                     Ok(())
+                } else if *value_type == Type::Any {
+                    // If the value type is Any, assume it's a tuple with the right number of elements
+                    // This helps with function return values that might be tuples
+                    Ok(())
                 } else {
                     Err(TypeError::IncompatibleTypes {
                         expected: Type::Tuple(vec![Type::Any; elts.len()]),

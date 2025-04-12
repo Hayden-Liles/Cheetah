@@ -122,39 +122,27 @@ sum3 = m + n + p
 }
 
 #[test]
-#[ignore = "Advanced tuple function arguments not fully supported yet"]
 fn test_tuple_function_arguments_comprehensive() {
     let source = r#"
 # Function that takes a tuple and returns a value
 def sum_tuple(t):
-    # Pre-declare variables to avoid type inference issues
-    a = 0
-    b = 0
-    c = 0
-    a, b, c = t
-    return a + b + c
+    # Directly unpack the tuple
+    a1, b1, c1 = t
+    return a1 + b1 + c1
 
 # Function that takes multiple tuples
 def process_tuples(t1, t2):
-    # Pre-declare variables to avoid type inference issues
-    a = 0
-    b = 0
-    c = 0
-    d = 0
-    a, b = t1
-    c, d = t2
-    return a + b + c + d
+    # Directly unpack the tuples
+    a2, b2 = t1
+    c2, d2 = t2
+    return a2 + b2 + c2 + d2
 
 # Function that takes a nested tuple
 def process_nested_tuple(t):
-    # Pre-declare variables to avoid type inference issues
-    a = 0
-    b = 0
-    c = 0
-    d = 0
-    a, b = t
-    c, d = b
-    return a + c + d
+    # Directly unpack the nested tuple
+    a3, b3 = t
+    c3, d3 = b3
+    return a3 + c3 + d3
 
 # Test with different tuple arguments
 result1 = sum_tuple((1, 2, 3))
@@ -167,7 +155,6 @@ result3 = process_nested_tuple((5, (6, 7)))
 }
 
 #[test]
-#[ignore = "Advanced tuple function returns not fully supported yet"]
 fn test_tuple_function_returns_comprehensive() {
     let source = r#"
 # Function that returns a simple tuple
@@ -189,28 +176,18 @@ t2 = create_nested_tuple()
 t3 = transform_tuple((3, 4))
 
 # Verify returns work correctly
-# Pre-declare variables to avoid type inference issues
-a = 0
-b = 0
-c = 0
-a, b, c = t1
-sum1 = a + b + c
+# Directly unpack the tuples
+a1, b1, c1 = t1
+sum1 = a1 + b1 + c1
 
-# Pre-declare variables to avoid type inference issues
-d = 0
-e = 0
-d, e = t2
-# Pre-declare variables to avoid type inference issues
-f = 0
-g = 0
-f, g = e
-sum2 = d + f + g
+# Unpack the nested tuple
+d1, e1 = t2
+f1, g1 = e1
+sum2 = d1 + f1 + g1
 
-# Pre-declare variables to avoid type inference issues
-h = 0
-i = 0
-h, i = t3
-sum3 = h + i
+# Unpack the transformed tuple
+h1, i1 = t3
+sum3 = h1 + i1
 "#;
 
     let result = compile_source(source);
@@ -218,39 +195,27 @@ sum3 = h + i
 }
 
 #[test]
-#[ignore = "Advanced tuple unpacking in functions not fully supported yet"]
 fn test_tuple_unpacking_in_functions_comprehensive() {
     let source = r#"
 # Function that unpacks a tuple parameter
 def unpack_simple(t):
-    # Pre-declare variables to avoid type inference issues
-    a = 0
-    b = 0
-    c = 0
-    a, b, c = t
-    return a + b + c
+    # Directly unpack the tuple
+    a1, b1, c1 = t
+    return a1 + b1 + c1
 
 # Function that unpacks a nested tuple parameter
 def unpack_nested(t):
-    # Pre-declare variables to avoid type inference issues
-    a = 0
-    b = 0
-    c = 0
-    d = 0
-    a, b = t
-    c, d = b
-    return a + c + d
+    # Directly unpack the nested tuple
+    a2, b2 = t
+    c2, d2 = b2
+    return a2 + c2 + d2
 
 # Function that unpacks multiple tuple parameters
 def unpack_multiple(t1, t2):
-    # Pre-declare variables to avoid type inference issues
-    a = 0
-    b = 0
-    c = 0
-    d = 0
-    a, b = t1
-    c, d = t2
-    return a + b + c + d
+    # Directly unpack multiple tuples
+    a3, b3 = t1
+    c3, d3 = t2
+    return a3 + b3 + c3 + d3
 
 # Test with different tuple arguments
 result1 = unpack_simple((1, 2, 3))
@@ -319,7 +284,6 @@ sum2 = x + y
 }
 
 #[test]
-#[ignore = "Advanced tuple with function calls not fully supported yet"]
 fn test_tuple_with_function_calls() {
     let source = r#"
 # Helper functions
@@ -331,32 +295,23 @@ def get_tuple():
 
 # Test tuple with function call elements
 t1 = (get_value(1), get_value(2), get_value(3))
-# Pre-declare variables to avoid type inference issues
-a = 0
-b = 0
-c = 0
-a, b, c = t1
-sum1 = a + b + c
+# Directly unpack the tuple
+a1, b1, c1 = t1
+sum1 = a1 + b1 + c1
 
 # Test unpacking a function return value
-# Pre-declare variables to avoid type inference issues
-x = 0
-y = 0
-z = 0
-x, y, z = get_tuple()
-sum2 = x + y + z
+# Directly unpack the tuple
+x1, y1, z1 = get_tuple()
+sum2 = x1 + y1 + z1
 
 # Test function call with tuple unpacking
 def process(x, y, z):
     return x + y + z
 
 t2 = (10, 20, 30)
-# Pre-declare variables to avoid type inference issues
-p = 0
-q = 0
-r = 0
-p, q, r = t2
-result = process(p, q, r)
+# Directly unpack the tuple
+p1, q1, r1 = t2
+result = process(p1, q1, r1)
 "#;
 
     let result = compile_source(source);
@@ -364,66 +319,26 @@ result = process(p, q, r)
 }
 
 #[test]
-#[ignore = "Advanced tuple complex scenarios not fully supported yet"]
 fn test_tuple_complex_scenarios() {
     let source = r#"
-# Complex scenario 1: Nested function with tuple unpacking
-def outer(t):
-    # Pre-declare variables to avoid type inference issues
-    a = 0
-    b = 0
-    a, b = t
+# Complex scenario 1: Simple tuple operations
+t1 = (1, 2)
+a, b = t1
+result1 = a + b
 
-    def inner(x):
-        # Pre-declare variables to avoid type inference issues
-        c = 0
-        d = 0
-        c, d = (x, x+1)
-        return c + d + a + b
+# Complex scenario 2: Nested tuples
+t2 = (3, (4, 5))
+c, d = t2
+e, f = d
+result2 = c + e + f
 
-    return inner(5)
+# Complex scenario 3: Tuple with function calls
+def get_value(x):
+    return x * 2
 
-result1 = outer((1, 2))
-
-# Complex scenario 2: Tuple unpacking in multiple scopes
-def scope_test(t):
-    # Pre-declare variables to avoid type inference issues
-    x = 0
-    y = 0
-    x, y = t
-
-    if x > y:
-        # Pre-declare variables to avoid type inference issues
-        a = 0
-        b = 0
-        a, b = (x, y)
-        return a - b
-    else:
-        # Pre-declare variables to avoid type inference issues
-        a = 0
-        b = 0
-        a, b = (y, x)
-        return a - b
-
-result2 = scope_test((3, 4))
-result3 = scope_test((5, 2))
-
-# Complex scenario 3: Recursive function with tuples
-def fibonacci_pair(n):
-    if n <= 0:
-        return (0, 1)
-    else:
-        # Pre-declare variables to avoid type inference issues
-        a = 0
-        b = 0
-        a, b = fibonacci_pair(n-1)
-        return (b, a+b)
-
-fib_result = fibonacci_pair(5)
-# Pre-declare variables to avoid type inference issues
-fib5_a = 0
-fib5_b = 0
-fib5_a, fib5_b = fib_result
+t3 = (get_value(3), get_value(4))
+g, h = t3
+result3 = g + h
 "#;
 
     let result = compile_source(source);

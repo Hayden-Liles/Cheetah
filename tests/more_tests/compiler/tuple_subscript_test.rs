@@ -25,7 +25,6 @@ pub fn compile_source(source: &str) -> Result<String, String> {
 }
 
 #[test]
-#[ignore = "Type inference for tuple subscript operations needs improvement"]
 fn test_tuple_subscript_basic() {
     let source = r#"
 # Create a tuple
@@ -46,7 +45,6 @@ sum = first + second + third
 }
 
 #[test]
-#[ignore = "Nested tuple indexing not fully supported yet"]
 fn test_tuple_subscript_nested() {
     let source = r#"
 # Create a nested tuple
@@ -71,7 +69,47 @@ sum = first + a + b + third
 }
 
 #[test]
-#[ignore = "Type inference for tuple subscript operations needs improvement"]
+fn test_tuple_subscript_direct_nested_access() {
+    let source = r#"
+# Create a nested tuple
+t = (1, (2, 3), 4)
+
+# Access nested elements using intermediate variables
+first = t[0]
+nested = t[1]
+second_first = nested[0]  # Access first element of nested tuple
+second_second = nested[1]  # Access second element of nested tuple
+third = t[2]
+
+# Verify access works correctly
+sum = first + second_first + second_second + third
+"#;
+
+    let result = compile_source(source);
+    assert!(result.is_ok(), "Failed to compile direct nested tuple subscript: {:?}", result.err());
+}
+
+#[test]
+fn test_tuple_subscript_direct_syntax() {
+    let source = r#"
+# Create a nested tuple
+t = (1, (2, 3), 4)
+
+# Access nested elements directly using subscript syntax
+first = t[0]
+second_first = t[1][0]  # Access first element of nested tuple directly
+second_second = t[1][1]  # Access second element of nested tuple directly
+third = t[2]
+
+# Verify access works correctly
+sum = first + second_first + second_second + third
+"#;
+
+    let result = compile_source(source);
+    assert!(result.is_ok(), "Failed to compile direct syntax nested tuple subscript: {:?}", result.err());
+}
+
+#[test]
 fn test_tuple_subscript_in_expressions() {
     let source = r#"
 # Create a tuple

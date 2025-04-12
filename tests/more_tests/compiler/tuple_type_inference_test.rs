@@ -101,14 +101,12 @@ result = process_nested_tuple((1, (2, 3)))
 }
 
 #[test]
-#[ignore = "Function return type inference for tuples not fully implemented yet"]
 fn test_tuple_return_type_inference() {
     let source = r#"
 # Function that returns a tuple
 def create_tuple():
     # Create the tuple directly
-    t = (1, "hello", True)
-    return t
+    return (1, "hello", True)
 
 # Call the function and store the result
 t = create_tuple()
