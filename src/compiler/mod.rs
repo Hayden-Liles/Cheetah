@@ -115,7 +115,7 @@ impl<'ctx> Compiler<'ctx> {
         // Then register the polymorphic str function
         self.register_polymorphic_str();
 
-        // Finally, create the string conversion functions
+        // Create the string conversion functions
         self.create_string_conversion_functions();
     }
 
@@ -142,6 +142,13 @@ impl<'ctx> Compiler<'ctx> {
             let str_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             let fn_type = str_ptr_type.fn_type(&[context.i64_type().into()], false);
             module.add_function("bool_to_string", fn_type, None);
+        }
+
+        // range function
+        if module.get_function("range").is_none() {
+            let fn_type = context.i64_type().fn_type(&[context.i64_type().into()], false);
+            let range_func = module.add_function("range", fn_type, None);
+            self.context.functions.insert("range".to_string(), range_func);
         }
     }
 

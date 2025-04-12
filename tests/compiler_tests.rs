@@ -94,3 +94,7 @@ mod tuple_subscript_test;
 // Include the tuple type inference tests
 #[path = "more_tests/compiler/tuple_type_inference_test.rs"]
 mod tuple_type_inference_test;
+
+// Include the for loop tests
+#[path = "more_tests/compiler/for_loop_test.rs"]
+mod for_loop_test;

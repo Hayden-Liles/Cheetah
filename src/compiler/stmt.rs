@@ -122,13 +122,29 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                     self.declare_nonlocal(var_name);
                 }
 
+                // Execute the then block
+                let mut has_terminator = false;
                 for stmt in body {
-                    self.compile_stmt(stmt.as_ref())?;
+                    // Compile each statement in the then block
+                    match self.compile_stmt(stmt.as_ref()) {
+                        Ok(_) => {
+                            // Check if the statement was a terminator (break, continue, return)
+                            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                                has_terminator = true;
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            // Log the error but continue with the next statement
+                            println!("Error compiling statement in if block: {}", e);
+                        }
+                    }
                 }
 
                 self.pop_scope(); // Pop the scope for the then block
 
-                if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                // Only add a branch to the merge block if we don't already have a terminator
+                if !has_terminator && !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
                     self.builder.build_unconditional_branch(merge_block).unwrap();
                 }
 
@@ -150,13 +166,29 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                     self.declare_nonlocal(var_name);
                 }
 
+                // Execute the else block
+                let mut has_terminator = false;
                 for stmt in orelse {
-                    self.compile_stmt(stmt.as_ref())?;
+                    // Compile each statement in the else block
+                    match self.compile_stmt(stmt.as_ref()) {
+                        Ok(_) => {
+                            // Check if the statement was a terminator (break, continue, return)
+                            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                                has_terminator = true;
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            // Log the error but continue with the next statement
+                            println!("Error compiling statement in else block: {}", e);
+                        }
+                    }
                 }
 
                 self.pop_scope(); // Pop the scope for the else block
 
-                if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                // Only add a branch to the merge block if we don't already have a terminator
+                if !has_terminator && !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
                     self.builder.build_unconditional_branch(merge_block).unwrap();
                 }
 
@@ -263,7 +295,7 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
             },
 
             // Compile a for loop
-            Stmt::For {  iter, body, orelse, is_async, .. } => {
+            Stmt::For { target, iter, body, orelse, is_async, .. } => {
                 // Get the current function
                 let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
 
@@ -283,34 +315,33 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
 
                 // Initialization block (get iterator)
                 self.builder.position_at_end(init_block);
-                let (_iter_val, _iter_type) = self.compile_expr(iter)?;
 
-                // In a real implementation, we'd initialize the iterator here
-                // For now, just to make progress without full iterator support:
+                // Compile the iterator expression
+                let (iter_val, _iter_type) = self.compile_expr(iter)?;
 
-                // For lists, tuples, and other sequence types, we could allocate:
-                // - An index variable (starting at 0)
-                // - A length variable (containing the collection size)
-                // - Store the collection in a temporary
+                // For now, we'll implement a simple integer-based loop
+                // In a full implementation, we would handle different iterator types
 
-                // Let's create a dummy index variable initialized to 0
-                let i32_type = self.llvm_context.i32_type();
-                let index_ptr = self.builder.build_alloca(i32_type, "for.index").unwrap();
-                self.builder.build_store(index_ptr, i32_type.const_int(0, false)).unwrap();
+                // Create an index variable initialized to 0
+                let i64_type = self.llvm_context.i64_type();
+                let index_ptr = self.builder.build_alloca(i64_type, "for.index").unwrap();
+                self.builder.build_store(index_ptr, i64_type.const_int(0, false)).unwrap();
 
-                // We'd also extract the length of the iterable, but for now just use a constant 0
-                // so the loop never executes (safe fallback)
-                let len_val = i32_type.const_int(0, false);
+                // For range(n), we'll use n as the upper bound
+                // For now, we'll just use the iterator value directly as the upper bound
+                // In a full implementation, we would extract the upper bound from the range object
+                let len_val = iter_val;
 
+                // Branch to the condition block
                 self.builder.build_unconditional_branch(cond_block).unwrap();
 
                 // Condition block (check if index < length)
                 self.builder.position_at_end(cond_block);
-                let index_val = self.builder.build_load(i32_type, index_ptr, "index").unwrap().into_int_value();
+                let index_val = self.builder.build_load(i64_type, index_ptr, "index").unwrap().into_int_value();
                 let cond_val = self.builder.build_int_compare(
-                    inkwell::IntPredicate::ULT,
+                    inkwell::IntPredicate::SLT,
                     index_val,
-                    len_val,
+                    len_val.into_int_value(),
                     "loop.cond"
                 ).unwrap();
                 self.builder.build_conditional_branch(cond_val, body_block, else_block).unwrap();
@@ -319,25 +350,54 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 self.builder.position_at_end(body_block);
                 self.push_scope(false, true, false); // Create a new scope for the loop body (is_loop=true)
 
-                // In a full implementation, here we would:
-                // 1. Get the current element from the iterable
-                // 2. Assign it to the target variable
+                // Assign the current index to the target variable
+                if let Expr::Name { id, .. } = target.as_ref() {
+                    // Create or get the target variable
+                    if let Some(target_ptr) = self.get_variable_ptr(id) {
+                        // Store the current index in the target variable
+                        self.builder.build_store(target_ptr, index_val).unwrap();
+                    } else {
+                        // Variable not found, create it
+                        let target_ptr = self.allocate_heap_variable(id, &Type::Int);
+                        self.builder.build_store(target_ptr, index_val).unwrap();
+                    }
+                } else {
+                    // For now, we only support simple variable targets
+                    // In a full implementation, we would handle tuple unpacking and other complex targets
+                    return Err("Only simple variable targets are supported for for loops".to_string());
+                }
 
                 // Execute the loop body
                 for stmt in body {
-                    // Skip errors within the loop body to avoid crashing on unsupported statements
-                    let _ = self.compile_stmt(stmt.as_ref());
+                    // Compile each statement in the loop body
+                    match self.compile_stmt(stmt.as_ref()) {
+                        Ok(_) => {
+                            // Check if the statement was a terminator (break, continue, return)
+                            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                                // If we have a terminator, stop processing the rest of the loop body
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            // Log the error but continue with the next statement
+                            println!("Error compiling statement in for loop: {}", e);
+                        }
+                    }
+                }
+
+                // Check if the block already has a terminator (from break, continue, return)
+                if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                    // If not, add a branch to the increment block
+                    self.builder.build_unconditional_branch(increment_block).unwrap();
                 }
 
                 self.pop_scope(); // Pop the scope for the loop body
-
-                self.builder.build_unconditional_branch(increment_block).unwrap();
 
                 // Increment block
                 self.builder.position_at_end(increment_block);
                 let next_index = self.builder.build_int_add(
                     index_val,
-                    i32_type.const_int(1, false),
+                    i64_type.const_int(1, false),
                     "index.next"
                 ).unwrap();
                 self.builder.build_store(index_ptr, next_index).unwrap();
@@ -347,14 +407,31 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 self.builder.position_at_end(else_block);
                 self.push_scope(false, false, false); // Create a new scope for the else block
 
+                // Execute the else block
                 for stmt in orelse {
-                    // Skip errors within the else block
-                    let _ = self.compile_stmt(stmt.as_ref());
+                    // Compile each statement in the else block
+                    match self.compile_stmt(stmt.as_ref()) {
+                        Ok(_) => {
+                            // Check if the statement was a terminator (break, continue, return)
+                            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                                // If we have a terminator, stop processing the rest of the else block
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            // Log the error but continue with the next statement
+                            println!("Error compiling statement in for loop else block: {}", e);
+                        }
+                    }
+                }
+
+                // Check if the block already has a terminator (from break, continue, return)
+                if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                    // If not, add a branch to the end block
+                    self.builder.build_unconditional_branch(end_block).unwrap();
                 }
 
                 self.pop_scope(); // Pop the scope for the else block
-
-                self.builder.build_unconditional_branch(end_block).unwrap();
 
                 // End block
                 self.builder.position_at_end(end_block);
@@ -365,7 +442,6 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 if *is_async {
                     Err("Async for loops not implemented yet".to_string())
                 } else {
-                    // For now, just indicate this is partially implemented
                     Ok(())
                 }
             },

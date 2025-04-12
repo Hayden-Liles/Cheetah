@@ -57,14 +57,18 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
       - [x] Implement tuple unpacking in functions
       - [x] Support tuples with function calls
       - [x] Implement complex tuple scenarios
-3. [ ] Complete implementation of for loops
+3. [x] Complete implementation of for loops
+   - [x] Implement basic for loop structure
+   - [x] Add support for range() function
+   - [x] Implement break and continue statements
+   - [x] Support for loop else clause
 4. [ ] Implement list operations
 5. [ ] Implement slice operations for lists and strings
 6. [ ] Add support for list comprehensions
 7. [ ] Implement a proper closure environment solution for nonlocal variables
 
 ### Essential Built-ins
-8. [ ] Support for the range() built-in function
+8. [x] Support for the range() built-in function
 9. [ ] Implement basic built-in functions (print, len, etc.)
 10. [ ] Add dictionary support
 11. [ ] Implement string manipulation functions
