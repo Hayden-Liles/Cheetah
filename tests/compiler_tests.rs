@@ -90,3 +90,7 @@ mod comprehensive_tuple_test;
 // Include the tuple subscript tests
 #[path = "more_tests/compiler/tuple_subscript_test.rs"]
 mod tuple_subscript_test;
+
+// Include the tuple type inference tests
+#[path = "more_tests/compiler/tuple_type_inference_test.rs"]
+mod tuple_type_inference_test;

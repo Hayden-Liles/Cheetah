@@ -285,13 +285,13 @@ impl TypeInference {
                     // If we have a function with defined parameter types, try to improve the parameter types
                     // based on the actual argument types
                     if !param_types.is_empty() && param_types.len() == arg_types.len() {
-                        // For each parameter, if it's Any and the corresponding argument is a more specific type,
-                        // we can use the argument type to refine the parameter type
+                        // For each parameter, use our parameter type inference to refine the type
                         let mut refined_param_types = param_types.clone();
 
                         for (i, (param_type, arg_type)) in param_types.iter().zip(arg_types.iter()).enumerate() {
-                            if *param_type == Type::Any {
-                                refined_param_types[i] = arg_type.clone();
+                            // Use our parameter type inference to refine the type
+                            if let Ok(refined_type) = Self::infer_parameter_type(param_type, arg_type) {
+                                refined_param_types[i] = refined_type;
                             }
                         }
 
@@ -643,5 +643,53 @@ impl TypeInference {
         }
 
         Ok(result)
+    }
+
+    /// Infer the type of a function parameter based on the argument type
+    pub fn infer_parameter_type(param_type: &Type, arg_type: &Type) -> TypeResult<Type> {
+        // If the parameter type is Any, use the argument type
+        if *param_type == Type::Any {
+            return Ok(arg_type.clone());
+        }
+
+        // If the parameter type is a tuple and the argument type is a tuple,
+        // try to refine the element types
+        if let (Type::Tuple(param_elem_types), Type::Tuple(arg_elem_types)) = (param_type, arg_type) {
+            // If the tuples have the same length, refine each element type
+            if param_elem_types.len() == arg_elem_types.len() {
+                let mut refined_elem_types = Vec::with_capacity(param_elem_types.len());
+
+                for (param_elem_type, arg_elem_type) in param_elem_types.iter().zip(arg_elem_types.iter()) {
+                    // Recursively refine the element type
+                    let refined_elem_type = Self::infer_parameter_type(param_elem_type, arg_elem_type)?;
+                    refined_elem_types.push(refined_elem_type);
+                }
+
+                return Ok(Type::Tuple(refined_elem_types));
+            }
+        }
+
+        // If the parameter type is a list and the argument type is a list,
+        // try to refine the element type
+        if let (Type::List(param_elem_type), Type::List(arg_elem_type)) = (param_type, arg_type) {
+            let refined_elem_type = Self::infer_parameter_type(param_elem_type, arg_elem_type)?;
+            return Ok(Type::List(Box::new(refined_elem_type)));
+        }
+
+        // If the parameter type is a dict and the argument type is a dict,
+        // try to refine the key and value types
+        if let (Type::Dict(param_key_type, param_val_type), Type::Dict(arg_key_type, arg_val_type)) = (param_type, arg_type) {
+            let refined_key_type = Self::infer_parameter_type(param_key_type, arg_key_type)?;
+            let refined_val_type = Self::infer_parameter_type(param_val_type, arg_val_type)?;
+            return Ok(Type::Dict(Box::new(refined_key_type), Box::new(refined_val_type)));
+        }
+
+        // If the types are compatible, use the parameter type
+        if arg_type.can_coerce_to(param_type) {
+            return Ok(param_type.clone());
+        }
+
+        // Otherwise, use the argument type
+        Ok(arg_type.clone())
     }
 }

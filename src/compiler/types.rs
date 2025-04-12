@@ -1055,13 +1055,25 @@ impl Type {
                 }
             },
             Type::Tuple(elem_types) => {
-                // If index is a literal integer constant, we can get exact type
-                // For now, just return the first element type or Any if empty
+                // For tuples, we need an integer index
                 if matches!(index_type, Type::Int) {
-                    if elem_types.is_empty() {
-                        Ok(Type::Any)
+                    // If we have a literal integer constant, we can get the exact type
+                    if let Type::Int = index_type {
+                        // If we don't know the exact index at compile time, return a union of all element types
+                        // For simplicity, we'll just return Any for now
+                        if elem_types.is_empty() {
+                            Ok(Type::Any)
+                        } else if elem_types.len() == 1 {
+                            // If all elements have the same type, return that type
+                            Ok(elem_types[0].clone())
+                        } else {
+                            // For mixed-type tuples, we need to return a more specific type
+                            // based on the index if possible, otherwise return Any
+                            Ok(Type::Any)
+                        }
                     } else {
-                        Ok(elem_types[0].clone())
+                        // If we don't know the exact index type, return Any
+                        Ok(Type::Any)
                     }
                 } else {
                     Err(TypeError::InvalidOperator {

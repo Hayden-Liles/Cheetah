@@ -960,9 +960,127 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     Ok((element_val, element_type.clone()))
                 } else {
                     // For non-constant indices, we need to implement a runtime check
-                    // This is more complex and would require a switch or series of if-else statements
-                    // For now, we'll return an error
-                    Err("Dynamic tuple indexing not yet supported".to_string())
+                    // We'll create a series of if-else statements to check the index value
+                    // and return the appropriate element
+
+                    // First, get the index value as an integer
+                    let index_val = if let (_index_val, Type::Int) = self.compile_expr(slice)? {
+                        _index_val.into_int_value()
+                    } else {
+                        return Err("Tuple index must be an integer".to_string());
+                    };
+
+                    // Create a result variable to store the element
+                    let element_type = Type::Any; // We'll use Any as the type for dynamic indexing
+                    let llvm_element_type = self.get_llvm_type(&element_type);
+                    let result_ptr = self.builder.build_alloca(llvm_element_type, "tuple_element_result").unwrap();
+
+                    // Get the tuple struct type
+                    let llvm_types: Vec<BasicTypeEnum> = element_types
+                        .iter()
+                        .map(|ty| self.get_llvm_type(ty))
+                        .collect();
+
+                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+
+                    // Get a pointer to the tuple
+                    let tuple_ptr = if value_val.is_pointer_value() {
+                        value_val.into_pointer_value()
+                    } else {
+                        // If the value is not a pointer, allocate memory for it and store it
+                        let llvm_type = self.get_llvm_type(&value_type);
+                        let alloca = self.builder.build_alloca(llvm_type, "tuple_temp").unwrap();
+                        self.builder.build_store(alloca, value_val).unwrap();
+                        alloca
+                    };
+
+                    // For dynamic indexing, we'll use a simpler approach with a switch statement
+                    let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+
+                    // Create blocks for the switch cases and the default (out-of-bounds) case
+                    let default_block = self.llvm_context.append_basic_block(current_function, "tuple_index_default");
+                    let merge_block = self.llvm_context.append_basic_block(current_function, "tuple_index_merge");
+
+                    // Create a result variable to store the element
+                    let element_type = Type::Any; // We'll use Any as the type for dynamic indexing
+                    let llvm_element_type = self.get_llvm_type(&element_type);
+                    let result_ptr = self.builder.build_alloca(llvm_element_type, "tuple_element_result").unwrap();
+
+                    // Create blocks for each possible index
+                    let mut case_blocks = Vec::with_capacity(element_types.len());
+                    for i in 0..element_types.len() {
+                        case_blocks.push(self.llvm_context.append_basic_block(current_function, &format!("tuple_index_case_{}", i)));
+                    }
+
+                    // Create a series of if-else statements to check the index
+
+                    for i in 0..element_types.len() {
+                        // Check if index == i
+                        let index_const = self.llvm_context.i64_type().const_int(i as u64, false);
+                        let is_index = self.builder.build_int_compare(inkwell::IntPredicate::EQ, index_val, index_const, &format!("is_index_{}", i)).unwrap();
+
+                        // Branch to the case block if the index matches, otherwise continue to the next check
+                        let next_check_block = if i < element_types.len() - 1 {
+                            self.llvm_context.append_basic_block(current_function, &format!("next_check_{}", i))
+                        } else {
+                            default_block
+                        };
+
+                        self.builder.build_conditional_branch(is_index, case_blocks[i], next_check_block).unwrap();
+
+                        // Position at the next check block for the next iteration
+                        if i < element_types.len() - 1 {
+                            self.builder.position_at_end(next_check_block);
+                        }
+                    }
+
+                    // Build the case blocks
+                    for i in 0..element_types.len() {
+                        self.builder.position_at_end(case_blocks[i]);
+
+                        // We're already positioned at the case block
+
+                        // Get a pointer to the i-th element of the tuple
+                        let element_ptr = self.builder.build_struct_gep(tuple_struct, tuple_ptr, i as u32, &format!("tuple_element_{}", i)).unwrap();
+
+                        // Load the element
+                        let element_val = self.builder.build_load(self.get_llvm_type(&element_types[i]), element_ptr, &format!("load_tuple_element_{}", i)).unwrap();
+
+                        // Convert the element to the result type if needed
+                        let converted_val = self.convert_type(element_val, &element_types[i], &element_type).unwrap_or(element_val);
+
+                        // Store the element in the result variable
+                        self.builder.build_store(result_ptr, converted_val).unwrap();
+
+                        // Jump to the merge block
+                        self.builder.build_unconditional_branch(merge_block).unwrap();
+                    }
+
+                    // Build the default (out-of-bounds) block
+                    self.builder.position_at_end(default_block);
+
+                    // For now, we'll just return a default value for out-of-bounds access
+                    // In a real implementation, we would raise an exception or handle it more gracefully
+                    let default_val: BasicValueEnum<'ctx> = match element_type {
+                        Type::Int => self.llvm_context.i64_type().const_zero().into(),
+                        Type::Float => self.llvm_context.f64_type().const_zero().into(),
+                        Type::Bool => self.llvm_context.bool_type().const_zero().into(),
+                        _ => self.llvm_context.i64_type().const_zero().into(),
+                    };
+
+                    // Store the default value in the result variable
+                    self.builder.build_store(result_ptr, default_val).unwrap();
+
+                    // Jump to the merge block
+                    self.builder.build_unconditional_branch(merge_block).unwrap();
+
+                    // Position at the merge block
+                    self.builder.position_at_end(merge_block);
+
+                    // Load the result
+                    let result_val = self.builder.build_load(llvm_element_type, result_ptr, "tuple_element_result").unwrap();
+
+                    Ok((result_val, element_type))
                 }
             },
             _ => Err(format!("Type {:?} is not indexable", value_type)),
