@@ -491,6 +491,83 @@ impl TypeInference {
                 Self::find_common_type(&[then_type, else_type])
             },
 
+            // List comprehension
+            Expr::ListComp { elt, generators, .. } => {
+                // Check the first generator
+                if let Some(generator) = generators.first() {
+                    // Infer the type of the iterable
+                    let iter_type = Self::infer_expr(env, &generator.iter)?;
+
+                    // Create a new scope for the comprehension
+                    env.push_scope();
+
+                    // Add the target variable to the scope
+                    if let Expr::Name { id, .. } = &*generator.target {
+                        // Determine the element type based on the iterable type
+                        let element_type = match &iter_type {
+                            Type::List(elem_type) => *elem_type.clone(),
+                            Type::String => Type::String,
+                            Type::Dict(key_type, _) => *key_type.clone(),
+                            _ => Type::Any,
+                        };
+
+                        // Add the target variable to the scope
+                        env.add_variable(id.clone(), element_type);
+                    }
+
+                    // Infer the type of the element expression
+                    let element_type = Self::infer_expr(env, elt)?;
+
+                    // Pop the scope
+                    env.pop_scope();
+
+                    // Return a list of the element type
+                    Ok(Type::List(Box::new(element_type)))
+                } else {
+                    // No generators, return a list of unknown type
+                    Ok(Type::List(Box::new(Type::Unknown)))
+                }
+            },
+
+            // Dictionary comprehension
+            Expr::DictComp { key, value, generators, .. } => {
+                // Check the first generator
+                if let Some(generator) = generators.first() {
+                    // Infer the type of the iterable
+                    let iter_type = Self::infer_expr(env, &generator.iter)?;
+
+                    // Create a new scope for the comprehension
+                    env.push_scope();
+
+                    // Add the target variable to the scope
+                    if let Expr::Name { id, .. } = &*generator.target {
+                        // Determine the element type based on the iterable type
+                        let element_type = match &iter_type {
+                            Type::List(elem_type) => *elem_type.clone(),
+                            Type::String => Type::String,
+                            Type::Dict(key_type, _) => *key_type.clone(),
+                            _ => Type::Any,
+                        };
+
+                        // Add the target variable to the scope
+                        env.add_variable(id.clone(), element_type);
+                    }
+
+                    // Infer the types of the key and value expressions
+                    let key_type = Self::infer_expr(env, key)?;
+                    let value_type = Self::infer_expr(env, value)?;
+
+                    // Pop the scope
+                    env.pop_scope();
+
+                    // Return a dictionary with the key and value types
+                    Ok(Type::Dict(Box::new(key_type), Box::new(value_type)))
+                } else {
+                    // No generators, return a dictionary of unknown types
+                    Ok(Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown)))
+                }
+            },
+
             // For other expression types, return Unknown for now
             _ => Ok(Type::Unknown),
         }

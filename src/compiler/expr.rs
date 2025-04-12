@@ -39,6 +39,9 @@ pub trait ExprCompiler<'ctx> {
     /// Compile a list comprehension expression
     fn compile_list_comprehension(&mut self, elt: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
+    /// Compile a dictionary comprehension expression
+    fn compile_dict_comprehension(&mut self, key: &Expr, value: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+
     /// Compile an attribute access expression (e.g., dict.keys())
     fn compile_attribute_access(&mut self, value: &Expr, attr: &str) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 }
@@ -1072,6 +1075,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
             // List comprehension
             Expr::ListComp { elt, generators, .. } => self.compile_list_comprehension(elt, generators),
+
+            // Dictionary comprehension
+            Expr::DictComp { key, value, generators, .. } => self.compile_dict_comprehension(key, value, generators),
 
             // Handle other expression types with appropriate placeholder errors
             _ => Err(format!("Unsupported expression type: {:?}", expr)),
@@ -2642,6 +2648,361 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 }
             },
             _ => Err(format!("Type {:?} does not support attribute access", value_type)),
+        }
+    }
+
+    /// Compile a dictionary comprehension expression
+    fn compile_dict_comprehension(&mut self, key: &Expr, value: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        if generators.is_empty() {
+            return Err("Dictionary comprehension must have at least one generator".to_string());
+        }
+
+        // Create an empty dictionary to store the results
+        let result_dict = self.build_empty_dict("dict_comp_result")?;
+
+        // Get the dict_set function
+        let dict_set_fn = match self.module.get_function("dict_set") {
+            Some(f) => f,
+            None => return Err("dict_set function not found".to_string()),
+        };
+
+        // Create a new scope for the dictionary comprehension
+        self.scope_stack.push_scope(false, false, false);
+
+        // Compile the first generator
+        let generator = &generators[0];
+
+        // Compile the iterable expression
+        let (iter_val, iter_type) = self.compile_expr(&generator.iter)?;
+
+        // Special case for range function
+        if let Expr::Call { func, .. } = &*generator.iter {
+            if let Expr::Name { id, .. } = func.as_ref() {
+                if id == "range" {
+                    // For range, we need to create a loop from 0 to the range value
+                    let range_val = iter_val.into_int_value();
+
+                    // Create basic blocks for the loop
+                    let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                    let loop_entry_block = self.llvm_context.append_basic_block(current_function, "range_comp_entry");
+                    let loop_body_block = self.llvm_context.append_basic_block(current_function, "range_comp_body");
+                    let loop_exit_block = self.llvm_context.append_basic_block(current_function, "range_comp_exit");
+
+                    // Create an index variable
+                    let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "range_index").unwrap();
+                    self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
+
+                    // Branch to the loop entry
+                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                    // Loop entry block - check if we've reached the end of the range
+                    self.builder.position_at_end(loop_entry_block);
+                    let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+                    let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, current_index, range_val, "range_cond").unwrap();
+                    self.builder.build_conditional_branch(cond, loop_body_block, loop_exit_block).unwrap();
+
+                    // Loop body block - set the target variable and evaluate the element
+                    self.builder.position_at_end(loop_body_block);
+
+                    // Set the target variable to the current index
+                    match &*generator.target {
+                        Expr::Name { id, .. } => {
+                            // Allocate space for the target variable
+                            let target_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), id).unwrap();
+                            self.builder.build_store(target_ptr, current_index).unwrap();
+
+                            // Register the variable in the current scope
+                            self.scope_stack.add_variable(id.clone(), target_ptr, Type::Int);
+
+                            // Check if conditions
+                            let mut continue_block = loop_body_block;
+                            let mut condition_blocks = Vec::new();
+
+                            for if_expr in &generator.ifs {
+                                let if_block = self.llvm_context.append_basic_block(current_function, "if_block");
+                                condition_blocks.push(if_block);
+
+                                // Compile the condition
+                                let (cond_val, _) = self.compile_expr(if_expr)?;
+                                let cond_val = self.builder.build_int_truncate_or_bit_cast(cond_val.into_int_value(), self.llvm_context.bool_type(), "cond").unwrap();
+
+                                // Branch based on the condition
+                                self.builder.build_conditional_branch(cond_val, if_block, continue_block).unwrap();
+
+                                // Position at the if block
+                                self.builder.position_at_end(if_block);
+                                continue_block = if_block;
+                            }
+
+                            // Compile the key and value expressions
+                            let (key_val, key_type) = self.compile_expr(key)?;
+                            let (value_val, value_type) = self.compile_expr(value)?;
+
+                            // Convert the key and value to the appropriate types for dict_set
+                            let key_ptr = if crate::compiler::types::is_reference_type(&key_type) {
+                                // For reference types, use the pointer directly
+                                if key_val.is_pointer_value() {
+                                    key_val.into_pointer_value()
+                                } else {
+                                    return Err(format!("Expected pointer value for key of type {:?}", key_type));
+                                }
+                            } else {
+                                // For non-reference types, we need to allocate memory and store the value
+                                let key_alloca = self.builder.build_alloca(
+                                    key_val.get_type(),
+                                    "dict_comp_key"
+                                ).unwrap();
+                                self.builder.build_store(key_alloca, key_val).unwrap();
+                                key_alloca
+                            };
+
+                            // Convert the value to the appropriate type for dict_set
+                            let value_ptr = if crate::compiler::types::is_reference_type(&value_type) {
+                                // For reference types, use the pointer directly
+                                if value_val.is_pointer_value() {
+                                    value_val.into_pointer_value()
+                                } else {
+                                    return Err(format!("Expected pointer value for value of type {:?}", value_type));
+                                }
+                            } else {
+                                // For non-reference types, we need to allocate memory and store the value
+                                let value_alloca = self.builder.build_alloca(
+                                    value_val.get_type(),
+                                    "dict_comp_value"
+                                ).unwrap();
+                                self.builder.build_store(value_alloca, value_val).unwrap();
+                                value_alloca
+                            };
+
+                            // Add the key-value pair to the dictionary
+                            self.builder.build_call(
+                                dict_set_fn,
+                                &[
+                                    result_dict.into(),
+                                    key_ptr.into(),
+                                    value_ptr.into(),
+                                ],
+                                "dict_set_result"
+                            ).unwrap();
+
+                            // Create a continue block
+                            let continue_block = self.llvm_context.append_basic_block(current_function, "continue_block");
+                            self.builder.build_unconditional_branch(continue_block).unwrap();
+
+                            // Continue block - increment the index and continue the loop
+                            self.builder.position_at_end(continue_block);
+
+                            // Increment the index
+                            let next_index = self.builder.build_int_add(
+                                current_index,
+                                self.llvm_context.i64_type().const_int(1, false),
+                                "next_index"
+                            ).unwrap();
+
+                            self.builder.build_store(index_ptr, next_index).unwrap();
+
+                            // Branch back to the loop entry
+                            self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                            // Exit block - return the result dictionary
+                            self.builder.position_at_end(loop_exit_block);
+
+                            // Pop the scope for the dictionary comprehension
+                            self.scope_stack.pop_scope();
+
+                            // Return the result dictionary
+                            return Ok((result_dict.into(), Type::Dict(Box::new(key_type), Box::new(value_type))));
+                        },
+                        _ => return Err("Only simple variable names are supported as targets in dictionary comprehensions".to_string()),
+                    }
+                }
+            }
+        }
+
+        // Check if the iterable is a list, string, or range
+        match iter_type {
+            Type::List(_) => {
+                // Get the list length
+                let list_len_fn = match self.module.get_function("list_len") {
+                    Some(f) => f,
+                    None => return Err("list_len function not found".to_string()),
+                };
+
+                let list_ptr = iter_val.into_pointer_value();
+                let call_site_value = self.builder.build_call(
+                    list_len_fn,
+                    &[list_ptr.into()],
+                    "list_len_result"
+                ).unwrap();
+
+                let list_len = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to get list length".to_string())?;
+
+                // Create a loop to iterate over the list
+                let list_get_fn = match self.module.get_function("list_get") {
+                    Some(f) => f,
+                    None => return Err("list_get function not found".to_string()),
+                };
+
+                // Create basic blocks for the loop
+                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                let loop_entry_block = self.llvm_context.append_basic_block(current_function, "list_comp_entry");
+                let loop_body_block = self.llvm_context.append_basic_block(current_function, "list_comp_body");
+                let loop_exit_block = self.llvm_context.append_basic_block(current_function, "list_comp_exit");
+
+                // Create an index variable
+                let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "list_index").unwrap();
+                self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
+
+                // Branch to the loop entry
+                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                // Loop entry block - check if we've reached the end of the list
+                self.builder.position_at_end(loop_entry_block);
+                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+                let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, current_index, list_len.into_int_value(), "list_cond").unwrap();
+                self.builder.build_conditional_branch(cond, loop_body_block, loop_exit_block).unwrap();
+
+                // Loop body block - get the current element and evaluate the element expression
+                self.builder.position_at_end(loop_body_block);
+
+                // Get the current element from the list
+                let call_site_value = self.builder.build_call(
+                    list_get_fn,
+                    &[list_ptr.into(), current_index.into()],
+                    "list_get_result"
+                ).unwrap();
+
+                let element_val = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to get element from list".to_string())?;
+
+                // Set the target variable to the current element
+                match &*generator.target {
+                    Expr::Name { id, .. } => {
+                        // Determine the element type based on the list type
+                        let element_type = if let Type::List(elem_type) = &iter_type {
+                            *elem_type.clone()
+                        } else {
+                            Type::Any
+                        };
+
+                        // Allocate space for the target variable
+                        let target_ptr = match element_type {
+                            Type::Int => self.builder.build_alloca(self.llvm_context.i64_type(), id).unwrap(),
+                            Type::Float => self.builder.build_alloca(self.llvm_context.f64_type(), id).unwrap(),
+                            Type::Bool => self.builder.build_alloca(self.llvm_context.bool_type(), id).unwrap(),
+                            _ => self.builder.build_alloca(self.llvm_context.ptr_type(inkwell::AddressSpace::default()), id).unwrap(),
+                        };
+
+                        // Store the element in the target variable
+                        self.builder.build_store(target_ptr, element_val).unwrap();
+
+                        // Register the variable in the current scope
+                        self.scope_stack.add_variable(id.clone(), target_ptr, element_type);
+
+                        // Check if conditions
+                        let mut continue_block = loop_body_block;
+                        let mut condition_blocks = Vec::new();
+
+                        for if_expr in &generator.ifs {
+                            let if_block = self.llvm_context.append_basic_block(current_function, "if_block");
+                            condition_blocks.push(if_block);
+
+                            // Compile the condition
+                            let (cond_val, _) = self.compile_expr(if_expr)?;
+                            let cond_val = self.builder.build_int_truncate_or_bit_cast(cond_val.into_int_value(), self.llvm_context.bool_type(), "cond").unwrap();
+
+                            // Branch based on the condition
+                            self.builder.build_conditional_branch(cond_val, if_block, continue_block).unwrap();
+
+                            // Position at the if block
+                            self.builder.position_at_end(if_block);
+                            continue_block = if_block;
+                        }
+
+                        // Compile the key and value expressions
+                        let (key_val, key_type) = self.compile_expr(key)?;
+                        let (value_val, value_type) = self.compile_expr(value)?;
+
+                        // Convert the key and value to the appropriate types for dict_set
+                        let key_ptr = if crate::compiler::types::is_reference_type(&key_type) {
+                            // For reference types, use the pointer directly
+                            if key_val.is_pointer_value() {
+                                key_val.into_pointer_value()
+                            } else {
+                                return Err(format!("Expected pointer value for key of type {:?}", key_type));
+                            }
+                        } else {
+                            // For non-reference types, we need to allocate memory and store the value
+                            let key_alloca = self.builder.build_alloca(
+                                key_val.get_type(),
+                                "dict_comp_key"
+                            ).unwrap();
+                            self.builder.build_store(key_alloca, key_val).unwrap();
+                            key_alloca
+                        };
+
+                        // Convert the value to the appropriate type for dict_set
+                        let value_ptr = if crate::compiler::types::is_reference_type(&value_type) {
+                            // For reference types, use the pointer directly
+                            if value_val.is_pointer_value() {
+                                value_val.into_pointer_value()
+                            } else {
+                                return Err(format!("Expected pointer value for value of type {:?}", value_type));
+                            }
+                        } else {
+                            // For non-reference types, we need to allocate memory and store the value
+                            let value_alloca = self.builder.build_alloca(
+                                value_val.get_type(),
+                                "dict_comp_value"
+                            ).unwrap();
+                            self.builder.build_store(value_alloca, value_val).unwrap();
+                            value_alloca
+                        };
+
+                        // Add the key-value pair to the dictionary
+                        self.builder.build_call(
+                            dict_set_fn,
+                            &[
+                                result_dict.into(),
+                                key_ptr.into(),
+                                value_ptr.into(),
+                            ],
+                            "dict_set_result"
+                        ).unwrap();
+
+                        // Create a continue block
+                        let continue_block = self.llvm_context.append_basic_block(current_function, "continue_block");
+                        self.builder.build_unconditional_branch(continue_block).unwrap();
+
+                        // Continue block - increment the index and continue the loop
+                        self.builder.position_at_end(continue_block);
+
+                        // Increment the index
+                        let next_index = self.builder.build_int_add(
+                            current_index,
+                            self.llvm_context.i64_type().const_int(1, false),
+                            "next_index"
+                        ).unwrap();
+
+                        self.builder.build_store(index_ptr, next_index).unwrap();
+
+                        // Branch back to the loop entry
+                        self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                        // Exit block - return the result dictionary
+                        self.builder.position_at_end(loop_exit_block);
+
+                        // Pop the scope for the dictionary comprehension
+                        self.scope_stack.pop_scope();
+
+                        // Return the result dictionary
+                        return Ok((result_dict.into(), Type::Dict(Box::new(key_type), Box::new(value_type))));
+                    },
+                    _ => return Err("Only simple variable names are supported as targets in dictionary comprehensions".to_string()),
+                }
+            },
+            _ => return Err(format!("Unsupported iterable type for dictionary comprehension: {:?}", iter_type)),
         }
     }
 }

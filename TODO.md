@@ -41,7 +41,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 1. [ ] Implement a proper closure environment solution for nonlocal variables
 2. [ ] Enhance dictionary support further
    - [x] Implement dictionary methods (keys, values, items)
-   - [ ] Add support for dictionary comprehensions
+   - [x] Add support for dictionary comprehensions
    - [ ] Implement membership testing with 'in' operator for dictionaries
 
 ### Completed Core Language Features
@@ -109,7 +109,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Implement nested dictionary access
    - [x] Add support for mixed key and value types
    - [x] Implement dictionary methods (keys, values, items)
-   - [ ] Add support for dictionary comprehensions
+   - [x] Add support for dictionary comprehensions
    - [ ] Implement membership testing with 'in' operator for dictionaries
    - [ ] Improve dictionary integration with functions
 11. [ ] Implement a proper closure environment solution for nonlocal variables

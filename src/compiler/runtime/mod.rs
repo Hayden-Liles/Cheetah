@@ -5,6 +5,7 @@ pub mod string_ops;
 pub mod string_ops_register;
 pub mod dict_ops;
 pub mod dict_methods;
+pub mod int_ops;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -19,4 +20,7 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register dictionary operation functions
     dict_ops::register_dict_functions(context, module);
+
+    // Register integer operation functions
+    int_ops::register_int_functions(context, module);
 }

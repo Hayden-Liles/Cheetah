@@ -150,3 +150,7 @@ mod nested_dict_test;
 // Include the dictionary methods tests
 #[path = "more_tests/compiler/dict_methods_test.rs"]
 mod dict_methods_test;
+
+// Include the dictionary comprehension tests
+#[path = "more_tests/compiler/dict_comprehension_test.rs"]
+mod dict_comprehension_test;
