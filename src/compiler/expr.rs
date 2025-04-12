@@ -868,7 +868,24 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                                     None
                                                 }
                                             } else {
-                                                None
+                                                // Try to find the variable in outer scopes
+                                                let var_ptr = self.scope_stack.get_variable_respecting_declarations(var_name);
+                                                if let Some(ptr) = var_ptr {
+                                                    // Get the variable type
+                                                    let var_type = self.scope_stack.get_type_respecting_declarations(var_name);
+                                                    if let Some(var_type) = var_type {
+                                                        // Get the LLVM type for the variable
+                                                        let llvm_type = self.get_llvm_type(&var_type);
+
+                                                        // Load the value from the variable
+                                                        let value = self.builder.build_load(llvm_type, *ptr, &format!("load_{}_for_call", var_name)).unwrap();
+                                                        Some(value)
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                }
                                             }
                                         }
                                     } else {

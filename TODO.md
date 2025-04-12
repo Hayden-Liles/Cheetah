@@ -49,8 +49,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Fix LLVM dominance validation issues with nonlocal variables in nested functions
    - [x] Fix LLVM validation issues with nonlocal variables in simple cases
    - [x] Fix LLVM validation issues with nonlocal variables in complex cases (loops, conditionals)
-   - [ ] Fix LLVM validation issues with nonlocal variables in shadowing cases
-   - [ ] Implement proper handling of nonlocal variables across multiple levels of nesting
+   - [x] Fix LLVM validation issues with nonlocal variables in nested functions with multiple levels
+   - [ ] Fix LLVM validation issues with nonlocal variables in shadowing cases (low priority)
 2. [ ] Implement exception handling (try/except/finally)
    - [ ] Add basic exception raising mechanism
    - [ ] Implement try/except blocks

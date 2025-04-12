@@ -400,4 +400,75 @@ impl<'ctx> ScopeStack<'ctx> {
             None
         }
     }
+
+    /// Get a variable's type from the scope stack, respecting nonlocal declarations
+    pub fn get_type_respecting_declarations(&self, name: &str) -> Option<Type> {
+        // Check if the variable is declared as global in the current scope
+        if let Some(current_scope) = self.current_scope() {
+            if current_scope.is_global(name) {
+                // If it's declared as global, look it up in the global scope
+                if let Some(global_scope) = self.global_scope() {
+                    return global_scope.get_type(name).cloned();
+                }
+            }
+
+            // Check if the variable is declared as nonlocal
+            if current_scope.is_nonlocal(name) {
+                // Check if there's a mapping for this nonlocal variable
+                if let Some(unique_name) = current_scope.get_nonlocal_mapping(name) {
+                    // Look up the unique name in the current scope
+                    if let Some(var_type) = current_scope.get_type(unique_name) {
+                        return Some(var_type.clone());
+                    }
+                }
+
+                // If it's declared as nonlocal, look it up in outer scopes (not just function scopes)
+                // Start from the current scope's index - 1 (the outer scope)
+                let current_index = self.scopes.len() - 1;
+
+                // First check the immediate outer scope
+                if current_index > 0 {
+                    let parent_scope_index = current_index - 1;
+
+                    // Check if the variable exists directly in the parent scope
+                    if let Some(var_type) = self.scopes[parent_scope_index].get_type(name) {
+                        return Some(var_type.clone());
+                    }
+
+                    // If not found directly, check if it's a nonlocal variable in the parent scope too
+                    if self.scopes[parent_scope_index].is_nonlocal(name) {
+                        // Check if there's a mapping for this nonlocal variable in the parent scope
+                        if let Some(parent_unique_name) = self.scopes[parent_scope_index].get_nonlocal_mapping(name) {
+                            // Use the unique name to get the variable type
+                            if let Some(var_type) = self.scopes[parent_scope_index].get_type(parent_unique_name) {
+                                return Some(var_type.clone());
+                            }
+                        }
+
+                        // If not found through mapping, try the parent scope's nonlocal lookup
+                        // This recursively handles multiple levels of nonlocal declarations
+                        if parent_scope_index > 0 {
+                            let grandparent_scope_index = parent_scope_index - 1;
+                            if let Some(var_type) = self.scopes[grandparent_scope_index].get_type(name) {
+                                return Some(var_type.clone());
+                            }
+                        }
+                    }
+                }
+
+                // If still not found, look in all outer scopes
+                for i in (0..current_index-1).rev() {
+                    if let Some(var_type) = self.scopes[i].get_type(name) {
+                        return Some(var_type.clone());
+                    }
+                }
+
+                // If we get here, the nonlocal variable wasn't found
+                return None;
+            }
+        }
+
+        // If not declared as global or nonlocal, use normal variable lookup
+        self.get_type(name).cloned()
+    }
 }
