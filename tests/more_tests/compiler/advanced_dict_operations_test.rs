@@ -262,11 +262,13 @@ range_value = data["range"]
 fn test_dict_in_list_comprehension() {
     let source = r#"
 # Dictionary in list comprehension
-keys = ["a", "b", "c"]
-values = [1, 2, 3]
 data = {"a": 1, "b": 2, "c": 3}
-# Use simple list comprehension without dictionary access
-doubled_values = [i * 2 for i in values]
+
+# Create a simple list of integers
+numbers = [1, 2, 3]
+
+# Use list comprehension with the numbers list
+doubled = [n * 2 for n in numbers]
 "#;
 
     let result = compile_source(source);

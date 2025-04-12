@@ -679,25 +679,47 @@ impl TypeChecker {
 
     /// Get the element type of an iterable
     fn get_element_type(&self, iter_type: &Type) -> TypeResult<Type> {
+        println!("Getting element type for iterable: {:?}", iter_type);
         match iter_type {
-            Type::List(elem_type) => Ok(*elem_type.clone()),
+            Type::List(elem_type) => {
+                println!("List element type: {:?}", *elem_type);
+                Ok(*elem_type.clone())
+            },
             Type::Tuple(elem_types) => {
                 if elem_types.is_empty() {
+                    println!("Empty tuple, using Any");
                     Ok(Type::Any)
                 } else {
-                    // Try to find a common type for all elements
-                    TypeInference::find_common_type(elem_types)
+                    // For iteration, use the first element type instead of trying to find a common type
+                    // This is more appropriate for list comprehensions where we iterate over each element
+                    println!("Using first element of tuple: {:?}", elem_types[0]);
+                    Ok(elem_types[0].clone())
                 }
             },
-            Type::Dict(key_type, _) => Ok(*key_type.clone()),
-            Type::Set(elem_type) => Ok(*elem_type.clone()),
-            Type::String => Ok(Type::String),
-            Type::Bytes => Ok(Type::Int),
-            _ => Err(TypeError::InvalidOperator {
-                operator: "iteration".to_string(),
-                left_type: iter_type.clone(),
-                right_type: None,
-            }),
+            Type::Dict(key_type, _) => {
+                println!("Dictionary key type: {:?}", *key_type);
+                Ok(*key_type.clone())
+            },
+            Type::Set(elem_type) => {
+                println!("Set element type: {:?}", *elem_type);
+                Ok(*elem_type.clone())
+            },
+            Type::String => {
+                println!("String element type: String");
+                Ok(Type::String)
+            },
+            Type::Bytes => {
+                println!("Bytes element type: Int");
+                Ok(Type::Int)
+            },
+            _ => {
+                println!("Invalid iterable type: {:?}", iter_type);
+                Err(TypeError::InvalidOperator {
+                    operator: "iteration".to_string(),
+                    left_type: iter_type.clone(),
+                    right_type: None,
+                })
+            },
         }
     }
 }

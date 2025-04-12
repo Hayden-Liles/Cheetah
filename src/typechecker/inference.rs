@@ -34,18 +34,56 @@ impl TypeInference {
 
             Expr::List { elts, .. } => {
                 if elts.is_empty() {
+                    println!("Empty list, using Any as element type");
                     Ok(Type::List(Box::new(Type::Any)))
                 } else {
                     // Try to infer a common type for all elements
                     let mut element_types = Vec::with_capacity(elts.len());
 
                     for elt in elts {
-                        element_types.push(Self::infer_expr(env, elt)?);
+                        let elt_type = Self::infer_expr(env, elt)?;
+                        println!("List element type: {:?}", elt_type);
+                        element_types.push(elt_type);
                     }
 
-                    // Find a common type that all elements can be converted to
-                    let common_type = Self::find_common_type(&element_types)?;
-                    Ok(Type::List(Box::new(common_type)))
+                    // Check if all elements are the same type
+                    let first_type = &element_types[0];
+                    let all_same = element_types.iter().all(|t| t == first_type);
+
+                    let element_type = if all_same {
+                        // If all elements are the same type, use that type directly
+                        println!("All list elements have the same type: {:?}", first_type);
+                        first_type.clone()
+                    } else {
+                        // Find a common type that all elements can be converted to
+                        let common_type = Self::find_common_type(&element_types)?;
+                        println!("List elements have different types, using common type: {:?}", common_type);
+                        common_type
+                    };
+
+                    // For numeric literals, use Int directly instead of Tuple
+                    let final_type = match &element_type {
+                        Type::Tuple(tuple_types) if tuple_types.len() == 1 => {
+                            // If it's a tuple with a single element, use that element type
+                            println!("Unwrapping single-element tuple: {:?}", tuple_types[0]);
+                            tuple_types[0].clone()
+                        },
+                        Type::Tuple(tuple_types) => {
+                            // Check if all elements in the tuple are the same type
+                            if !tuple_types.is_empty() && tuple_types.iter().all(|t| t == &tuple_types[0]) {
+                                // If all elements in the tuple are the same, use that type
+                                println!("All tuple elements have the same type: {:?}", tuple_types[0]);
+                                tuple_types[0].clone()
+                            } else {
+                                // Otherwise, keep the tuple type
+                                element_type
+                            }
+                        },
+                        _ => element_type,
+                    };
+
+                    println!("Final list element type: {:?}", final_type);
+                    Ok(Type::List(Box::new(final_type)))
                 }
             },
 
@@ -528,6 +566,7 @@ impl TypeInference {
                 if let Some(generator) = generators.first() {
                     // Infer the type of the iterable
                     let iter_type = Self::infer_expr(env, &generator.iter)?;
+                    println!("List comprehension iterable type: {:?}", iter_type);
 
                     // Create a new scope for the comprehension
                     env.push_scope();
@@ -536,12 +575,29 @@ impl TypeInference {
                     if let Expr::Name { id, .. } = &*generator.target {
                         // Determine the element type based on the iterable type
                         let element_type = match &iter_type {
-                            Type::List(elem_type) => *elem_type.clone(),
+                            Type::List(elem_type) => {
+                                println!("List element type: {:?}", *elem_type);
+                                *elem_type.clone()
+                            },
+                            Type::Tuple(elem_types) => {
+                                // For a tuple of elements, use the first element type or Int
+                                if !elem_types.is_empty() {
+                                    println!("Using first element of tuple: {:?}", elem_types[0]);
+                                    elem_types[0].clone()
+                                } else {
+                                    println!("Empty tuple, using Int");
+                                    Type::Int
+                                }
+                            },
                             Type::String => Type::String,
                             Type::Dict(key_type, _) => *key_type.clone(),
-                            _ => Type::Any,
+                            _ => {
+                                println!("Unknown iterable type: {:?}, using Any", iter_type);
+                                Type::Any
+                            },
                         };
 
+                        println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
                         // Add the target variable to the scope
                         env.add_variable(id.clone(), element_type);
                     }

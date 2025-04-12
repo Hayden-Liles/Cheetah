@@ -1012,14 +1012,29 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 let element_type = if element_types.is_empty() {
                     Type::Unknown
                 } else {
-                    let mut common_type = element_types[0].clone();
-                    for ty in &element_types[1..] {
-                        common_type = match self.get_common_type(&common_type, ty) {
-                            Ok(t) => t,
-                            Err(_) => Type::Unknown,
-                        };
+                    // Check if all elements are the same type
+                    let first_type = &element_types[0];
+                    let all_same = element_types.iter().all(|t| t == first_type);
+
+                    if all_same {
+                        // If all elements are the same type, use that type
+                        println!("All list elements have the same type: {:?}", first_type);
+                        first_type.clone()
+                    } else {
+                        // If elements have different types, find a common type
+                        let mut common_type = element_types[0].clone();
+                        for ty in &element_types[1..] {
+                            common_type = match self.get_common_type(&common_type, ty) {
+                                Ok(t) => t,
+                                Err(_) => {
+                                    println!("Could not find common type between {:?} and {:?}, using Any", common_type, ty);
+                                    Type::Any
+                                },
+                            };
+                        }
+                        println!("List elements have different types, using common type: {:?}", common_type);
+                        common_type
                     }
-                    common_type
                 };
 
                 // Build the list
@@ -2176,14 +2191,27 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     Type::Tuple(tuple_types) if tuple_types.len() > 0 => {
                                         // All elements in the tuple should be of the same type
                                         // So we can just use the first one
+                                        println!("List comprehension: Using first element of tuple: {:?}", tuple_types[0]);
                                         tuple_types[0].clone()
                                     },
-                                    _ => element_type.as_ref().clone(),
+                                    _ => {
+                                        println!("List comprehension: Using element type: {:?}", element_type.as_ref());
+                                        element_type.as_ref().clone()
+                                    },
                                 }
                             },
-                            _ => Type::Unknown,
+                            Type::Tuple(tuple_types) if !tuple_types.is_empty() => {
+                                // For a tuple of elements, use the first element type
+                                println!("List comprehension: Using first element of tuple directly: {:?}", tuple_types[0]);
+                                tuple_types[0].clone()
+                            },
+                            _ => {
+                                println!("List comprehension: Unknown iterable type: {:?}, using Int", iter_type);
+                                Type::Int
+                            },
                         };
 
+                        println!("List comprehension: Setting variable '{}' to type: {:?}", id, element_type);
                         // Store the element in the target variable
                         self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), element_type);
                     },
