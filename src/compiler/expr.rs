@@ -1878,7 +1878,19 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     Expr::Name { id, .. } => {
                         // Declare the target variable in the current scope
                         let element_type = match &iter_type {
-                            Type::List(element_type) => element_type.as_ref().clone(),
+                            Type::List(element_type) => {
+                                // If the element type is a tuple, we need to extract the element type
+                                // This is a workaround for the case where a list literal [1, 2, 3, 4, 5]
+                                // is treated as a list of a tuple of integers
+                                match element_type.as_ref() {
+                                    Type::Tuple(tuple_types) if tuple_types.len() > 0 => {
+                                        // All elements in the tuple should be of the same type
+                                        // So we can just use the first one
+                                        tuple_types[0].clone()
+                                    },
+                                    _ => element_type.as_ref().clone(),
+                                }
+                            },
                             _ => Type::Unknown,
                         };
 

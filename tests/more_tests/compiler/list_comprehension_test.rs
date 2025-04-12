@@ -81,7 +81,6 @@ squared = [square(x) for x in range(5)]
 }
 
 #[test]
-#[ignore = "Nested list comprehension not fully implemented yet"]
 fn test_nested_list_comprehension() {
     let source = r#"
 # Nested list comprehension
@@ -105,7 +104,6 @@ chars = [c for c in text]
 }
 
 #[test]
-#[ignore = "List comprehension with list not fully implemented yet"]
 fn test_list_comprehension_with_list() {
     let source = r#"
 # List comprehension with list
