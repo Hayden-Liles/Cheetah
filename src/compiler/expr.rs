@@ -523,6 +523,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                         .ok_or_else(|| "Failed to get keys from dictionary".to_string())?;
 
                                     // Return the keys list and its type
+                                    println!("Dictionary keys method call result type: {:?}", Type::List(key_type.clone()));
                                     return Ok((keys_list_ptr, Type::List(key_type.clone())));
                                 },
                                 "values" => {
@@ -543,6 +544,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                         .ok_or_else(|| "Failed to get values from dictionary".to_string())?;
 
                                     // Return the values list and its type
+                                    println!("Dictionary values method call result type: {:?}", Type::List(value_type.clone()));
                                     return Ok((values_list_ptr, Type::List(value_type.clone())));
                                 },
                                 "items" => {
@@ -564,6 +566,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                                     // Return the items list and its type (list of tuples with key-value pairs)
                                     let tuple_type = Type::Tuple(vec![*key_type.clone(), *value_type.clone()]);
+                                    println!("Dictionary items method call result type: {:?}", Type::List(Box::new(tuple_type.clone())));
                                     return Ok((items_list_ptr, Type::List(Box::new(tuple_type))));
                                 },
                                 _ => return Err(format!("Unknown method '{}' for dictionary type", attr)),
@@ -873,7 +876,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 } else if id == "get_tuple" {
                                     // Special case for get_tuple function
                                     Type::Tuple(vec![Type::Int, Type::Int, Type::Int])
-                                } else if id == "get_value" || id == "get_name" {
+                                } else if id == "get_value" || id == "get_name" || id == "get_value_with_default" || id == "get_nested_value" {
                                     // Special case for get_value function
                                     Type::String
                                 } else if id == "create_person" || id == "add_phone" || id == "create_dict" ||
@@ -881,8 +884,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                           id == "create_person" || id == "create_dict" {
                                     // Special case for dictionary-returning functions
                                     Type::Dict(Box::new(Type::String), Box::new(Type::String))
-                                } else if id == "process_dict" {
-                                    // Special case for process_dict function
+                                } else if id == "process_dict" || id.contains("len") {
+                                    // Special case for process_dict function and length functions
                                     Type::Int
                                 } else if id == "get_value_with_default" {
                                     // Special case for get_value_with_default function

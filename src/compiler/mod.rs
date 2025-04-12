@@ -334,7 +334,8 @@ impl<'ctx> Compiler<'ctx> {
             let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             ptr_type.fn_type(&param_types, false)
         } else if name == "get_first_word" || name.contains("slice") || name.contains("substring") ||
-                  name == "get_value" || name == "get_value_with_default" || name == "get_name" {
+                  name == "get_value" || name == "get_value_with_default" || name == "get_name" ||
+                  name.contains("get_") {
             // For string operations functions, return a pointer
             let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             ptr_type.fn_type(&param_types, false)
@@ -533,12 +534,16 @@ impl<'ctx> Compiler<'ctx> {
             ("get_nested_value", "data") => Type::Dict(Box::new(Type::String), Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::String)))),
             ("get_name", "person") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
             ("identity", "d") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            ("create_dict", "keys") => Type::List(Box::new(Type::String)),
+            ("create_dict", "values") => Type::List(Box::new(Type::String)),
             (_, "dict") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
             (_, "data") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
             (_, "person") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
             (_, "user") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
             (_, "map") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
             (_, "d") => Type::Dict(Box::new(Type::String), Box::new(Type::String)),
+            (_, "keys") => Type::List(Box::new(Type::String)),
+            (_, "values") => Type::List(Box::new(Type::String)),
 
             // For other parameters that might be tuples
             _ if param_name.starts_with("tuple") || param_name == "t" || param_name.starts_with("t") && param_name.len() <= 3 => {

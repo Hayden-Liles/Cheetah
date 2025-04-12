@@ -1265,6 +1265,7 @@ impl Type {
                     "keys" => {
                         // keys() returns a list of the dictionary's keys
                         let return_type = Type::List(key_type.clone());
+                        println!("Dictionary keys method return type: {:?}", return_type);
                         Ok(Type::Function {
                             param_types: vec![],
                             param_names: vec![],
@@ -1277,6 +1278,7 @@ impl Type {
                     "values" => {
                         // values() returns a list of the dictionary's values
                         let return_type = Type::List(value_type.clone());
+                        println!("Dictionary values method return type: {:?}", return_type);
                         Ok(Type::Function {
                             param_types: vec![],
                             param_names: vec![],
@@ -1290,6 +1292,7 @@ impl Type {
                         // items() returns a list of (key, value) tuples
                         let tuple_type = Type::Tuple(vec![*key_type.clone(), *value_type.clone()]);
                         let return_type = Type::List(Box::new(tuple_type));
+                        println!("Dictionary items method return type: {:?}", return_type);
                         Ok(Type::Function {
                             param_types: vec![],
                             param_names: vec![],
