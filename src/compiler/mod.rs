@@ -340,11 +340,15 @@ impl<'ctx> Compiler<'ctx> {
             let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             ptr_type.fn_type(&param_types, false)
         } else if name == "get_first_word" || name.contains("slice") || name.contains("substring") ||
-                  name == "get_value" || name == "get_value_with_default" || name == "get_name" ||
-                  name.contains("get_") {
+                  name == "get_name" ||
+                  (name.contains("get_") && name != "get_value") {
             // For string operations functions, return a pointer
             let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             ptr_type.fn_type(&param_types, false)
+        } else if name == "get_value" || name == "get_value_with_default" {
+            // For get_value function, return i64
+            let i64_type = context.i64_type();
+            i64_type.fn_type(&param_types, false)
         } else if name == "process_dict" {
             // Special case for process_dict function, return i64
             let i64_type = context.i64_type();

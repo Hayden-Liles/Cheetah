@@ -718,6 +718,24 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     continue;
                                 }
 
+                                // Special handling for range function
+                                if id.starts_with("range_") && i < param_types.len() {
+                                    // Range functions expect i64 parameters
+                                    if param_types[i].is_int_type() && !arg_value.is_int_value() {
+                                        // If we have a pointer but need an int, try to load the value
+                                        if arg_value.is_pointer_value() {
+                                            let ptr = arg_value.into_pointer_value();
+                                            let loaded_val = self.builder.build_load(
+                                                self.llvm_context.i64_type(),
+                                                ptr,
+                                                "range_arg_load"
+                                            ).unwrap();
+                                            call_args.push(loaded_val.into());
+                                            continue;
+                                        }
+                                    }
+                                }
+
                                 // Get the parameter type
                                 if let Some(param_type) = param_types.get(i) {
                                     // Check if we need to convert the argument
