@@ -154,3 +154,7 @@ mod dict_methods_test;
 // Include the dictionary comprehension tests
 #[path = "more_tests/compiler/dict_comprehension_test.rs"]
 mod dict_comprehension_test;
+
+// Include the dictionary membership tests
+#[path = "more_tests/compiler/dict_membership_test.rs"]
+mod dict_membership_test;

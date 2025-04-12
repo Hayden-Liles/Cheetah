@@ -3652,8 +3652,86 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
 
         // Special cases for 'in' and 'not in' operators
         if matches!(op, CmpOperator::In) || matches!(op, CmpOperator::NotIn) {
-            // These would require runtime support functions for collections
-            return Err(format!("'in' operator not yet implemented for types {:?} and {:?}", left_type, right_type));
+            match right_type {
+                // Dictionary membership testing
+                Type::Dict(key_type, _) => {
+                    // Check if the left type is compatible with the dictionary key type
+                    if !left_type.can_coerce_to(key_type) {
+                        return Err(format!("Type mismatch for 'in' operator: {:?} is not compatible with dictionary key type {:?}", left_type, key_type));
+                    }
+
+                    // Get the dict_contains function
+                    let dict_contains_fn = match self.module.get_function("dict_contains") {
+                        Some(f) => f,
+                        None => return Err("dict_contains function not found".to_string()),
+                    };
+
+                    // Convert the key to a pointer if needed
+                    let key_ptr = if crate::compiler::types::is_reference_type(left_type) {
+                        // For reference types, use the pointer directly
+                        if left.is_pointer_value() {
+                            left.into_pointer_value()
+                        } else {
+                            return Err(format!("Expected pointer value for key of type {:?}", left_type));
+                        }
+                    } else {
+                        // For non-reference types, we need to allocate memory and store the value
+                        let key_alloca = self.builder.build_alloca(
+                            left.get_type(),
+                            "dict_key_temp"
+                        ).unwrap();
+                        self.builder.build_store(key_alloca, left).unwrap();
+                        key_alloca
+                    };
+
+                    // Call dict_contains to check if the key exists in the dictionary
+                    let call_site_value = self.builder.build_call(
+                        dict_contains_fn,
+                        &[
+                            right.into_pointer_value().into(),
+                            key_ptr.into(),
+                        ],
+                        "dict_contains_result"
+                    ).unwrap();
+
+                    // Get the result as a boolean value
+                    let contains_result = call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to get result from dict_contains".to_string())?;
+
+                    // Convert the i8 result to a boolean
+                    let contains_bool = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        contains_result.into_int_value(),
+                        self.llvm_context.i8_type().const_int(0, false),
+                        "contains_bool"
+                    ).unwrap();
+
+                    // If it's a 'not in' operator, negate the result
+                    let result = if matches!(op, CmpOperator::NotIn) {
+                        self.builder.build_not(contains_bool, "not_contains_bool").unwrap()
+                    } else {
+                        contains_bool
+                    };
+
+                    return Ok((result.into(), Type::Bool));
+                },
+                // List membership testing (already implemented)
+                Type::List(_) => {
+                    // Use the existing list_contains function
+                    // This is a placeholder - implement list membership testing if needed
+                    return Err(format!("'in' operator not yet implemented for lists"));
+                },
+                // String membership testing (already implemented)
+                Type::String => {
+                    // Use the existing string_contains function
+                    // This is a placeholder - implement string membership testing if needed
+                    return Err(format!("'in' operator not yet implemented for strings"));
+                },
+                // Other types
+                _ => {
+                    return Err(format!("'in' operator not supported for type {:?}", right_type));
+                }
+            }
         }
 
         // For regular comparisons, get the common type
