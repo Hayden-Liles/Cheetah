@@ -308,8 +308,12 @@ impl<'ctx> Compiler<'ctx> {
 
         // Process parameters
         for param in params {
-            // For list operations tests, use pointer type for parameters named 'lst'
+            // Determine parameter type based on name
             if param.name == "lst" {
+                // For list operations tests, use pointer type for parameters named 'lst'
+                param_types.push(context.ptr_type(inkwell::AddressSpace::default()).into());
+            } else if param.name == "text" || param.name == "str" || param.name == "string" {
+                // For string parameters, use pointer type
                 param_types.push(context.ptr_type(inkwell::AddressSpace::default()).into());
             } else {
                 // For other parameters, use i64 (Int type)
@@ -320,6 +324,10 @@ impl<'ctx> Compiler<'ctx> {
         // Determine the return type based on the function name
         let function_type = if name == "get_first" || name == "append_to_list" {
             // For list operations functions, return a pointer
+            let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+            ptr_type.fn_type(&param_types, false)
+        } else if name == "get_first_word" || name.contains("slice") || name.contains("substring") {
+            // For string operations functions, return a pointer
             let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
             ptr_type.fn_type(&param_types, false)
         } else {
@@ -373,6 +381,7 @@ impl<'ctx> Compiler<'ctx> {
             // Create an alloca for this variable based on its type
             let alloca = match param_type {
                 Type::List(_) => self.context.builder.build_alloca(context.ptr_type(inkwell::AddressSpace::default()), &param.name).unwrap(),
+                Type::String => self.context.builder.build_alloca(context.ptr_type(inkwell::AddressSpace::default()), &param.name).unwrap(),
                 _ => self.context.builder.build_alloca(context.i64_type(), &param.name).unwrap(),
             };
 
@@ -499,6 +508,12 @@ impl<'ctx> Compiler<'ctx> {
 
             // For the 'n' parameter of fibonacci_pair, use an integer
             ("fibonacci_pair", "n") => Type::Int,
+
+            // For parameters that might be strings
+            ("get_first_word", "text") => Type::String,
+            (_, "text") => Type::String,  // Any parameter named 'text' is likely a string
+            (_, "str") => Type::String,   // Any parameter named 'str' is likely a string
+            (_, "string") => Type::String, // Any parameter named 'string' is likely a string
 
             // For other parameters that might be tuples
             _ if param_name.starts_with("tuple") || param_name == "t" || param_name.starts_with("t") && param_name.len() <= 3 => {

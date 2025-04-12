@@ -159,8 +159,5 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 
 ## Notes and Ideas
 
-- Consider implementing a JIT compilation option
-- Explore WASM as a target platform
-- Look into Python 3.10+ features to support
 - Research performance improvements for numeric operations
-
+- Explore Symbol from JS and how it could be used in Cheetah.
