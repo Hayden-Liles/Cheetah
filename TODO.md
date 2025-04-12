@@ -43,7 +43,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Implement dictionary methods (keys, values, items)
    - [x] Add support for dictionary comprehensions
    - [x] Implement membership testing with 'in' operator for dictionaries
-   - [~] Improve dictionary integration with functions (in progress)
+   - [x] Improve dictionary integration with functions
 
 ### Completed Core Language Features
 3. [x] Implement basic tuple support (creation, access)
@@ -112,7 +112,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Implement dictionary methods (keys, values, items)
    - [x] Add support for dictionary comprehensions
    - [x] Implement membership testing with 'in' operator for dictionaries
-   - [~] Improve dictionary integration with functions (in progress)
+   - [x] Improve dictionary integration with functions
 11. [ ] Implement a proper closure environment solution for nonlocal variables
 
 ### Essential Built-ins
