@@ -118,3 +118,7 @@ mod slice_operations_test;
 // Include the string slice operations tests
 #[path = "more_tests/compiler/string_slice_operations_test.rs"]
 mod string_slice_operations_test;
+
+// Include the len function tests
+#[path = "more_tests/compiler/len_function_test.rs"]
+mod len_function_test;

@@ -8,6 +8,7 @@ pub mod runtime;
 pub mod scope;
 pub mod closure;
 pub mod builtins;
+pub mod len_call;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;
