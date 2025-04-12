@@ -234,7 +234,7 @@ result = level1()
 }
 
 #[test]
-#[ignore = "LLVM dominance validation issues with nonlocal variables and shadowing"]
+#[ignore = "Nonlocal variables with shadowing have dominance issues"]
 fn test_nonlocal_with_shadowing() {
     // Test nonlocal with a local variable that shadows it
     let source = r#"
@@ -264,7 +264,7 @@ result = outer()
 }
 
 #[test]
-#[ignore = "LLVM dominance validation issues with accessing variables across function boundaries"]
+#[ignore = "Simplified shadowing with nonlocal variables has dominance issues"]
 fn test_simplified_shadowing() {
     // A simplified version of the shadowing test that should work
     let source = r#"

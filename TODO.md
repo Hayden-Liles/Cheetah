@@ -38,13 +38,37 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 ## Current Focus (High Priority)
 
 ### Core Language Features
-1. [ ] Implement a proper closure environment solution for nonlocal variables
-2. [x] Enhance dictionary support further
+1. [x] Fix LLVM validation issues with nonlocal variables
+   - [x] Implement a basic closure environment solution for nonlocal variables
+   - [x] Create a closure environment structure to store nonlocal variables
+   - [x] Pass the environment pointer to nested functions
+   - [x] Update nonlocal variables in the environment
+   - [x] Load nonlocal variables from the environment
+   - [x] Pass nonlocal variables as parameters to nested functions
+   - [x] Add nonlocal proxy system to avoid dominance validation issues
+   - [x] Fix LLVM dominance validation issues with nonlocal variables in nested functions
+   - [x] Fix LLVM validation issues with nonlocal variables in simple cases
+   - [x] Fix LLVM validation issues with nonlocal variables in complex cases (loops, conditionals)
+   - [ ] Fix LLVM validation issues with nonlocal variables in shadowing cases
+   - [ ] Implement proper handling of nonlocal variables across multiple levels of nesting
+2. [ ] Implement exception handling (try/except/finally)
+   - [ ] Add basic exception raising mechanism
+   - [ ] Implement try/except blocks
+   - [ ] Add support for finally blocks
+   - [ ] Implement exception propagation
+3. [ ] Add support for modules and imports
+   - [ ] Implement basic module loading
+   - [ ] Support for import statements
+   - [ ] Handle module-level variables and functions
+   - [ ] Support relative imports
+
+### Completed High Priority Features
+4. [x] Enhance dictionary support further
    - [x] Implement dictionary methods (keys, values, items)
    - [x] Add support for dictionary comprehensions
    - [x] Implement membership testing with 'in' operator for dictionaries
    - [x] Improve dictionary integration with functions
-3. [x] Fix remaining dictionary integration issues
+5. [x] Fix remaining dictionary integration issues
    - [x] Fix type mismatch issues with dictionary function parameters
    - [x] Resolve bitcast issues with dictionary methods in functions
    - [x] Improve type inference for nested dictionaries
@@ -123,7 +147,12 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Resolve bitcast issues with dictionary methods in functions
    - [x] Improve type inference for nested dictionaries
    - [x] Enhance typechecker to better handle dictionary indexing
-12. [ ] Implement a proper closure environment solution for nonlocal variables
+12. [x] Implement a basic closure environment solution for nonlocal variables
+    - [x] Create a closure environment structure to store nonlocal variables
+    - [x] Pass the environment pointer to nested functions
+    - [x] Update nonlocal variables in the environment
+    - [x] Load nonlocal variables from the environment
+    - [x] Pass nonlocal variables as parameters to nested functions
 
 ### Essential Built-ins
 13. [x] Support for the range() built-in function
@@ -141,16 +170,21 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 
 ### Testing Improvements
 16. [x] Add comprehensive tests for dictionary operations
-17. [ ] Add more comprehensive test cases for new features
-18. [ ] Add tests for edge cases in type conversions
-19. [ ] Create a test suite for comparing compiled output with CPython execution
-20. [ ] Add tests for error handling and recovery
+17. [x] Fix failing tests for nonlocal variables in nested functions
+    - [x] Resolve LLVM dominance validation issues in simple tests
+    - [x] Add test cases for basic nonlocal scenarios
+    - [x] Ensure basic nonlocal variable tests pass
+    - [ ] Fix complex nonlocal variable tests (loops, conditionals, shadowing)
+    - [ ] Add more test cases for complex nonlocal scenarios
+18. [ ] Add more comprehensive test cases for new features
+19. [ ] Add tests for edge cases in type conversions
+20. [ ] Create a test suite for comparing compiled output with CPython execution
+21. [ ] Add tests for error handling and recovery
 
 ## Next Steps (Medium Priority)
 
 ### Compiler Enhancements
-- [ ] Implement exception handling (try/except/finally)
-- [ ] Add support for modules and imports
+- [ ] Implement advanced class features
 - [ ] Support for classes and objects (basic implementation)
 - [ ] Add support for f-strings (formatted string literals)
 - [ ] Implement context managers (with statement)
@@ -209,3 +243,6 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 
 - Research performance improvements for numeric operations
 - Explore Symbol from JS and how it could be used in Cheetah.
+- For nonlocal variables, consider implementing a more robust solution using LLVM's phi nodes to handle dominance validation issues
+- Research how other compilers handle closure environments and variable capture
+- Consider implementing a static analysis pass to identify all nonlocal variables before code generation

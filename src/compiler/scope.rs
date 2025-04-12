@@ -338,8 +338,39 @@ impl<'ctx> ScopeStack<'ctx> {
                 // Start from the current scope's index - 1 (the outer scope)
                 let current_index = self.scopes.len() - 1;
 
-                // Look in all outer scopes
-                for i in (0..current_index).rev() {
+                // First check the immediate outer scope
+                if current_index > 0 {
+                    let parent_scope_index = current_index - 1;
+
+                    // Check if the variable exists directly in the parent scope
+                    if let Some(ptr) = self.scopes[parent_scope_index].get_variable(name) {
+                        return Some(ptr);
+                    }
+
+                    // If not found directly, check if it's a nonlocal variable in the parent scope too
+                    if self.scopes[parent_scope_index].is_nonlocal(name) {
+                        // Check if there's a mapping for this nonlocal variable in the parent scope
+                        if let Some(parent_unique_name) = self.scopes[parent_scope_index].get_nonlocal_mapping(name) {
+                            // Use the unique name to get the variable
+                            if let Some(ptr) = self.scopes[parent_scope_index].get_variable(parent_unique_name) {
+                                return Some(ptr);
+                            }
+                        }
+
+                        // If not found through mapping, try the parent scope's nonlocal lookup
+                        // This recursively handles multiple levels of nonlocal declarations
+                        // Instead of creating a temporary ScopeStack, we'll just check the parent's parent directly
+                        if parent_scope_index > 0 {
+                            let grandparent_scope_index = parent_scope_index - 1;
+                            if let Some(ptr) = self.scopes[grandparent_scope_index].get_variable(name) {
+                                return Some(ptr);
+                            }
+                        }
+                    }
+                }
+
+                // If still not found, look in all outer scopes
+                for i in (0..current_index-1).rev() {
                     if let Some(ptr) = self.scopes[i].get_variable(name) {
                         return Some(ptr);
                     }

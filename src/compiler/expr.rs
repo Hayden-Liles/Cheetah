@@ -189,8 +189,37 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     false
                 };
 
-                // If the variable is nonlocal, check if it has a unique name mapping
+                // If the variable is nonlocal, first try to use phi nodes for proper dominance validation
                 if is_nonlocal {
+                    // Check if we have a current environment
+                    if let Some(env_name) = &self.current_environment {
+                        if let Some(env) = self.get_closure_environment(env_name) {
+                            // Try to access the nonlocal variable using phi nodes
+                            // First, determine the variable type
+                            let var_type = if let Some(current_scope) = self.scope_stack.current_scope() {
+                                if let Some(unique_name) = current_scope.get_nonlocal_mapping(id) {
+                                    current_scope.get_type(unique_name).cloned()
+                                } else {
+                                    self.lookup_variable_type(id).cloned()
+                                }
+                            } else {
+                                self.lookup_variable_type(id).cloned()
+                            };
+
+                            if let Some(var_type) = var_type {
+                                // Get the LLVM type for the variable
+                                let llvm_type = self.get_llvm_type(&var_type);
+
+                                // Try to access the nonlocal variable using phi nodes
+                                if let Some(value) = env.access_nonlocal_with_phi(&self.builder, id, llvm_type, self.llvm_context) {
+                                    println!("Loaded nonlocal variable '{}' using phi nodes", id);
+                                    return Ok((value, var_type));
+                                }
+                            }
+                        }
+                    }
+
+                    // Fall back to the old method if phi nodes didn't work
                     if let Some(current_scope) = self.scope_stack.current_scope() {
                         if let Some(unique_name) = current_scope.get_nonlocal_mapping(id) {
                             // Use the unique name instead of the original name
@@ -200,65 +229,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     // Get the LLVM type for the variable
                                     let llvm_type = self.get_llvm_type(var_type);
 
-                                    // Load the value directly from the global variable
-                                    // Use a unique name for the load instruction to avoid conflicts
+                                    // Load the value from the local variable
                                     let value = self.builder.build_load(llvm_type, *ptr, &format!("load_{}", unique_name)).unwrap();
+                                    println!("Loaded nonlocal variable '{}' using unique name '{}'", id, unique_name);
+
                                     return Ok((value, var_type.clone()));
                                 }
                             }
-                        }
-
-                        // If we didn't find a mapping, check if there's a global variable with a name that matches this variable
-                        // Try different formats of the global name (with and without function prefix)
-                        let simple_global_name = format!("__nonlocal_{}", id);
-
-                        // Get the current function name if available
-                        let current_function = if let Some(func) = self.builder.get_insert_block().unwrap().get_parent() {
-                            func.get_name().to_string_lossy().to_string()
-                        } else {
-                            "".to_string()
-                        };
-
-                        // Try to find the global variable with different name patterns
-                        let mut global_var = None;
-
-                        // First try with the current function name
-                        if !current_function.is_empty() {
-                            let func_global_name = format!("__nonlocal_{}_{}", current_function.replace('.', "_"), id);
-                            if let Some(var) = self.module.get_global(&func_global_name) {
-                                global_var = Some(var);
-                            }
-
-                            // Try with parent function names if this is a nested function
-                            if global_var.is_none() && current_function.contains('.') {
-                                let parts: Vec<&str> = current_function.split('.').collect();
-                                for i in 1..parts.len() {
-                                    let parent_name = parts[..i].join(".");
-                                    let parent_global_name = format!("__nonlocal_{}_{}", parent_name.replace('.', "_"), id);
-                                    if let Some(var) = self.module.get_global(&parent_global_name) {
-                                        global_var = Some(var);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Finally try with the simple name
-                        if global_var.is_none() {
-                            if let Some(var) = self.module.get_global(&simple_global_name) {
-                                global_var = Some(var);
-                            }
-                        }
-
-                        if let Some(global_var) = global_var {
-                            // Get the variable type (assume it's an integer for now)
-                            let var_type = Type::Int;
-                            let llvm_type = self.get_llvm_type(&var_type);
-
-                            // Load the value from the global variable
-                            let value = self.builder.build_load(llvm_type, global_var.as_pointer_value(), &format!("load_{}_global", id)).unwrap();
-                            println!("Loaded nonlocal variable '{}' from global variable", id);
-                            return Ok((value, var_type));
                         }
                     }
                 }
@@ -804,68 +781,140 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 }
                             }
 
-                            // If this is a nested function, add the environment pointer as the last argument
+                            // If this is a nested function, add nonlocal variables and the environment pointer as arguments
                             if found_function {
-                                // For now, we'll just pass a null pointer as the environment
-                                // In a full implementation, we would create and pass the actual environment
-                                let null_ptr = self.llvm_context.ptr_type(inkwell::AddressSpace::default())
-                                    .const_null().into();
-                                call_args.push(null_ptr);
+                                // Get the nonlocal variables for this function
+                                let mut nonlocal_vars = if let Some(env) = self.get_closure_environment(&qualified_name) {
+                                    env.nonlocal_params.clone()
+                                } else {
+                                    Vec::new()
+                                };
 
-                                // Update global variables for nonlocal variables before calling the nested function
-                                // This ensures that the nested function has access to the current values of nonlocal variables
-                                let parts: Vec<&str> = qualified_name.split('.').collect();
-                                if parts.len() >= 2 {
-                                    // Find all variables in the current scope
-                                    if let Some(current_scope) = self.scope_stack.current_scope() {
-                                        for (var_name, var_ptr) in &current_scope.variables {
-                                            // Check if there's a global variable with a name that matches this variable
-                                            // Try different formats of the global name (with and without function prefix)
-                                            let simple_global_name = format!("__nonlocal_{}", var_name);
-                                            let function_parts: Vec<&str> = qualified_name.split('.').collect();
+                                println!("Nonlocal variables for function {}: {:?}", qualified_name, nonlocal_vars);
 
-                                            // Try to find the global variable with different name patterns
-                                            let mut global_var = None;
+                                // Get the function to check its parameter count
+                                if let Some(func) = self.module.get_function(&qualified_name) {
+                                    let param_count = func.count_params();
+                                    println!("Function {} has {} parameters in LLVM IR", qualified_name, param_count);
+                                }
 
-                                            // First try with the full function name
-                                            let full_global_name = format!("__nonlocal_{}_{}", qualified_name.replace('.', "_"), var_name);
-                                            if let Some(var) = self.module.get_global(&full_global_name) {
-                                                global_var = Some(var);
+                                // Check if the function signature matches what we expect
+                                if let Some(func) = self.module.get_function(&qualified_name) {
+                                    let param_count = func.count_params();
+                                    let expected_param_count = args.len() + nonlocal_vars.len() + 1; // +1 for env ptr
+
+                                    if param_count != expected_param_count as u32 {
+                                        println!("WARNING: Function {} has {} parameters but we're trying to pass {} arguments",
+                                                 qualified_name, param_count, expected_param_count);
+
+                                        // If there's a mismatch, we need to adjust our call
+                                        if param_count < expected_param_count as u32 {
+                                            // The function has fewer parameters than we're trying to pass
+                                            println!("Adjusting call to match function signature - using only {} arguments", param_count);
+
+                                            // Calculate how many nonlocal variables we can pass
+                                            let available_nonlocal_slots = param_count as usize - args.len() - 1; // -1 for env ptr
+
+                                            // If we can't pass any nonlocal variables, clear the list
+                                            if available_nonlocal_slots <= 0 {
+                                                println!("No slots available for nonlocal variables, skipping them");
+                                                nonlocal_vars.clear();
+                                            } else if available_nonlocal_slots < nonlocal_vars.len() {
+                                                // If we can only pass some nonlocal variables, truncate the list
+                                                println!("Only {} slots available for nonlocal variables, truncating list", available_nonlocal_slots);
+                                                nonlocal_vars.truncate(available_nonlocal_slots);
                                             }
+                                        } else if param_count > expected_param_count as u32 {
+                                            // The function has more parameters than we're trying to pass
+                                            // This shouldn't happen, but we'll handle it anyway
+                                            println!("Function has more parameters than we're trying to pass, this is unexpected");
+                                        }
+                                    }
+                                }
 
-                                            // Then try with the parent function name
-                                            if global_var.is_none() && function_parts.len() >= 2 {
-                                                let parent_name = function_parts[function_parts.len() - 2];
-                                                let parent_global_name = format!("__nonlocal_{}_{}", parent_name, var_name);
-                                                if let Some(var) = self.module.get_global(&parent_global_name) {
-                                                    global_var = Some(var);
+                                // For each nonlocal variable, pass its current value as an argument
+                                for var_name in &nonlocal_vars {
+                                    // Try to find the variable in the current scope
+                                    let var_value = if let Some(current_scope) = self.scope_stack.current_scope() {
+                                        if let Some(unique_name) = current_scope.get_nonlocal_mapping(var_name) {
+                                            // Use the unique name to get the variable
+                                            if let Some(ptr) = current_scope.get_variable(unique_name) {
+                                                // Get the variable type
+                                                if let Some(var_type) = current_scope.get_type(unique_name) {
+                                                    // Get the LLVM type for the variable
+                                                    let llvm_type = self.get_llvm_type(var_type);
+
+                                                    // Load the value from the variable
+                                                    let value = self.builder.build_load(llvm_type, *ptr, &format!("load_{}_for_call", var_name)).unwrap();
+                                                    Some(value)
+                                                } else {
+                                                    None
                                                 }
+                                            } else {
+                                                None
                                             }
-
-                                            // Finally try with the simple name
-                                            if global_var.is_none() {
-                                                if let Some(var) = self.module.get_global(&simple_global_name) {
-                                                    global_var = Some(var);
-                                                }
-                                            }
-
-                                            if let Some(global_var) = global_var {
+                                        } else {
+                                            // Try to find the variable directly
+                                            if let Some(ptr) = current_scope.get_variable(var_name) {
                                                 // Get the variable type
                                                 if let Some(var_type) = current_scope.get_type(var_name) {
                                                     // Get the LLVM type for the variable
                                                     let llvm_type = self.get_llvm_type(var_type);
 
-                                                    // Load the current value of the variable
-                                                    let value = self.builder.build_load(llvm_type, *var_ptr, &format!("load_{}_before_call", var_name)).unwrap();
-
-                                                    // Store the current value to the global variable
-                                                    self.builder.build_store(global_var.as_pointer_value(), value).unwrap();
-                                                    println!("Updated global variable before calling nested function");
+                                                    // Load the value from the variable
+                                                    let value = self.builder.build_load(llvm_type, *ptr, &format!("load_{}_for_call", var_name)).unwrap();
+                                                    Some(value)
+                                                } else {
+                                                    None
                                                 }
+                                            } else {
+                                                None
                                             }
                                         }
+                                    } else {
+                                        None
+                                    };
+
+                                    // Add the variable value as an argument
+                                    if let Some(value) = var_value {
+                                        call_args.push(value.into());
+                                        println!("Passing nonlocal variable '{}' to nested function: {}", var_name, qualified_name);
+                                    } else {
+                                        // If we couldn't find the variable, pass a default value
+                                        let default_value = self.llvm_context.i64_type().const_zero().into();
+                                        call_args.push(default_value);
+                                        println!("Passing default value for nonlocal variable '{}' to nested function: {}", var_name, qualified_name);
                                     }
                                 }
+
+                                // Debug print the number of arguments
+                                println!("Function call to {} has {} regular arguments and {} nonlocal arguments",
+                                         qualified_name, args.len(), nonlocal_vars.len());
+
+                                // Get the environment pointer from the current function's environment
+                                let env_ptr = if let Some(env_name) = &self.current_environment {
+                                    if let Some(env) = self.get_closure_environment(env_name) {
+                                        if let Some(ptr) = env.env_ptr {
+                                            // Use the current function's environment
+                                            ptr
+                                        } else {
+                                            // Fall back to null pointer if no environment is available
+                                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null()
+                                        }
+                                    } else {
+                                        // Fall back to null pointer if no environment is available
+                                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null()
+                                    }
+                                } else {
+                                    // Fall back to null pointer if no environment is available
+                                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null()
+                                };
+
+                                // Pass the environment pointer as the last argument
+                                call_args.push(env_ptr.into());
+                                println!("Passing closure environment to nested function: {}", qualified_name);
+
+                                // We don't need to update global variables anymore since we're using the closure environment
                             }
 
                             // Build the call instruction
@@ -4068,69 +4117,136 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                     false
                 };
 
-                // If the variable is nonlocal, check if it has a unique name mapping
+                // If the variable is nonlocal, first try to use our proxy system
                 if is_nonlocal {
+                    // Check if we have a current environment
+                    if let Some(env_name) = &self.current_environment {
+                        if let Some(env) = self.get_closure_environment(env_name) {
+                            // Check if we have a proxy for this nonlocal variable
+                            if let Some(proxy_ptr) = env.get_nonlocal_proxy(id) {
+                                // Store the value in the proxy
+                                self.builder.build_store(*proxy_ptr, value).unwrap();
+                                println!("Assigned to nonlocal variable '{}' using proxy in environment {}", id, env_name);
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    // Fall back to the old method if we don't have a proxy
                     if let Some(current_scope) = self.scope_stack.current_scope() {
                         if let Some(unique_name) = current_scope.get_nonlocal_mapping(id) {
                             // Use the unique name instead of the original name
                             if let Some(ptr) = current_scope.get_variable(unique_name) {
-                                // Store the value directly to the global variable
-                                // Use a unique name for the store instruction to avoid conflicts
+                                // Store the value in the local variable
                                 self.builder.build_store(*ptr, value).unwrap();
                                 println!("Assigned to nonlocal variable '{}' using unique name '{}'", id, unique_name);
                                 return Ok(());
                             }
                         }
+                    }
 
-                        // If we didn't find a mapping, check if there's a global variable with a name that matches this variable
-                        // Try different formats of the global name (with and without function prefix)
-                        let simple_global_name = format!("__nonlocal_{}", id);
+                    // If we didn't find a mapping but we're in a nested function with an environment,
+                    // try to create a local variable for the nonlocal variable
+                    if let Some(env_name) = &self.current_environment {
+                        // Get all the data we need from the environment first
+                        let mut env_data = None;
 
-                        // Get the current function name if available
-                        let current_function = if let Some(func) = self.builder.get_insert_block().unwrap().get_parent() {
-                            func.get_name().to_string_lossy().to_string()
-                        } else {
-                            "".to_string()
-                        };
-
-                        // Try to find the global variable with different name patterns
-                        let mut global_var = None;
-
-                        // First try with the current function name
-                        if !current_function.is_empty() {
-                            let func_global_name = format!("__nonlocal_{}_{}", current_function.replace('.', "_"), id);
-                            if let Some(var) = self.module.get_global(&func_global_name) {
-                                global_var = Some(var);
-                            }
-
-                            // Try with parent function names if this is a nested function
-                            if global_var.is_none() && current_function.contains('.') {
-                                let parts: Vec<&str> = current_function.split('.').collect();
-                                for i in 1..parts.len() {
-                                    let parent_name = parts[..i].join(".");
-                                    let parent_global_name = format!("__nonlocal_{}_{}", parent_name.replace('.', "_"), id);
-                                    if let Some(var) = self.module.get_global(&parent_global_name) {
-                                        global_var = Some(var);
-                                        break;
+                        if let Some(env) = self.get_closure_environment(env_name) {
+                            if let Some(index) = env.get_index(id) {
+                                if let Some(var_type) = env.get_type(id) {
+                                    if let Some(env_ptr) = env.env_ptr {
+                                        if let Some(struct_type) = env.env_type {
+                                            // Collect all the data we need
+                                            env_data = Some((index, var_type.clone(), env_ptr, struct_type));
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        // Finally try with the simple name
-                        if global_var.is_none() {
-                            if let Some(var) = self.module.get_global(&simple_global_name) {
-                                global_var = Some(var);
-                            }
-                        }
+                        // Now process the data if we found it
+                        if let Some((index, var_type, env_ptr, struct_type)) = env_data {
+                            // Create a unique name for the nonlocal variable
+                            let unique_name = format!("__nonlocal_{}_{}", env_name.replace('.', "_"), id);
 
-                        if let Some(global_var) = global_var {
-                            // Store the value directly to the global variable
-                            self.builder.build_store(global_var.as_pointer_value(), value).unwrap();
-                            println!("Assigned to nonlocal variable '{}' using global variable", id);
+                            // Allocate space for the variable
+                            let llvm_type = self.get_llvm_type(&var_type);
+                            let ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+
+                            // Store the value in the local variable
+                            self.builder.build_store(ptr, value).unwrap();
+
+                            // Add the variable to the current scope with the unique name
+                            if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                                current_scope.add_variable(unique_name.clone(), ptr, var_type.clone());
+                                current_scope.add_nonlocal_mapping(id.clone(), unique_name.clone());
+                                println!("Created local variable for nonlocal variable '{}' with unique name '{}'", id, unique_name);
+                            }
+
+                            // Get a pointer to the field in the environment struct
+                            let field_ptr = self.builder.build_struct_gep(
+                                struct_type,
+                                env_ptr,
+                                index,
+                                &format!("env_{}_ptr", id)
+                            ).unwrap();
+
+                            // Store the value in the environment
+                            self.builder.build_store(field_ptr, value).unwrap();
+                            println!("Updated nonlocal variable '{}' in closure environment", id);
+
                             return Ok(());
                         }
                     }
+                }
+
+                // If we didn't find a mapping, check if there's a global variable with a name that matches this variable
+                // Try different formats of the global name (with and without function prefix)
+                let simple_global_name = format!("__nonlocal_{}", id);
+
+                // Get the current function name if available
+                let current_function = if let Some(func) = self.builder.get_insert_block().unwrap().get_parent() {
+                    func.get_name().to_string_lossy().to_string()
+                } else {
+                    "".to_string()
+                };
+
+                // Try to find the global variable with different name patterns
+                let mut global_var = None;
+
+                // First try with the current function name
+                if !current_function.is_empty() {
+                    let func_global_name = format!("__nonlocal_{}_{}", current_function.replace('.', "_"), id);
+                    if let Some(var) = self.module.get_global(&func_global_name) {
+                        global_var = Some(var);
+                    }
+
+                    // Try with parent function names if this is a nested function
+                    if global_var.is_none() && current_function.contains('.') {
+                        let parts: Vec<&str> = current_function.split('.').collect();
+                        for i in 1..parts.len() {
+                            let parent_name = parts[..i].join(".");
+                            let parent_global_name = format!("__nonlocal_{}_{}", parent_name.replace('.', "_"), id);
+                            if let Some(var) = self.module.get_global(&parent_global_name) {
+                                global_var = Some(var);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Finally try with the simple name
+                if global_var.is_none() {
+                    if let Some(var) = self.module.get_global(&simple_global_name) {
+                        global_var = Some(var);
+                    }
+                }
+
+                if let Some(global_var) = global_var {
+                    // Store the value directly to the global variable
+                    self.builder.build_store(global_var.as_pointer_value(), value).unwrap();
+                    println!("Assigned to nonlocal variable '{}' using global variable", id);
+                    return Ok(());
                 }
 
                 if is_global {

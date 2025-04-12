@@ -633,6 +633,40 @@ impl<'ctx> CompilationContext<'ctx> {
         // Create a closure environment for this function
         self.create_closure_environment(name);
 
+        // Find nonlocal variables that need to be passed to the function
+        let mut nonlocal_vars = Vec::new();
+
+        // If this is a nested function (contains a dot in the name)
+        if name.contains('.') {
+            // Get the current scope's nonlocal variables
+            if let Some(current_scope) = self.scope_stack.current_scope() {
+                nonlocal_vars = current_scope.nonlocal_vars.clone();
+            }
+
+            // Also check if there are any nonlocal variables already registered for this function
+            if let Some(env) = self.get_closure_environment(name) {
+                for var_name in &env.nonlocal_params {
+                    if !nonlocal_vars.contains(var_name) {
+                        nonlocal_vars.push(var_name.clone());
+                    }
+                }
+            }
+        }
+
+        // Debug print the nonlocal variables
+        println!("Nonlocal variables for function {}: {:?}", name, nonlocal_vars);
+
+        // Add nonlocal variables as parameters
+        for (i, var_name) in nonlocal_vars.iter().enumerate() {
+            // For now, all nonlocal variables are i64 (Int type)
+            param_types.push(context.i64_type().into());
+            println!("Adding nonlocal parameter {} ({}) to function {}", i, var_name, name);
+        }
+
+        // Debug print
+        println!("Function {} has {} regular parameters and {} nonlocal parameters",
+                 name, params.len(), nonlocal_vars.len());
+
         // Add an extra parameter for the closure environment (if needed)
         // For now, we'll always add it, but in a more optimized implementation,
         // we would only add it if the function captures variables
@@ -648,6 +682,13 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // Register the function in our context
         self.functions.insert(name.to_string(), function);
+
+        // Store the nonlocal variables for this function
+        if !nonlocal_vars.is_empty() {
+            if let Some(env) = self.get_closure_environment_mut(name) {
+                env.nonlocal_params = nonlocal_vars;
+            }
+        }
 
         Ok(())
     }
@@ -708,8 +749,51 @@ impl<'ctx> CompilationContext<'ctx> {
             self.register_variable(param.name.clone(), Type::Int);
         }
 
+        // Get the nonlocal variables for this function
+        let nonlocal_vars = if let Some(env) = self.get_closure_environment(name) {
+            env.nonlocal_params.clone()
+        } else {
+            Vec::new()
+        };
+
+        // Process nonlocal variables as parameters
+        let mut nonlocal_param_map = HashMap::new();
+        for (i, var_name) in nonlocal_vars.iter().enumerate() {
+            // Get the parameter value
+            let param_value = function.get_nth_param((params.len() + i) as u32).unwrap();
+
+            // Create an alloca for this variable
+            let unique_name = format!("__nonlocal_{}_{}", name.replace('.', "_"), var_name);
+            let alloca = self.builder.build_alloca(context.i64_type(), &unique_name).unwrap();
+
+            // Store the parameter value in the alloca
+            self.builder.build_store(alloca, param_value).unwrap();
+
+            // Add the variable to the current scope with the unique name
+            self.add_variable_to_scope(unique_name.clone(), alloca, Type::Int);
+
+            // Add a mapping from the original name to the unique name
+            if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                current_scope.add_nonlocal_mapping(var_name.clone(), unique_name.clone());
+            }
+
+            // Remember the alloca for this variable
+            nonlocal_param_map.insert(var_name.clone(), alloca);
+
+            println!("Added nonlocal parameter '{}' to function scope with unique name '{}'", var_name, unique_name);
+        }
+
+        // Debug print the function parameters
+        let param_count = function.count_params();
+        println!("Function {} has {} parameters", name, param_count);
+
+        // Debug print the expected parameter count
+        let expected_param_count = params.len() + nonlocal_vars.len() + 1; // +1 for environment pointer
+        println!("Function {} should have {} parameters: {} regular + {} nonlocal + 1 env ptr",
+                 name, expected_param_count, params.len(), nonlocal_vars.len());
+
         // Get the closure environment parameter (last parameter)
-        let env_param = function.get_nth_param(params.len() as u32).unwrap();
+        let env_param = function.get_nth_param((params.len() + nonlocal_vars.len()) as u32).unwrap();
 
         // Create an alloca for the environment pointer
         let env_alloca = self.builder.build_alloca(context.ptr_type(inkwell::AddressSpace::default()), "env_ptr").unwrap();
@@ -720,19 +804,21 @@ impl<'ctx> CompilationContext<'ctx> {
         // Set the current environment
         self.set_current_environment(name.to_string());
 
-        // Pre-process the body to find nonlocal declarations
-        let mut nonlocal_vars = Vec::new();
+        // Pre-process the body to find additional nonlocal declarations
+        let mut additional_nonlocal_vars = Vec::new();
         for stmt in body {
             if let ast::Stmt::Nonlocal { names, .. } = stmt.as_ref() {
                 for name in names {
-                    nonlocal_vars.push(name.clone());
+                    if !nonlocal_vars.contains(name) {
+                        additional_nonlocal_vars.push(name.clone());
+                    }
                 }
             }
         }
 
         // For each nonlocal variable, we need to create a special handling mechanism
         if !nonlocal_vars.is_empty() {
-            // Use a much simpler approach: create a global variable for each nonlocal variable
+            // Add nonlocal variables to the closure environment
             for var_name in &nonlocal_vars {
                 // Declare the variable as nonlocal in the current scope
                 self.scope_stack.declare_nonlocal(var_name.clone());
@@ -752,12 +838,28 @@ impl<'ctx> CompilationContext<'ctx> {
                         found_ptr = Some(*ptr);
                         found_type = self.scope_stack.scopes[parent_scope_index].get_type(var_name).cloned();
                         println!("Found nonlocal variable '{}' in immediate outer scope {}", var_name, parent_scope_index);
+                    } else {
+                        // If not found in the immediate outer scope, check if it's a nonlocal variable there too
+                        // This handles nested nonlocal declarations (e.g., level3 -> level2 -> level1)
+                        if self.scope_stack.scopes[parent_scope_index].is_nonlocal(var_name) {
+                            // Check if there's a mapping for this nonlocal variable in the parent scope
+                            if let Some(parent_unique_name) = self.scope_stack.scopes[parent_scope_index].get_nonlocal_mapping(var_name) {
+                                // Use the unique name to get the variable
+                                if let Some(ptr) = self.scope_stack.scopes[parent_scope_index].get_variable(parent_unique_name) {
+                                    found_ptr = Some(*ptr);
+                                    found_type = self.scope_stack.scopes[parent_scope_index].get_type(parent_unique_name).cloned();
+                                    println!("Found nonlocal variable '{}' using mapping '{}' in parent scope {}",
+                                             var_name, parent_unique_name, parent_scope_index);
+                                }
+                            }
+                        }
                     }
                 }
 
-                // If not found in the immediate outer scope, look in all outer scopes
+                // If still not found, look in all outer scopes
                 if found_ptr.is_none() {
-                    for i in (0..current_index).rev() {
+                    // Look in all outer scopes
+                    for i in (0..current_index-1).rev() {
                         if let Some(ptr) = self.scope_stack.scopes[i].get_variable(var_name) {
                             found_ptr = Some(*ptr);
                             found_type = self.scope_stack.scopes[i].get_type(var_name).cloned();
@@ -767,46 +869,100 @@ impl<'ctx> CompilationContext<'ctx> {
                     }
                 }
 
-                if let (Some(_ptr), Some(var_type)) = (found_ptr, found_type) {
+                if let (Some(ptr), Some(var_type)) = (found_ptr, found_type) {
+                    // Add the variable to the closure environment
+                    self.add_to_current_environment(var_name.clone(), ptr, var_type.clone());
+                    println!("Added nonlocal variable '{}' to closure environment", var_name);
+
                     // Create a unique name for the nonlocal variable that includes the function name
-                    // This ensures that each level of nesting has its own global variable
-                    // Get the current function name
+                    // This ensures that each level of nesting has its own variable
                     let function_name = name;
-                    let global_name = format!("__nonlocal_{}_{}", function_name.replace('.', "_"), var_name);
-
-                    // Get the LLVM type for the variable
-                    let llvm_type = self.get_llvm_type(&var_type);
-
-                    // We'll use a default value (0) for the global variable
-                    // The actual value will be set in the outer function before calling the nested function
-                    let value = self.llvm_context.i64_type().const_zero();
-
-                    // Create a global variable with a default value (0)
-                    let global_var = self.module.add_global(llvm_type.into_int_type(), None, &global_name);
-                    global_var.set_initializer(&self.llvm_context.i64_type().const_zero());
-
-                    // Store the current value to the global variable at the point of definition
-                    // This ensures that the global variable has the correct value when the nested function is called
-                    self.builder.build_store(global_var.as_pointer_value(), value).unwrap();
-
-                    // Get a pointer to the global variable
-                    let global_ptr = global_var.as_pointer_value();
-
-                    // Register the variable type with the unique name
-                    self.register_variable(global_name.clone(), var_type.clone());
-
-                    // Add the variable to the current scope with the global pointer
-                    self.add_variable_to_scope(global_name.clone(), global_ptr, var_type.clone());
-
-                    // Also add it to local_vars for backward compatibility
-                    local_vars.insert(global_name.clone(), global_ptr);
+                    let unique_name = format!("__nonlocal_{}_{}", function_name.replace('.', "_"), var_name);
 
                     // Add a mapping from the original name to the unique name
-                    self.scope_stack.add_nonlocal_mapping(var_name.clone(), global_name);
+                    self.scope_stack.add_nonlocal_mapping(var_name.clone(), unique_name.clone());
 
-                    println!("Created global variable for nonlocal variable '{}'", var_name);
+                    // Allocate a local variable for the nonlocal variable
+                    let llvm_type = self.get_llvm_type(&var_type);
+                    let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+
+                    // Initialize the local variable with a default value to avoid uninitialized memory
+                    let default_value: inkwell::values::BasicValueEnum<'ctx> = match var_type {
+                        Type::Int => self.llvm_context.i64_type().const_int(0, false).into(),
+                        Type::Float => self.llvm_context.f64_type().const_float(0.0).into(),
+                        Type::Bool => self.llvm_context.bool_type().const_int(0, false).into(),
+                        Type::String => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                        _ => self.llvm_context.i64_type().const_int(0, false).into(),
+                    };
+                    self.builder.build_store(local_ptr, default_value).unwrap();
+                    println!("Initialized nonlocal variable '{}' with default value", unique_name);
+
+                    // Add the variable to the current scope with the local pointer
+                    self.add_variable_to_scope(unique_name.clone(), local_ptr, var_type.clone());
+
+                    // Also add it to local_vars for backward compatibility
+                    local_vars.insert(unique_name.clone(), local_ptr);
+
+                    // Register the variable type with the unique name
+                    self.register_variable(unique_name.clone(), var_type.clone());
                 } else {
                     return Err(format!("Nonlocal variable '{}' not found in outer scopes", var_name));
+                }
+            }
+
+            // Now that we've added all nonlocal variables to the environment, allocate it
+            let env_struct_ptr = self.allocate_closure_environment(name)?;
+
+            // Store the environment pointer in the alloca we created earlier
+            self.builder.build_store(env_alloca, env_struct_ptr).unwrap();
+
+            // For each nonlocal variable, we need to create a special handling mechanism
+            for var_name in &nonlocal_vars {
+                // Get the unique name for this nonlocal variable
+                if let Some(current_scope) = self.scope_stack.current_scope() {
+                    if let Some(unique_name) = current_scope.get_nonlocal_mapping(var_name) {
+                        // Get the environment
+                        let env = self.get_closure_environment(name).unwrap();
+
+                        // Get the variable's index in the environment
+                        if let Some(index) = env.get_index(var_name) {
+                            // Get the variable's type
+                            let var_type = env.get_type(var_name).unwrap();
+
+                            // Get the environment struct type
+                            let struct_type = env.env_type.unwrap();
+
+                            // Get a pointer to the field in the environment struct
+                            let _field_ptr = self.builder.build_struct_gep(
+                                struct_type,
+                                env_struct_ptr,
+                                index,
+                                &format!("env_{}_ptr", var_name)
+                            ).unwrap();
+
+                            // For nonlocal variables, we need to be careful about dominance
+                            // Instead of loading from the environment, use a default value
+                            // The actual value will be loaded at the point of use
+                            let default_value: inkwell::values::BasicValueEnum<'ctx> = match var_type {
+                                Type::Int => self.llvm_context.i64_type().const_zero().into(),
+                                Type::Float => self.llvm_context.f64_type().const_zero().into(),
+                                Type::Bool => self.llvm_context.bool_type().const_zero().into(),
+                                Type::String => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                                Type::List(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                                Type::Tuple(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                                Type::Dict(_, _) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                                Type::Set(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                                _ => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                            };
+
+                            // Get the local variable pointer
+                            if let Some(local_ptr) = self.get_variable_ptr(unique_name) {
+                                // Store the default value in the local variable
+                                self.builder.build_store(local_ptr, default_value).unwrap();
+                                println!("Initialized nonlocal variable '{}' with default value", var_name);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -852,6 +1008,122 @@ impl<'ctx> CompilationContext<'ctx> {
     pub fn create_closure_environment(&mut self, function_name: &str) {
         let env = ClosureEnvironment::new(function_name.to_string());
         self.closure_environments.insert(function_name.to_string(), env);
+    }
+
+    /// Allocate a closure environment on the heap
+    pub fn allocate_closure_environment(&mut self, function_name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        // First, check if the environment exists
+        if !self.closure_environments.contains_key(function_name) {
+            return Err(format!("Closure environment for function '{}' not found", function_name));
+        }
+
+        // Finalize the environment to create the struct type
+        let context = self.llvm_context;
+        let is_empty = {
+            let env = self.closure_environments.get_mut(function_name).unwrap();
+            env.finalize(context);
+            env.is_empty()
+        };
+
+        // If the environment is empty, just return a null pointer
+        if is_empty {
+            return Ok(self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null());
+        }
+
+        // Get the environment again to avoid borrow issues
+        let env = self.get_closure_environment(function_name).unwrap();
+
+        // Get the struct type
+        let struct_type = match env.env_type {
+            Some(ty) => ty,
+            None => return Err(format!("Struct type for environment of function '{}' not created", function_name)),
+        };
+
+        // Get or create the malloc function
+        let malloc_fn = self.get_or_create_malloc_function();
+
+        // Calculate the size of the environment struct
+        let size = struct_type.size_of().unwrap();
+
+        // Call malloc to allocate memory for the environment
+        let call = self.builder.build_call(
+            malloc_fn,
+            &[size.into()],
+            "env_malloc"
+        ).unwrap();
+
+        // Get the allocated pointer
+        let env_ptr = call.try_as_basic_value().left().unwrap().into_pointer_value();
+
+        // Cast to the environment struct type
+        let env_struct_ptr = self.builder.build_pointer_cast(
+            env_ptr,
+            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+            "env_struct_ptr"
+        ).unwrap();
+
+        // Collect variable information before updating the environment
+        let mut vars = Vec::new();
+        {
+            let env = self.get_closure_environment(function_name).unwrap();
+            for (name, &index) in &env.var_indices {
+                if let (Some(ptr), Some(ty)) = (env.get_variable(name), env.get_type(name)) {
+                    vars.push((name.clone(), index, *ptr, ty.clone()));
+                }
+            }
+        }
+
+        // Sort variables by index
+        vars.sort_by_key(|&(_, index, _, _)| index);
+
+        // Initialize the environment fields
+        for (var_name, index, _var_ptr, var_type) in vars {
+            // Get a pointer to the field in the environment struct
+            let field_ptr = self.builder.build_struct_gep(
+                struct_type,
+                env_struct_ptr,
+                index,
+                &format!("env_{}_ptr", var_name)
+            ).unwrap();
+
+            // For nonlocal variables, we need to be careful about dominance
+            // Instead of loading from the original variable, use a default value
+            // The actual value will be loaded and stored in the environment at the point of use
+            let default_value: inkwell::values::BasicValueEnum<'ctx> = match var_type {
+                Type::Int => self.llvm_context.i64_type().const_zero().into(),
+                Type::Float => self.llvm_context.f64_type().const_zero().into(),
+                Type::Bool => self.llvm_context.bool_type().const_zero().into(),
+                Type::String => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                Type::List(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                Type::Tuple(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                Type::Dict(_, _) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                Type::Set(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+                _ => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
+            };
+
+            // Store the default value in the environment
+            self.builder.build_store(field_ptr, default_value).unwrap();
+        }
+
+        // Store the environment pointer
+        {
+            let env = match self.get_closure_environment_mut(function_name) {
+                Some(env) => env,
+                None => return Err(format!("Closure environment for function '{}' not found", function_name)),
+            };
+            env.env_ptr = Some(env_struct_ptr);
+        }
+
+        Ok(env_struct_ptr)
+    }
+
+    /// Add a variable to the current closure environment
+    pub fn add_to_current_environment(&mut self, name: String, ptr: inkwell::values::PointerValue<'ctx>, ty: Type) {
+        if let Some(env_name) = self.current_environment.clone() {
+            if let Some(env) = self.get_closure_environment_mut(&env_name) {
+                env.add_variable(name, ptr, ty);
+            }
+        }
     }
 
     /// Get a closure environment by function name
