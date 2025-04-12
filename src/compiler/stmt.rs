@@ -352,15 +352,16 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
 
                 // Assign the current index to the target variable
                 if let Expr::Name { id, .. } = target.as_ref() {
-                    // Create or get the target variable
-                    if let Some(target_ptr) = self.get_variable_ptr(id) {
-                        // Store the current index in the target variable
-                        self.builder.build_store(target_ptr, index_val).unwrap();
-                    } else {
-                        // Variable not found, create it
-                        let target_ptr = self.allocate_heap_variable(id, &Type::Int);
-                        self.builder.build_store(target_ptr, index_val).unwrap();
-                    }
+                    // Always create a new variable in the loop scope
+                    println!("Creating loop variable: {}", id);
+
+                    // Allocate the loop variable
+                    let i64_type = self.llvm_context.i64_type();
+                    let target_ptr = self.builder.build_alloca(i64_type, id).unwrap();
+                    self.builder.build_store(target_ptr, index_val).unwrap();
+
+                    // Register the variable in the current scope
+                    self.scope_stack.add_variable(id.clone(), target_ptr, Type::Int);
                 } else {
                     // For now, we only support simple variable targets
                     // In a full implementation, we would handle tuple unpacking and other complex targets

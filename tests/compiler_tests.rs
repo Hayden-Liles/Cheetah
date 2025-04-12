@@ -99,6 +99,10 @@ mod tuple_type_inference_test;
 #[path = "more_tests/compiler/for_loop_test.rs"]
 mod for_loop_test;
 
+// Include the comprehensive for loop tests
+#[path = "more_tests/compiler/comprehensive_for_loop_test.rs"]
+mod comprehensive_for_loop_test;
+
 // Include the range tests
 #[path = "more_tests/compiler/range_test.rs"]
 mod range_test;
