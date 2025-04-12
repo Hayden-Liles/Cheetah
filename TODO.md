@@ -78,7 +78,13 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Implement slice operations for lists in the compiler
    - [x] Implement slice operations for strings in the compiler
    - [x] Create tests for slice operations
-6. [ ] Add support for list comprehensions
+6. [x] Add support for list comprehensions
+   - [x] Implement basic list comprehension syntax
+   - [x] Support for list comprehensions with range
+   - [x] Support for list comprehensions with conditions (if clauses)
+   - [x] Support for list comprehensions with strings
+   - [ ] Support for list comprehensions with lists
+   - [ ] Support for nested list comprehensions
 7. [ ] Add dictionary support
 8. [ ] Implement a proper closure environment solution for nonlocal variables
 

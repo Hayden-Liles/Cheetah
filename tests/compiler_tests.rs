@@ -122,3 +122,7 @@ mod string_slice_operations_test;
 // Include the len function tests
 #[path = "more_tests/compiler/len_function_test.rs"]
 mod len_function_test;
+
+// Include the list comprehension tests
+#[path = "more_tests/compiler/list_comprehension_test.rs"]
+mod list_comprehension_test;

@@ -35,6 +35,9 @@ pub trait ExprCompiler<'ctx> {
 
     /// Compile a subscript expression with a pre-compiled value
     fn compile_subscript_with_value(&mut self, value_val: BasicValueEnum<'ctx>, value_type: Type, slice: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+
+    /// Compile a list comprehension expression
+    fn compile_list_comprehension(&mut self, elt: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 }
 
 pub trait AssignmentCompiler<'ctx> {
@@ -935,6 +938,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             Expr::Attribute { .. } => Err("Attribute access not yet implemented".to_string()),
             Expr::Subscript { value, slice, .. } => self.compile_subscript(value, slice),
 
+            // List comprehension
+            Expr::ListComp { elt, generators, .. } => self.compile_list_comprehension(elt, generators),
+
             // Handle other expression types with appropriate placeholder errors
             _ => Err(format!("Unsupported expression type: {:?}", expr)),
         }
@@ -1652,6 +1658,650 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 Ok((null_value.into(), Type::None))
             },
         }
+    }
+
+    /// Compile a list comprehension expression
+    fn compile_list_comprehension(&mut self, elt: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        if generators.is_empty() {
+            return Err("List comprehension must have at least one generator".to_string());
+        }
+
+        // Create an empty list to store the results
+        let result_list = self.build_empty_list("list_comp_result")?;
+
+        // Get the list_append function
+        let list_append_fn = match self.module.get_function("list_append") {
+            Some(f) => f,
+            None => return Err("list_append function not found".to_string()),
+        };
+
+        // Create a new scope for the list comprehension
+        self.scope_stack.push_scope(false, false, false);
+
+        // Compile the first generator
+        let generator = &generators[0];
+
+        // Compile the iterable expression
+        let (iter_val, iter_type) = self.compile_expr(&generator.iter)?;
+
+        // Special case for range function
+        if let Expr::Call { func, .. } = &*generator.iter {
+            if let Expr::Name { id, .. } = func.as_ref() {
+                if id == "range" {
+                    // For range, we need to create a loop from 0 to the range value
+                    let range_val = iter_val.into_int_value();
+
+                    // Create basic blocks for the loop
+                    let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                    let loop_entry_block = self.llvm_context.append_basic_block(current_function, "range_comp_entry");
+                    let loop_body_block = self.llvm_context.append_basic_block(current_function, "range_comp_body");
+                    let loop_exit_block = self.llvm_context.append_basic_block(current_function, "range_comp_exit");
+
+                    // Create an index variable
+                    let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "range_comp_index").unwrap();
+                    self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
+
+                    // Branch to the loop entry
+                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                    // Loop entry block - check if we've reached the end of the range
+                    self.builder.position_at_end(loop_entry_block);
+                    let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+                    let condition = self.builder.build_int_compare(
+                        inkwell::IntPredicate::SLT,
+                        current_index,
+                        range_val,
+                        "loop_condition"
+                    ).unwrap();
+
+                    self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
+
+                    // Loop body block - process the current index
+                    self.builder.position_at_end(loop_body_block);
+
+                    // Bind the target variable to the current index
+                    match generator.target.as_ref() {
+                        Expr::Name { id, .. } => {
+                            // Declare the target variable in the current scope
+                            let index_alloca = self.builder.build_alloca(self.llvm_context.i64_type(), "range_index_alloca").unwrap();
+                            self.builder.build_store(index_alloca, current_index).unwrap();
+                            self.scope_stack.add_variable(id.to_string(), index_alloca, Type::Int);
+                        },
+                        _ => return Err("Only simple variable targets are supported in list comprehensions".to_string()),
+                    }
+
+                    // Check if there are any conditions (if clauses)
+                    let mut should_append = self.llvm_context.bool_type().const_int(1, false);
+
+                    for if_expr in &generator.ifs {
+                        // Compile the condition
+                        let (cond_val, cond_type) = self.compile_expr(if_expr)?;
+
+                        // Convert to boolean if needed
+                        let cond_bool = if cond_type != Type::Bool {
+                            self.convert_type(cond_val, &cond_type, &Type::Bool)?.into_int_value()
+                        } else {
+                            cond_val.into_int_value()
+                        };
+
+                        // AND with the current condition
+                        should_append = self.builder.build_and(should_append, cond_bool, "if_condition").unwrap();
+                    }
+
+                    // Create a conditional branch based on the conditions
+                    let then_block = self.llvm_context.append_basic_block(current_function, "range_comp_then");
+                    let continue_block = self.llvm_context.append_basic_block(current_function, "range_comp_continue");
+
+                    self.builder.build_conditional_branch(should_append, then_block, continue_block).unwrap();
+
+                    // Then block - compile the element expression and append to the result list
+                    self.builder.position_at_end(then_block);
+
+                    // Compile the element expression
+                    let (element_val, element_type) = self.compile_expr(elt)?;
+
+                    // Convert the element to a pointer if needed
+                    let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
+                        element_val.into_pointer_value()
+                    } else {
+                        // For non-reference types, we need to allocate memory and store the value
+                        let element_alloca = self.builder.build_alloca(
+                            element_val.get_type(),
+                            "range_comp_element"
+                        ).unwrap();
+                        self.builder.build_store(element_alloca, element_val).unwrap();
+                        element_alloca
+                    };
+
+                    // Append the element to the result list
+                    self.builder.build_call(
+                        list_append_fn,
+                        &[result_list.into(), element_ptr.into()],
+                        "list_append_result"
+                    ).unwrap();
+
+                    self.builder.build_unconditional_branch(continue_block).unwrap();
+
+                    // Continue block - increment the index and continue the loop
+                    self.builder.position_at_end(continue_block);
+
+                    // Increment the index
+                    let next_index = self.builder.build_int_add(
+                        current_index,
+                        self.llvm_context.i64_type().const_int(1, false),
+                        "next_index"
+                    ).unwrap();
+
+                    self.builder.build_store(index_ptr, next_index).unwrap();
+
+                    // Branch back to the loop entry
+                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                    // Exit block - return the result list
+                    self.builder.position_at_end(loop_exit_block);
+
+                    // Pop the scope for the list comprehension
+                    self.scope_stack.pop_scope();
+
+                    // Return the result list
+                    return Ok((result_list.into(), Type::List(Box::new(Type::Unknown))));
+                }
+            }
+        }
+
+        // Check if the iterable is a list, string, or range
+        match iter_type {
+            Type::List(_) => {
+                // Get the list length
+                let list_len_fn = match self.module.get_function("list_len") {
+                    Some(f) => f,
+                    None => return Err("list_len function not found".to_string()),
+                };
+
+                let list_ptr = iter_val.into_pointer_value();
+                let call_site_value = self.builder.build_call(
+                    list_len_fn,
+                    &[list_ptr.into()],
+                    "list_len_result"
+                ).unwrap();
+
+                let list_len = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to get list length".to_string())?;
+
+                // Create a loop to iterate over the list
+                let list_get_fn = match self.module.get_function("list_get") {
+                    Some(f) => f,
+                    None => return Err("list_get function not found".to_string()),
+                };
+
+                // Create basic blocks for the loop
+                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                let loop_entry_block = self.llvm_context.append_basic_block(current_function, "list_comp_entry");
+                let loop_body_block = self.llvm_context.append_basic_block(current_function, "list_comp_body");
+                let loop_exit_block = self.llvm_context.append_basic_block(current_function, "list_comp_exit");
+
+                // Create an index variable
+                let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "list_comp_index").unwrap();
+                self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
+
+                // Branch to the loop entry
+                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                // Loop entry block - check if we've reached the end of the list
+                self.builder.position_at_end(loop_entry_block);
+                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+                let condition = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT,
+                    current_index,
+                    list_len.into_int_value(),
+                    "loop_condition"
+                ).unwrap();
+
+                self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
+
+                // Loop body block - get the current element and process it
+                self.builder.position_at_end(loop_body_block);
+
+                // Get the current element from the list
+                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+                let call_site_value = self.builder.build_call(
+                    list_get_fn,
+                    &[list_ptr.into(), current_index.into()],
+                    "list_get_result"
+                ).unwrap();
+
+                let element_ptr = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to get list element".to_string())?;
+
+                // Bind the target variable to the current element
+                match generator.target.as_ref() {
+                    Expr::Name { id, .. } => {
+                        // Declare the target variable in the current scope
+                        let element_type = match &iter_type {
+                            Type::List(element_type) => element_type.as_ref().clone(),
+                            _ => Type::Unknown,
+                        };
+
+                        // Store the element in the target variable
+                        self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), element_type);
+                    },
+                    _ => return Err("Only simple variable targets are supported in list comprehensions".to_string()),
+                }
+
+                // Check if there are any conditions (if clauses)
+                let mut should_append = self.llvm_context.bool_type().const_int(1, false);
+
+                for if_expr in &generator.ifs {
+                    // Compile the condition
+                    let (cond_val, cond_type) = self.compile_expr(if_expr)?;
+
+                    // Convert to boolean if needed
+                    let cond_bool = if cond_type != Type::Bool {
+                        self.convert_type(cond_val, &cond_type, &Type::Bool)?.into_int_value()
+                    } else {
+                        cond_val.into_int_value()
+                    };
+
+                    // AND with the current condition
+                    should_append = self.builder.build_and(should_append, cond_bool, "if_condition").unwrap();
+                }
+
+                // Create a conditional branch based on the conditions
+                let then_block = self.llvm_context.append_basic_block(current_function, "list_comp_then");
+                let continue_block = self.llvm_context.append_basic_block(current_function, "list_comp_continue");
+
+                self.builder.build_conditional_branch(should_append, then_block, continue_block).unwrap();
+
+                // Then block - compile the element expression and append to the result list
+                self.builder.position_at_end(then_block);
+
+                // Compile the element expression
+                let (element_val, element_type) = self.compile_expr(elt)?;
+
+                // Convert the element to a pointer if needed
+                let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
+                    element_val.into_pointer_value()
+                } else {
+                    // For non-reference types, we need to allocate memory and store the value
+                    let element_alloca = self.builder.build_alloca(
+                        element_val.get_type(),
+                        "list_comp_element"
+                    ).unwrap();
+                    self.builder.build_store(element_alloca, element_val).unwrap();
+                    element_alloca
+                };
+
+                // Append the element to the result list
+                self.builder.build_call(
+                    list_append_fn,
+                    &[result_list.into(), element_ptr.into()],
+                    "list_append_result"
+                ).unwrap();
+
+                self.builder.build_unconditional_branch(continue_block).unwrap();
+
+                // Continue block - increment the index and continue the loop
+                self.builder.position_at_end(continue_block);
+
+                // Increment the index
+                let next_index = self.builder.build_int_add(
+                    current_index,
+                    self.llvm_context.i64_type().const_int(1, false),
+                    "next_index"
+                ).unwrap();
+
+                self.builder.build_store(index_ptr, next_index).unwrap();
+
+                // Branch back to the loop entry
+                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                // Exit block - return the result list
+                self.builder.position_at_end(loop_exit_block);
+            },
+            Type::String => {
+                // Get the string length
+                let string_len_fn = match self.module.get_function("string_len") {
+                    Some(f) => f,
+                    None => return Err("string_len function not found".to_string()),
+                };
+
+                let string_ptr = iter_val.into_pointer_value();
+                let call_site_value = self.builder.build_call(
+                    string_len_fn,
+                    &[string_ptr.into()],
+                    "string_len_result"
+                ).unwrap();
+
+                let string_len = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to get string length".to_string())?;
+
+                // Create a loop to iterate over the string
+                let string_get_fn = match self.module.get_function("string_get_char") {
+                    Some(f) => f,
+                    None => return Err("string_get_char function not found".to_string()),
+                };
+
+                // Create basic blocks for the loop
+                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                let loop_entry_block = self.llvm_context.append_basic_block(current_function, "string_comp_entry");
+                let loop_body_block = self.llvm_context.append_basic_block(current_function, "string_comp_body");
+                let loop_exit_block = self.llvm_context.append_basic_block(current_function, "string_comp_exit");
+
+                // Create an index variable
+                let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "string_comp_index").unwrap();
+                self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
+
+                // Branch to the loop entry
+                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                // Loop entry block - check if we've reached the end of the string
+                self.builder.position_at_end(loop_entry_block);
+                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+                let condition = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT,
+                    current_index,
+                    string_len.into_int_value(),
+                    "loop_condition"
+                ).unwrap();
+
+                self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
+
+                // Loop body block - get the current character and process it
+                self.builder.position_at_end(loop_body_block);
+
+                // Get the current character from the string
+                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+                let call_site_value = self.builder.build_call(
+                    string_get_fn,
+                    &[string_ptr.into(), current_index.into()],
+                    "string_get_result"
+                ).unwrap();
+
+                let char_val = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to get string character".to_string())?;
+
+                // Allocate memory for the character
+                let char_ptr = self.builder.build_alloca(char_val.get_type(), "char_ptr").unwrap();
+                self.builder.build_store(char_ptr, char_val).unwrap();
+
+                // Bind the target variable to the current character
+                match generator.target.as_ref() {
+                    Expr::Name { id, .. } => {
+                        // Declare the target variable in the current scope
+                        self.scope_stack.add_variable(id.to_string(), char_ptr, Type::String);
+                    },
+                    _ => return Err("Only simple variable targets are supported in list comprehensions".to_string()),
+                }
+
+                // Check if there are any conditions (if clauses)
+                let mut should_append = self.llvm_context.bool_type().const_int(1, false);
+
+                for if_expr in &generator.ifs {
+                    // Compile the condition
+                    let (cond_val, cond_type) = self.compile_expr(if_expr)?;
+
+                    // Convert to boolean if needed
+                    let cond_bool = if cond_type != Type::Bool {
+                        self.convert_type(cond_val, &cond_type, &Type::Bool)?.into_int_value()
+                    } else {
+                        cond_val.into_int_value()
+                    };
+
+                    // AND with the current condition
+                    should_append = self.builder.build_and(should_append, cond_bool, "if_condition").unwrap();
+                }
+
+                // Create a conditional branch based on the conditions
+                let then_block = self.llvm_context.append_basic_block(current_function, "string_comp_then");
+                let continue_block = self.llvm_context.append_basic_block(current_function, "string_comp_continue");
+
+                self.builder.build_conditional_branch(should_append, then_block, continue_block).unwrap();
+
+                // Then block - compile the element expression and append to the result list
+                self.builder.position_at_end(then_block);
+
+                // Compile the element expression
+                let (element_val, element_type) = self.compile_expr(elt)?;
+
+                // Convert the element to a pointer if needed
+                let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
+                    element_val.into_pointer_value()
+                } else {
+                    // For non-reference types, we need to allocate memory and store the value
+                    let element_alloca = self.builder.build_alloca(
+                        element_val.get_type(),
+                        "string_comp_element"
+                    ).unwrap();
+                    self.builder.build_store(element_alloca, element_val).unwrap();
+                    element_alloca
+                };
+
+                // Append the element to the result list
+                self.builder.build_call(
+                    list_append_fn,
+                    &[result_list.into(), element_ptr.into()],
+                    "list_append_result"
+                ).unwrap();
+
+                self.builder.build_unconditional_branch(continue_block).unwrap();
+
+                // Continue block - increment the index and continue the loop
+                self.builder.position_at_end(continue_block);
+
+                // Increment the index
+                let next_index = self.builder.build_int_add(
+                    current_index,
+                    self.llvm_context.i64_type().const_int(1, false),
+                    "next_index"
+                ).unwrap();
+
+                self.builder.build_store(index_ptr, next_index).unwrap();
+
+                // Branch back to the loop entry
+                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                // Exit block - return the result list
+                self.builder.position_at_end(loop_exit_block);
+            },
+            // For now, we'll only support lists and strings
+            // Type::Range would be implemented here if we had a Range type
+            Type::Int | Type::Float | Type::Bool | Type::Tuple(_) | Type::Dict(_, _) | Type::None | Type::Unknown | Type::Any => {
+                // For range objects, we need to get the start, stop, and step values
+                // This is a simplified implementation that assumes the range is already created
+                // and we're just iterating over it
+
+                // Create basic blocks for the loop
+                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                let loop_entry_block = self.llvm_context.append_basic_block(current_function, "range_comp_entry");
+                let loop_body_block = self.llvm_context.append_basic_block(current_function, "range_comp_body");
+                let loop_exit_block = self.llvm_context.append_basic_block(current_function, "range_comp_exit");
+
+                // Get the range parameters (start, stop, step)
+                let range_ptr = iter_val.into_pointer_value();
+
+                // Load the start value (first field of the range struct)
+                let range_struct_type = self.llvm_context.struct_type(&[
+                    self.llvm_context.i64_type().into(),
+                    self.llvm_context.i64_type().into(),
+                    self.llvm_context.i64_type().into(),
+                ], false);
+
+                let start_ptr = self.builder.build_struct_gep(
+                    range_struct_type,
+                    range_ptr,
+                    0,
+                    "range_start_ptr"
+                ).unwrap();
+
+                let start_val = self.builder.build_load(
+                    self.llvm_context.i64_type(),
+                    start_ptr,
+                    "range_start"
+                ).unwrap().into_int_value();
+
+                // Load the stop value (second field of the range struct)
+                let stop_ptr = self.builder.build_struct_gep(
+                    range_struct_type,
+                    range_ptr,
+                    1,
+                    "range_stop_ptr"
+                ).unwrap();
+
+                let stop_val = self.builder.build_load(
+                    self.llvm_context.i64_type(),
+                    stop_ptr,
+                    "range_stop"
+                ).unwrap().into_int_value();
+
+                // Load the step value (third field of the range struct)
+                let step_ptr = self.builder.build_struct_gep(
+                    range_struct_type,
+                    range_ptr,
+                    2,
+                    "range_step_ptr"
+                ).unwrap();
+
+                let step_val = self.builder.build_load(
+                    self.llvm_context.i64_type(),
+                    step_ptr,
+                    "range_step"
+                ).unwrap().into_int_value();
+
+                // Create an index variable
+                let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "range_comp_index").unwrap();
+                self.builder.build_store(index_ptr, start_val).unwrap();
+
+                // Branch to the loop entry
+                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                // Loop entry block - check if we've reached the end of the range
+                self.builder.position_at_end(loop_entry_block);
+                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+
+                // Check if step is positive or negative to determine the comparison
+                let step_positive = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SGT,
+                    step_val,
+                    self.llvm_context.i64_type().const_int(0, true),
+                    "step_positive"
+                ).unwrap();
+
+                // If step is positive, check if current < stop, otherwise check if current > stop
+                let positive_condition = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT,
+                    current_index,
+                    stop_val,
+                    "positive_condition"
+                ).unwrap();
+
+                let negative_condition = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SGT,
+                    current_index,
+                    stop_val,
+                    "negative_condition"
+                ).unwrap();
+
+                let condition = self.builder.build_select(
+                    step_positive,
+                    positive_condition,
+                    negative_condition,
+                    "loop_condition"
+                ).unwrap().into_int_value();
+
+                self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
+
+                // Loop body block - process the current index
+                self.builder.position_at_end(loop_body_block);
+
+                // Bind the target variable to the current index
+                match generator.target.as_ref() {
+                    Expr::Name { id, .. } => {
+                        // Declare the target variable in the current scope
+                        let index_alloca = self.builder.build_alloca(self.llvm_context.i64_type(), "range_index_alloca").unwrap();
+                        self.builder.build_store(index_alloca, current_index).unwrap();
+                        self.scope_stack.add_variable(id.to_string(), index_alloca, Type::Int);
+                    },
+                    _ => return Err("Only simple variable targets are supported in list comprehensions".to_string()),
+                }
+
+                // Check if there are any conditions (if clauses)
+                let mut should_append = self.llvm_context.bool_type().const_int(1, false);
+
+                for if_expr in &generator.ifs {
+                    // Compile the condition
+                    let (cond_val, cond_type) = self.compile_expr(if_expr)?;
+
+                    // Convert to boolean if needed
+                    let cond_bool = if cond_type != Type::Bool {
+                        self.convert_type(cond_val, &cond_type, &Type::Bool)?.into_int_value()
+                    } else {
+                        cond_val.into_int_value()
+                    };
+
+                    // AND with the current condition
+                    should_append = self.builder.build_and(should_append, cond_bool, "if_condition").unwrap();
+                }
+
+                // Create a conditional branch based on the conditions
+                let then_block = self.llvm_context.append_basic_block(current_function, "range_comp_then");
+                let continue_block = self.llvm_context.append_basic_block(current_function, "range_comp_continue");
+
+                self.builder.build_conditional_branch(should_append, then_block, continue_block).unwrap();
+
+                // Then block - compile the element expression and append to the result list
+                self.builder.position_at_end(then_block);
+
+                // Compile the element expression
+                let (element_val, element_type) = self.compile_expr(elt)?;
+
+                // Convert the element to a pointer if needed
+                let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
+                    element_val.into_pointer_value()
+                } else {
+                    // For non-reference types, we need to allocate memory and store the value
+                    let element_alloca = self.builder.build_alloca(
+                        element_val.get_type(),
+                        "range_comp_element"
+                    ).unwrap();
+                    self.builder.build_store(element_alloca, element_val).unwrap();
+                    element_alloca
+                };
+
+                // Append the element to the result list
+                self.builder.build_call(
+                    list_append_fn,
+                    &[result_list.into(), element_ptr.into()],
+                    "list_append_result"
+                ).unwrap();
+
+                self.builder.build_unconditional_branch(continue_block).unwrap();
+
+                // Continue block - increment the index and continue the loop
+                self.builder.position_at_end(continue_block);
+
+                // Increment the index by the step value
+                let next_index = self.builder.build_int_add(
+                    current_index,
+                    step_val,
+                    "next_index"
+                ).unwrap();
+
+                self.builder.build_store(index_ptr, next_index).unwrap();
+
+                // Branch back to the loop entry
+                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                // Exit block - return the result list
+                self.builder.position_at_end(loop_exit_block);
+            },
+            _ => return Err(format!("Cannot iterate over value of type {:?}", iter_type)),
+        }
+
+        // Pop the scope for the list comprehension
+        self.scope_stack.pop_scope();
+
+        // Return the result list
+        Ok((result_list.into(), Type::List(Box::new(Type::Unknown))))
     }
 }
 
