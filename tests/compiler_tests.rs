@@ -126,3 +126,7 @@ mod len_function_test;
 // Include the list comprehension tests
 #[path = "more_tests/compiler/list_comprehension_test.rs"]
 mod list_comprehension_test;
+
+// Include the advanced list comprehension tests
+#[path = "more_tests/compiler/advanced_list_comprehension_test.rs"]
+mod advanced_list_comprehension_test;
