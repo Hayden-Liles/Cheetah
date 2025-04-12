@@ -1,5 +1,4 @@
 use crate::compiler::types::Type;
-use crate::ast::Expr;
 use std::collections::HashMap;
 
 /// Represents a scope in the type environment
@@ -217,8 +216,5 @@ impl TypeEnvironment {
         self.add_variable(name.to_string(), ty);
     }
 
-    /// Get the parent expression for context
-    pub fn get_parent_expr(&self) -> Option<&Expr> {
-        None // This is a placeholder - we'll need to track parent expressions elsewhere
-    }
+    // We don't need to track parent expressions in the environment
 }

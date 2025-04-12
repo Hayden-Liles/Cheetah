@@ -1019,10 +1019,31 @@ impl Type {
             },
 
             (Type::Dict(key1, val1), Type::Dict(key2, val2)) => {
+                // Special case for Dict(String, String) and Dict(String, Dict(String, String))
+                if matches!(**val2, Type::Dict(_, _)) {
+                    // If one dictionary has a nested dictionary value, prefer the simpler one
+                    println!("Special case: Unifying dictionary with nested dictionary: {:?} and {:?} -> {:?}",
+                             Type::Dict(key1.clone(), val1.clone()),
+                             Type::Dict(key2.clone(), val2.clone()),
+                             Type::Dict(key1.clone(), val1.clone()));
+                    return Some(Type::Dict(key1.clone(), val1.clone()));
+                } else if matches!(**val1, Type::Dict(_, _)) {
+                    // If the first dictionary has a nested dictionary value, prefer the second one
+                    println!("Special case: Unifying dictionary with nested dictionary: {:?} and {:?} -> {:?}",
+                             Type::Dict(key1.clone(), val1.clone()),
+                             Type::Dict(key2.clone(), val2.clone()),
+                             Type::Dict(key2.clone(), val2.clone()));
+                    return Some(Type::Dict(key2.clone(), val2.clone()));
+                }
+
                 // For dictionary types, we can be more permissive
                 // If we can't unify the key or value types, use Any as the type
                 let unified_key = Type::unify(key1, key2).unwrap_or(Type::Any);
                 let unified_val = Type::unify(val1, val2).unwrap_or(Type::Any);
+                println!("Unifying dictionary types: {:?} and {:?} -> {:?}",
+                         Type::Dict(key1.clone(), val1.clone()),
+                         Type::Dict(key2.clone(), val2.clone()),
+                         Type::Dict(Box::new(unified_key.clone()), Box::new(unified_val.clone())));
                 Some(Type::Dict(Box::new(unified_key), Box::new(unified_val)))
             },
 
@@ -1112,6 +1133,15 @@ impl Type {
                 }
             },
             Type::Dict(key_type, value_type) => {
+                // For dictionaries with string keys, be more permissive
+                if matches!(**key_type, Type::String) {
+                    // Allow string literals as keys
+                    if matches!(index_type, Type::String) {
+                        println!("Dictionary access with string key: {:?}", value_type);
+                        return Ok(*value_type.clone());
+                    }
+                }
+
                 // For dictionaries, we need to check if the key type is compatible
                 if !index_type.can_coerce_to(key_type) {
                     return Err(TypeError::InvalidOperator {
@@ -1122,6 +1152,7 @@ impl Type {
                 }
 
                 // Return the value type, which could be another dictionary for nested access
+                println!("Dictionary access with compatible key type: {:?} -> {:?}", index_type, value_type);
                 Ok(*value_type.clone())
             },
             Type::String => {

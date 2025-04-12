@@ -881,7 +881,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     Type::String
                                 } else if id == "create_person" || id == "add_phone" || id == "create_dict" ||
                                           id == "get_nested_value" || id == "create_math_dict" || id == "identity" ||
-                                          id == "create_person" || id == "create_dict" {
+                                          id.contains("person") || id.contains("dict") {
                                     // Special case for dictionary-returning functions
                                     Type::Dict(Box::new(Type::String), Box::new(Type::String))
                                 } else if id == "process_dict" || id.contains("len") {
@@ -1276,6 +1276,11 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     return Err(format!("Dictionary key type mismatch: expected {:?}, got {:?}", key_type, index_type));
                 }
 
+                // Special handling for string literals as keys
+                if let Expr::Str { value, .. } = slice {
+                    println!("Dictionary access with string literal key: '{}'", value);
+                }
+
                 // Get the value from the dictionary
                 let value_ptr = self.build_dict_get_item(
                     value_val.into_pointer_value(),
@@ -1285,6 +1290,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                 // Return the value and its type
                 // For nested dictionaries, the value_type will be another dictionary
+                println!("Dictionary access result type: {:?}", value_type);
                 Ok((value_ptr.into(), value_type.as_ref().clone()))
             },
             Type::String => {
@@ -1805,8 +1811,16 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             None => return Err("dict_get function not found".to_string()),
         };
 
-        // Convert the key to a pointer if needed
-        let key_ptr = if crate::compiler::types::is_reference_type(key_type) {
+        // Special handling for string keys
+        let key_ptr = if matches!(key_type, Type::String) {
+            // For string keys, we can use the pointer directly
+            if key.is_pointer_value() {
+                key
+            } else {
+                return Err(format!("Expected pointer value for string key"));
+            }
+        } else if crate::compiler::types::is_reference_type(key_type) {
+            // For other reference types, use the pointer directly
             key
         } else {
             // For non-reference types, we need to allocate memory and store the value

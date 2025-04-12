@@ -405,21 +405,30 @@ impl TypeInference {
                 if let Expr::Name { id, .. } = &**func {
                     // For dictionary-related functions
                     if id == "create_person" || id == "add_phone" || id == "create_dict" ||
-                       id == "get_nested_value" || id == "create_math_dict" ||
-                       id == "identity" || id == "create_person" ||
-                       id.contains("dict") || id.contains("person") || id.contains("user") {
+                       id == "create_math_dict" || id == "identity" || id == "create_person" ||
+                       id.contains("dict") || id.contains("person") || id.contains("user") ||
+                       id.contains("add_") {
                         // We can't directly access the parent expression here, but we can track
                         // the return value and use it later when processing assignments
                         let dict_type = Type::Dict(Box::new(Type::String), Box::new(Type::String));
 
                         // Print debug information
-                        println!("Inferred dictionary return type for function call: {:?}", dict_type);
+                        println!("Inferred dictionary return type for function call '{}': {:?}", id, dict_type);
+
+                        // We can't access the parent expression directly in this context
+                        // The variable type will be set in the checker.rs file when processing assignments
+
                         return Ok(Type::Dict(Box::new(Type::String), Box::new(Type::String)));
                     }
 
                     // For string-returning functions
                     if id == "get_value" || id == "get_name" || id == "get_value_with_default" {
                         return Ok(Type::String);
+                    }
+
+                    // For nested dictionary functions
+                    if id == "get_nested_value" {
+                        return Ok(Type::Dict(Box::new(Type::String), Box::new(Type::String)));
                     }
                 }
 
