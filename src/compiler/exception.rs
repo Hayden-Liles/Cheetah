@@ -48,17 +48,27 @@ impl<'ctx> CompilationContext<'ctx> {
         self.reset_exception_state(exception_raised);
 
         // Compile the body of the try block
+        let mut has_terminator = false;
         for stmt in body {
             self.compile_stmt(stmt.as_ref())?;
+
+            // Check if the statement was a terminator (break, continue, return)
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                has_terminator = true;
+                break;
+            }
         }
 
-        // If no exception was raised, branch to the else block
-        let exception_value = self.load_exception_state(exception_raised);
-        let _ = self.builder.build_conditional_branch(
-            exception_value,
-            except_blocks[0], // If exception raised, go to first except handler
-            else_block,       // If no exception, go to else block
-        );
+        // Only add a branch if we don't already have a terminator
+        if !has_terminator {
+            // If no exception was raised, branch to the else block
+            let exception_value = self.load_exception_state(exception_raised);
+            let _ = self.builder.build_conditional_branch(
+                exception_value,
+                except_blocks[0], // If exception raised, go to first except handler
+                else_block,       // If no exception, go to else block
+            );
+        }
 
         // Compile the except handlers
         for (i, handler) in handlers.iter().enumerate() {
@@ -84,6 +94,9 @@ impl<'ctx> CompilationContext<'ctx> {
             // Compile the handler body
             self.builder.position_at_end(handler_body_block);
 
+            // Make sure we're positioned at the handler body block
+            let _current_block = self.builder.get_insert_block().unwrap();
+
             // If the handler has a name, bind the exception to that name
             if let Some(name) = &handler.name {
                 // Get the current exception
@@ -103,8 +116,15 @@ impl<'ctx> CompilationContext<'ctx> {
             }
 
             // Compile the handler body
+            let mut has_terminator = false;
             for stmt in &handler.body {
                 self.compile_stmt(stmt.as_ref())?;
+
+                // Check if the statement was a terminator (break, continue, return)
+                if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                    has_terminator = true;
+                    break;
+                }
             }
 
             // Reset the exception state
@@ -119,31 +139,69 @@ impl<'ctx> CompilationContext<'ctx> {
                 );
             }
 
-            // Branch to the finally block
-            let _ = self.builder.build_unconditional_branch(finally_block);
+            // Make sure the block has a terminator
+            if !has_terminator {
+                // If we don't have a terminator, add a branch to the finally block
+                let _ = self.builder.build_unconditional_branch(finally_block);
+            } else {
+                // If we have a terminator (like a return), create a new block to continue
+                let continue_block = self.llvm_context.append_basic_block(function, &format!("continue_after_except_{}", i));
+                self.builder.position_at_end(continue_block);
+                let _ = self.builder.build_unconditional_branch(finally_block);
+            }
         }
 
         // Compile the else block
         self.builder.position_at_end(else_block);
 
         // Compile the else body
+        let mut has_terminator = false;
         for stmt in orelse {
             self.compile_stmt(stmt.as_ref())?;
+
+            // Check if the statement was a terminator (break, continue, return)
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                has_terminator = true;
+                break;
+            }
         }
 
-        // Branch to the finally block
-        let _ = self.builder.build_unconditional_branch(finally_block);
+        // Make sure the block has a terminator
+        if !has_terminator {
+            // If we don't have a terminator, add a branch to the finally block
+            let _ = self.builder.build_unconditional_branch(finally_block);
+        } else {
+            // If we have a terminator (like a return), create a new block to continue
+            let continue_block = self.llvm_context.append_basic_block(function, "continue_after_else");
+            self.builder.position_at_end(continue_block);
+            let _ = self.builder.build_unconditional_branch(finally_block);
+        }
 
         // Compile the finally block
         self.builder.position_at_end(finally_block);
 
         // Compile the finally body
+        let mut has_terminator = false;
         for stmt in finalbody {
             self.compile_stmt(stmt.as_ref())?;
+
+            // Check if the statement was a terminator (break, continue, return)
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                has_terminator = true;
+                break;
+            }
         }
 
-        // Branch to the exit block
-        let _ = self.builder.build_unconditional_branch(exit_block);
+        // Make sure the block has a terminator
+        if !has_terminator {
+            // If we don't have a terminator, add a branch to the exit block
+            let _ = self.builder.build_unconditional_branch(exit_block);
+        } else {
+            // If we have a terminator (like a return), create a new block to continue
+            let continue_block = self.llvm_context.append_basic_block(function, "continue_after_finally");
+            self.builder.position_at_end(continue_block);
+            let _ = self.builder.build_unconditional_branch(exit_block);
+        }
 
         // Position at the exit block for further code
         self.builder.position_at_end(exit_block);
