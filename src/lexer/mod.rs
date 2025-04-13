@@ -31,15 +31,15 @@ impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         let mut keywords = HashSet::new();
         for kw in &[
-            "def", "return", "if", "elif", "else", "while", "for", "in", "break", 
-            "continue", "pass", "import", "from", "as", "True", "False", "None", 
-            "and", "or", "not", "class", "with", "assert", "async", "await", "try", 
-            "except", "finally", "raise", "lambda", "global", "nonlocal", "yield", 
+            "def", "return", "if", "elif", "else", "while", "for", "in", "break",
+            "continue", "pass", "import", "from", "as", "True", "False", "None",
+            "and", "or", "not", "class", "with", "assert", "async", "await", "try",
+            "except", "finally", "raise", "lambda", "global", "nonlocal", "yield",
             "del", "is", "match", "case"
         ] {
             keywords.insert(*kw);
         }
-        
+
         Lexer {
             input,
             chars: input.chars(),
@@ -73,7 +73,7 @@ impl<'a> Lexer<'a> {
         let estimated_token_count = self.input.len() / 5;  // Rough estimate: 1 token per 5 chars
         let mut tokens = Vec::with_capacity(estimated_token_count);
         let mut pending_indentation_change = true;
-        
+
         while let Some(token) = self.next_token() {
             match token.token_type {
                 TokenType::EOF => {
@@ -87,48 +87,48 @@ impl<'a> Lexer<'a> {
                             "".to_string(),
                         ));
                     }
-                    
+
                     tokens.push(token);
                     break;
                 },
                 _ => {
                     self.update_nesting_level(&token.token_type);
-                    
+
                     let token_type = token.token_type.clone();
                     let token_line = token.line;
-                    
-                    if pending_indentation_change && 
-                       self.paren_level == 0 && 
-                       self.bracket_level == 0 && 
+
+                    if pending_indentation_change &&
+                       self.paren_level == 0 &&
+                       self.bracket_level == 0 &&
                        self.brace_level == 0 {
                         self.handle_indentation_change(&mut tokens, token_line);
                         pending_indentation_change = false;
                     }
-                    
+
                     tokens.push(token);
-                    
-                    if matches!(token_type, TokenType::Newline) && 
-                       self.paren_level == 0 && 
-                       self.bracket_level == 0 && 
+
+                    if matches!(token_type, TokenType::Newline) &&
+                       self.paren_level == 0 &&
+                       self.bracket_level == 0 &&
                        self.brace_level == 0 {
                         pending_indentation_change = true;
                     }
                 }
             }
         }
-        
+
         tokens
     }
 
     fn next_token(&mut self) -> Option<Token> {
         self.skip_whitespace();
-        
+
         if self.is_at_end() {
             return Some(Token::new(TokenType::EOF, self.line, self.column, "".to_string()));
         }
-        
+
         let current_char = self.peek_char();
-        
+
         if current_char == '\n' || current_char == '\r' {
             if self.paren_level > 0 || self.bracket_level > 0 || self.brace_level > 0 {
                 self.consume_char();
@@ -137,7 +137,7 @@ impl<'a> Lexer<'a> {
             }
             return self.handle_newline();
         }
-        
+
         if current_char == '\\' && (self.peek_char_n(1) == '\n' || (self.peek_char_n(1) == '\r' && self.peek_char_n(2) == '\n')) {
             self.consume_char();
             if self.peek_char() == '\r' { self.consume_char(); }
@@ -158,10 +158,10 @@ impl<'a> Lexer<'a> {
             }
             return self.next_token();
         }
-        
-        if (current_char == 'r' || current_char == 'R' || 
-            current_char == 'f' || current_char == 'F' || 
-            current_char == 'b' || current_char == 'B') && 
+
+        if (current_char == 'r' || current_char == 'R' ||
+            current_char == 'f' || current_char == 'F' ||
+            current_char == 'b' || current_char == 'B') &&
             ((self.peek_char_n(1) == '"' && self.peek_char_n(2) == '"' && self.peek_char_n(3) == '"') ||
             (self.peek_char_n(1) == '\'' && self.peek_char_n(2) == '\'' && self.peek_char_n(3) == '\'')) {
             let prefix = current_char;
@@ -173,15 +173,15 @@ impl<'a> Lexer<'a> {
                 _ => unreachable!()
             }
         }
-        
+
         if (current_char == '"' && self.peek_char_n(1) == '"' && self.peek_char_n(2) == '"') ||
             (current_char == '\'' && self.peek_char_n(1) == '\'' && self.peek_char_n(2) == '\'') {
             return Some(self.handle_triple_quoted_string());
         }
-        
-        if (current_char == 'r' || current_char == 'R' || 
-            current_char == 'f' || current_char == 'F' || 
-            current_char == 'b' || current_char == 'B') && 
+
+        if (current_char == 'r' || current_char == 'R' ||
+            current_char == 'f' || current_char == 'F' ||
+            current_char == 'b' || current_char == 'B') &&
             (self.peek_char_n(1) == '"' || self.peek_char_n(1) == '\'') {
             let prefix = current_char;
             self.consume_char();
@@ -192,19 +192,19 @@ impl<'a> Lexer<'a> {
                 _ => unreachable!()
             }
         }
-        
+
         if current_char == '"' || current_char == '\'' {
             return Some(self.handle_string());
         }
-        
+
         if current_char.is_alphabetic() || current_char == '_' {
             return Some(self.handle_identifier());
         }
-        
+
         if current_char.is_digit(10) || (current_char == '.' && self.peek_char_n(1).is_digit(10)) {
             return Some(self.handle_number());
         }
-        
+
         if current_char == '#' {
             self.consume_while(|c| c != '\n' && c != '\r');
             if !self.is_at_end() && (self.peek_char() == '\n' || self.peek_char() == '\r') {
@@ -216,7 +216,7 @@ impl<'a> Lexer<'a> {
         if current_char == '.' && self.peek_char_n(1) == '.' && self.peek_char_n(2) == '.' {
             return Some(self.handle_ellipsis());
         }
-        
+
         Some(self.handle_operator_or_delimiter())
     }
 
@@ -247,10 +247,10 @@ impl<'a> Lexer<'a> {
     fn handle_indentation_change(&mut self, tokens: &mut Vec<Token>, token_line: usize) {
         let current_indent = self.current_indent;
         let previous_indent = *self.indent_stack.last().unwrap_or(&0);
-        
+
         if current_indent > previous_indent {
-            if self.config.enforce_indent_consistency && 
-                !self.config.allow_tabs_in_indentation && 
+            if self.config.enforce_indent_consistency &&
+                !self.config.allow_tabs_in_indentation &&
                 current_indent % self.config.standard_indent_size != 0 {
                 let error_message = format!(
                     "Inconsistent indentation. Expected multiple of {} spaces but got {}.",
@@ -275,9 +275,9 @@ impl<'a> Lexer<'a> {
             tokens.push(indent_token);
         } else if current_indent < previous_indent {
             let mut _dedent_count = 0;
-            
+
             let valid_indent_level = self.indent_stack.contains(&current_indent);
-            
+
             if !valid_indent_level {
                 let msg = format!(
                     "Inconsistent indentation. Current indent level {} doesn't match any previous level.",
@@ -292,7 +292,7 @@ impl<'a> Lexer<'a> {
                     );
                 }
             }
-            
+
             while self.indent_stack.len() > 1 && current_indent < *self.indent_stack.last().unwrap() {
                 self.indent_stack.pop();
                 tokens.push(Token::new(TokenType::Dedent, token_line, 1, "".to_string()));
@@ -322,7 +322,7 @@ impl<'a> Lexer<'a> {
         };
         self.errors.push(error);
     }
-    
+
     fn get_error_context(&self) -> String {
         let lines: Vec<&str> = self.input.lines().collect();
         if self.line <= lines.len() {
@@ -359,28 +359,28 @@ impl<'a> Lexer<'a> {
     fn handle_newline(&mut self) -> Option<Token> {
         let start_col = self.column;
         let start_line = self.line;
-        
+
         self.consume_char();
-        
+
         let mut _is_empty_line = false;
-        
+
         while !self.is_at_end() && self.peek_char() == '\n' {
             _is_empty_line = true;
             self.consume_char();
         }
-        
+
         let indent_size = self.count_indentation();
-        
+
         let newline_token = Token::new(
             TokenType::Newline,
             start_line,
             start_col,
             "\n".to_string(),
         );
-        
+
         // Always update current_indent, even for blank lines
         self.current_indent = indent_size;
-        
+
         Some(newline_token)
     }
 
@@ -388,9 +388,9 @@ impl<'a> Lexer<'a> {
         let mut count = 0;
         let mut has_tabs = false;
         let mut _has_spaces = false;
-        
+
         let indentation_line = self.line;
-        
+
         while !self.is_at_end() {
             let c = self.peek_char();
             if c == ' ' {
@@ -405,7 +405,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        
+
         if has_tabs && !self.config.allow_tabs_in_indentation {
             let msg = "Tabs are not allowed in indentation";
             if !self.has_error_for_line(indentation_line, msg) {
@@ -417,16 +417,16 @@ impl<'a> Lexer<'a> {
                 );
             }
         }
-        
-        if self.config.enforce_indent_consistency && 
-            count % self.config.standard_indent_size != 0 && 
+
+        if self.config.enforce_indent_consistency &&
+            count % self.config.standard_indent_size != 0 &&
             (!has_tabs || !self.config.allow_tabs_in_indentation) {
-            
+
             let msg = format!(
-                "Inconsistent indentation. Expected multiple of {} spaces but got {}.", 
+                "Inconsistent indentation. Expected multiple of {} spaces but got {}.",
                 self.config.standard_indent_size, count
             );
-            
+
             if !self.has_error_for_line(indentation_line, &msg) {
                 self.add_error_with_position(
                     &msg,
@@ -436,19 +436,19 @@ impl<'a> Lexer<'a> {
                 );
             }
         }
-        
+
         count
     }
 
     fn handle_identifier(&mut self) -> Token {
         let start_pos = self.position;
         let start_col = self.column;
-        
+
         // Fast-path for common identifiers
         self.consume_while(|c| c.is_alphanumeric() || c == '_');
-        
+
         let text = self.get_slice(start_pos, self.position);
-        
+
         // Fast lookup with direct keyword matching
         let token_type = if self.keywords.contains(text) {
             // Use a function-wide static HashMap for faster lookup than match
@@ -482,7 +482,7 @@ impl<'a> Lexer<'a> {
                 "async" => TokenType::Async,
                 "await" => TokenType::Await,
                 "try" => TokenType::Try,
-                "except" => TokenType::Except, 
+                "except" => TokenType::Except,
                 "finally" => TokenType::Finally,
                 "raise" => TokenType::Raise,
                 "lambda" => TokenType::Lambda,
@@ -497,14 +497,14 @@ impl<'a> Lexer<'a> {
         } else {
             TokenType::Identifier(text.to_string())
         };
-        
+
         Token::new(token_type, self.line, start_col, text.to_string())
     }
 
     fn handle_number(&mut self) -> Token {
         let start_pos = self.position;
         let start_col = self.column;
-    
+
         // Handle special prefixes (0b, 0o, 0x)
         if self.peek_char() == '0' && !self.is_at_end_n(1) {
             let next_char = self.peek_char_n(1);
@@ -522,65 +522,65 @@ impl<'a> Lexer<'a> {
                 return self.handle_hex_literal(start_pos, start_col);
             }
         }
-    
+
         let mut is_float = false;
         let mut _decimal_count = 0;
-    
+
         // Handle the case where number starts with a dot
         if self.peek_char() == '.' {
             _decimal_count += 1;
             is_float = true;
             self.consume_char();
-            
+
             if self.is_at_end() || !self.peek_char().is_digit(10) {
                 let text = self.get_slice(start_pos, self.position).to_string();
                 self.add_error("Invalid float literal: must have at least one digit after decimal point");
                 return Token::error("Invalid float literal", self.line, start_col, &text);
             }
-            
+
             // Consume digits after decimal point
             self.consume_while(|c| c.is_digit(10) || c == '_');
         } else {
             // Consume the integer part
             self.consume_while(|c| c.is_digit(10) || c == '_');
-            
+
             // Handle decimal point
             if !self.is_at_end() && self.peek_char() == '.' {
                 _decimal_count += 1;
                 is_float = true;
                 self.consume_char();
-                
+
                 // Consume digits after decimal point if any
                 self.consume_while(|c| c.is_digit(10) || c == '_');
             }
         }
-    
+
         // Handle exponent part (e.g., 1e10, 1.5e-5)
         if !self.is_at_end() && (self.peek_char() == 'e' || self.peek_char() == 'E') {
             is_float = true;
             self.consume_char();
-    
+
             // Handle optional sign
             if !self.is_at_end() && (self.peek_char() == '+' || self.peek_char() == '-') {
                 self.consume_char();
             }
-    
+
             // Exponent must have at least one digit
             if self.is_at_end() || !self.peek_char().is_digit(10) {
                 let text = self.get_slice(start_pos, self.position).to_string();
                 self.add_error("Invalid exponent: must start with a digit");
                 return Token::error("Invalid exponent", self.line, start_col, &text);
             }
-    
+
             // Consume exponent digits
             self.consume_while(|c| c.is_digit(10) || c == '_');
         }
-    
+
         let raw_text = self.get_slice(start_pos, self.position).to_string();
         let text = raw_text.replace("_", "");  // Remove underscores for parsing
-    
+
         // Check for multiple decimal points (which would be an error)
-        if !self.is_at_end() && self.peek_char() == '.' && 
+        if !self.is_at_end() && self.peek_char() == '.' &&
            (!self.is_at_end_n(1) && (self.peek_char_n(1).is_digit(10) || self.peek_char_n(1) == '.')) {
             self.add_error("Invalid number format: multiple decimal points");
             self.consume_char();  // Consume the second decimal point
@@ -588,7 +588,7 @@ impl<'a> Lexer<'a> {
             let full_text = self.get_slice(start_pos, self.position).to_string();
             return Token::error("Invalid number format: multiple decimal points", self.line, start_col, &full_text);
         }
-    
+
         // Parse the token based on whether it's a float or integer
         let token_type = if is_float {
             match f64::from_str(&text) {
@@ -609,7 +609,7 @@ impl<'a> Lexer<'a> {
                 }
             }
         };
-    
+
         Token::new(token_type, self.line, start_col, raw_text)
     }
 
@@ -632,14 +632,14 @@ impl<'a> Lexer<'a> {
                 Token::error(&err_msg, self.line, start_col, &raw_text)
             }
         }
-    }        
-    
+    }
+
     fn handle_octal_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
         self.consume_char(); // Skip the 'o' or 'O'
-        
+
         // Directly consume all octal digits (0-7) and underscores
         let mut seen_digit = false;
-        
+
         // Consume all digits (and underscores) that are part of the octal literal
         while !self.is_at_end() {
             let c = self.peek_char();
@@ -652,18 +652,18 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        
+
         let raw_text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if !seen_digit {
             let err_msg = "Invalid octal literal: no digits after '0o'";
             self.add_error(err_msg);
             return Token::error(err_msg, self.line, start_col, &raw_text);
         }
-        
+
         // Extract just the digits (remove the "0o" prefix and any underscores)
         let digit_text = raw_text[2..].replace("_", "");
-        
+
         match i64::from_str_radix(&digit_text, 8) {
             Ok(value) => Token::new(TokenType::OctalLiteral(value), self.line, start_col, raw_text),
             Err(_) => {
@@ -673,7 +673,7 @@ impl<'a> Lexer<'a> {
             }
         }
     }
-    
+
     fn handle_hex_literal(&mut self, start_pos: usize, start_col: usize) -> Token {
         self.consume_char();
         self.consume_while(|c| c.is_alphanumeric() || c == '_');
@@ -699,15 +699,15 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position;
         let start_col = self.column;
         let quote_char = self.peek_char();
-        
+
         self.consume_char();
-        
+
         let mut escaped = false;
         let mut string_content = String::new();
-        
+
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            
+
             if escaped {
                 let escaped_char = match current_char {
                     'n' => '\n',
@@ -753,12 +753,12 @@ impl<'a> Lexer<'a> {
                         current_char
                     }
                 };
-                
+
                 if !matches!(current_char, '0'..='7' | 'x' | 'u' | 'U' | '\n' | '\r') {
                     string_content.push(escaped_char);
                     self.consume_char();
                 }
-                
+
                 escaped = false;
             } else if current_char == '\\' {
                 escaped = true;
@@ -777,15 +777,15 @@ impl<'a> Lexer<'a> {
                     self.line,
                     start_col,
                     &text
-                );        
+                );
             } else {
                 string_content.push(current_char);
                 self.consume_char();
             }
         }
-        
+
         let text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if self.position >= self.input.len() && !text.ends_with(quote_char) {
             self.add_error_with_suggestion(
                 "Unterminated string literal",
@@ -798,7 +798,7 @@ impl<'a> Lexer<'a> {
                 &text
             );
         }
-        
+
         Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text)
     }
 
@@ -806,15 +806,15 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position - 1;
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
-        
+
         self.consume_char();
-        
+
         let mut string_content = String::new();
         let mut is_escaped = false;
-        
+
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            
+
             if is_escaped {
                 string_content.push('\\');
                 string_content.push(current_char);
@@ -837,19 +837,19 @@ impl<'a> Lexer<'a> {
                     self.line,
                     start_col,
                     &text
-                );        
+                );
             } else {
                 string_content.push(current_char);
                 self.consume_char();
             }
         }
-        
+
         if is_escaped {
             string_content.push('\\');
         }
-        
+
         let text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if self.position >= self.input.len() && !text.ends_with(quote_char) {
             self.add_error("Unterminated raw string literal");
             return Token::error(
@@ -859,7 +859,7 @@ impl<'a> Lexer<'a> {
                 &text
             );
         }
-        
+
         Token::new(TokenType::RawString(string_content), self.line, start_col, text)
     }
 
@@ -867,16 +867,16 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position - 1;
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
-        
+
         self.consume_char();
-        
+
         let mut string_content = String::new();
         let mut in_expression = false;
         let mut brace_depth = 0;
-        
+
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            
+
             if !in_expression && current_char == '{' && self.peek_char_n(1) != '{' {
                 in_expression = true;
                 brace_depth = 1;
@@ -890,18 +890,18 @@ impl<'a> Lexer<'a> {
                 brace_depth -= 1;
                 string_content.push(current_char);
                 self.consume_char();
-                
+
                 if brace_depth == 0 {
                     in_expression = false;
                 }
             } else if !in_expression && current_char == '\\' {
                 self.consume_char();
-                
+
                 if self.is_at_end() {
                     self.add_error("Incomplete escape sequence in f-string");
                     break;
                 }
-                
+
                 let escape_char = self.peek_char();
                 string_content.push('\\');
                 string_content.push(escape_char);
@@ -923,13 +923,13 @@ impl<'a> Lexer<'a> {
                 self.consume_char();
             }
         }
-        
+
         if in_expression {
             self.add_error("Unterminated expression in f-string: missing '}'");
         }
-        
+
         let text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if self.position >= self.input.len() && !text.ends_with(quote_char) {
             self.add_error("Unterminated f-string literal");
             return Token::error(
@@ -939,7 +939,7 @@ impl<'a> Lexer<'a> {
                 &text
             );
         }
-        
+
         Token::new(TokenType::FString(string_content), self.line, start_col, text)
     }
 
@@ -947,15 +947,15 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position - 1;
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
-        
+
         self.consume_char();
-        
+
         let mut bytes = Vec::new();
         let mut escaped = false;
-        
+
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            
+
             if escaped {
                 match current_char {
                     'n' => bytes.push(b'\n'),
@@ -966,7 +966,7 @@ impl<'a> Lexer<'a> {
                     '"' => bytes.push(b'"'),
                     'x' => {
                         self.consume_char();
-                        
+
                         let mut hex_value = String::with_capacity(2);
                         for _ in 0..2 {
                             if !self.is_at_end() && self.peek_char().is_ascii_hexdigit() {
@@ -977,11 +977,11 @@ impl<'a> Lexer<'a> {
                                 break;
                             }
                         }
-                        
+
                         if let Ok(byte) = u8::from_str_radix(&hex_value, 16) {
                             bytes.push(byte);
                         }
-                        
+
                         escaped = false;
                         continue;
                     },
@@ -990,7 +990,7 @@ impl<'a> Lexer<'a> {
                         bytes.push(current_char as u8);
                     }
                 }
-                
+
                 self.consume_char();
                 escaped = false;
             } else if current_char == '\\' {
@@ -1016,9 +1016,9 @@ impl<'a> Lexer<'a> {
                 self.consume_char();
             }
         }
-        
+
         let text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if self.position >= self.input.len() && !text.ends_with(quote_char) {
             self.add_error("Unterminated bytes literal");
             return Token::error(
@@ -1028,7 +1028,7 @@ impl<'a> Lexer<'a> {
                 &text
             );
         }
-        
+
         Token::new(TokenType::BytesLiteral(bytes), self.line, start_col, text)
     }
 
@@ -1036,18 +1036,18 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position;
         let start_col = self.column;
         let quote_char = self.peek_char();
-        
+
         self.consume_char();
         self.consume_char();
         self.consume_char();
-        
+
         let mut string_content = String::new();
         let mut consecutive_quotes = 0;
         let mut escaped = false;
-        
+
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            
+
             if escaped {
                 match current_char {
                     'n' => string_content.push('\n'),
@@ -1077,7 +1077,7 @@ impl<'a> Lexer<'a> {
                         string_content.push(current_char);
                     }
                 }
-                
+
                 escaped = false;
                 self.consume_char();
             } else if current_char == '\\' {
@@ -1085,13 +1085,13 @@ impl<'a> Lexer<'a> {
                     string_content.push(quote_char);
                 }
                 consecutive_quotes = 0;
-                
+
                 escaped = true;
                 self.consume_char();
             } else if current_char == quote_char {
                 consecutive_quotes += 1;
                 self.consume_char();
-                
+
                 if consecutive_quotes == 3 {
                     break;
                 }
@@ -1100,14 +1100,14 @@ impl<'a> Lexer<'a> {
                     string_content.push(quote_char);
                 }
                 consecutive_quotes = 0;
-                
+
                 string_content.push(current_char);
                 self.consume_char();
             }
         }
-        
+
         let text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if consecutive_quotes < 3 {
             self.add_error("Unterminated triple-quoted string");
             return Token::error(
@@ -1117,7 +1117,7 @@ impl<'a> Lexer<'a> {
                 &text
             );
         }
-        
+
         Token::new(TokenType::StringLiteral(string_content), self.line, start_col, text)
     }
 
@@ -1125,21 +1125,21 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position - 1;
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
-        
+
         self.consume_char();
         self.consume_char();
         self.consume_char();
-        
+
         let mut string_content = String::new();
         let mut consecutive_quotes = 0;
-        
+
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            
+
             if current_char == quote_char {
                 consecutive_quotes += 1;
                 self.consume_char();
-                
+
                 if consecutive_quotes == 3 {
                     break;
                 }
@@ -1148,19 +1148,19 @@ impl<'a> Lexer<'a> {
                     string_content.push(quote_char);
                 }
                 consecutive_quotes = 0;
-                
+
                 string_content.push(current_char);
                 self.consume_char();
             }
         }
-        
+
         let text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if consecutive_quotes < 3 {
             self.add_error("Unterminated raw triple-quoted string");
             return Token::error("Unterminated raw triple-quoted string", self.line, start_col, &text);
         }
-        
+
         Token::new(TokenType::RawString(string_content), self.line, start_col, text)
     }
 
@@ -1168,34 +1168,34 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position - 1;
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
-        
+
         self.consume_char();
         self.consume_char();
         self.consume_char();
-        
+
         let mut string_content = String::new();
         let mut consecutive_quotes = 0;
         let mut in_expression = false;
         let mut brace_depth = 0;
-        
+
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            
+
             if !in_expression && current_char == quote_char {
                 consecutive_quotes += 1;
                 self.consume_char();
-                
+
                 if consecutive_quotes == 3 {
                     break;
                 }
-            } else if !in_expression && current_char == '{' && 
+            } else if !in_expression && current_char == '{' &&
                       self.peek_char_n(1) != '{' {
-                
+
                 for _ in 0..consecutive_quotes {
                     string_content.push(quote_char);
                 }
                 consecutive_quotes = 0;
-                
+
                 in_expression = true;
                 brace_depth = 1;
                 string_content.push(current_char);
@@ -1208,30 +1208,30 @@ impl<'a> Lexer<'a> {
                 brace_depth -= 1;
                 string_content.push(current_char);
                 self.consume_char();
-                
+
                 if brace_depth == 0 {
                     in_expression = false;
                 }
             } else {
-                
+
                 if consecutive_quotes > 0 && !in_expression {
                     for _ in 0..consecutive_quotes {
                         string_content.push(quote_char);
                     }
                     consecutive_quotes = 0;
                 }
-                
+
                 string_content.push(current_char);
                 self.consume_char();
             }
         }
-        
+
         let text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if in_expression {
             self.add_error("Unterminated expression in f-string: missing '}'");
         }
-        
+
         if consecutive_quotes < 3 {
             self.add_error("Unterminated formatted triple-quoted string");
             return Token::error(
@@ -1241,7 +1241,7 @@ impl<'a> Lexer<'a> {
                 &text
             );
         }
-        
+
         Token::new(TokenType::FString(string_content), self.line, start_col, text)
     }
 
@@ -1249,18 +1249,18 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position - 1;
         let start_col = self.column - 1;
         let quote_char = self.peek_char();
-        
+
         self.consume_char();
         self.consume_char();
         self.consume_char();
-        
+
         let mut bytes = Vec::new();
         let mut consecutive_quotes = 0;
         let mut escaped = false;
-        
+
         while !self.is_at_end() {
             let current_char = self.peek_char();
-            
+
             if escaped {
                 match current_char {
                     'n' => bytes.push(b'\n'),
@@ -1273,7 +1273,7 @@ impl<'a> Lexer<'a> {
                     '"' => bytes.push(b'"'),
                     'x' => {
                         self.consume_char();
-                        
+
                         let mut hex_value = String::with_capacity(2);
                         for _ in 0..2 {
                             if !self.is_at_end() && self.peek_char().is_ascii_hexdigit() {
@@ -1284,11 +1284,11 @@ impl<'a> Lexer<'a> {
                                 break;
                             }
                         }
-                        
+
                         if let Ok(byte) = u8::from_str_radix(&hex_value, 16) {
                             bytes.push(byte);
                         }
-                        
+
                         escaped = false;
                         continue;
                     },
@@ -1297,7 +1297,7 @@ impl<'a> Lexer<'a> {
                         bytes.push(current_char as u8);
                     }
                 }
-                
+
                 self.consume_char();
                 escaped = false;
             } else if current_char == '\\' {
@@ -1305,35 +1305,35 @@ impl<'a> Lexer<'a> {
                     bytes.push(quote_char as u8);
                 }
                 consecutive_quotes = 0;
-                
+
                 escaped = true;
                 self.consume_char();
             } else if current_char == quote_char {
                 consecutive_quotes += 1;
                 self.consume_char();
-                
+
                 if consecutive_quotes == 3 {
                     break;
                 }
             } else {
-                
+
                 for _ in 0..consecutive_quotes {
                     bytes.push(quote_char as u8);
                 }
                 consecutive_quotes = 0;
-                
+
                 if !current_char.is_ascii() {
                     self.add_error("Non-ASCII character in bytes literal");
                 } else {
                     bytes.push(current_char as u8);
                 }
-                
+
                 self.consume_char();
             }
         }
-        
+
         let text = self.get_slice(start_pos, self.position).to_string();
-        
+
         if consecutive_quotes < 3 {
             self.add_error("Unterminated bytes triple-quoted string");
             return Token::error(
@@ -1343,7 +1343,7 @@ impl<'a> Lexer<'a> {
                 &text
             );
         }
-        
+
         Token::new(TokenType::BytesLiteral(bytes), self.line, start_col, text)
     }
 
@@ -1351,9 +1351,9 @@ impl<'a> Lexer<'a> {
         let start_pos = self.position;
         let start_col = self.column;
         let current_char = self.peek_char();
-        
+
         self.consume_char();
-        
+
         let token_type = match current_char {
             '+' => {
                 if !self.is_at_end() && self.peek_char() == '=' {
@@ -1507,7 +1507,7 @@ impl<'a> Lexer<'a> {
                     TokenType::Colon
                 }
             },
-            
+
             '(' => TokenType::LeftParen,
             ')' => TokenType::RightParen,
             '[' => TokenType::LeftBracket,
@@ -1525,18 +1525,18 @@ impl<'a> Lexer<'a> {
                 }
                 TokenType::SemiColon
             },
-            
+
             '\\' => {
                 TokenType::BackSlash
             },
-            
+
             _ => {
                 let msg = format!("Unexpected character: {}", current_char);
                 self.add_error(&msg);
                 TokenType::Invalid(msg)
             }
         };
-        
+
         let text = self.get_slice(start_pos, self.position);
         Token::new(token_type, self.line, start_col, text.to_string())
     }
@@ -1544,11 +1544,11 @@ impl<'a> Lexer<'a> {
     fn handle_ellipsis(&mut self) -> Token {
         let _start_pos = self.position;
         let start_col = self.column;
-        
+
         self.consume_char();
         self.consume_char();
         self.consume_char();
-        
+
         Token::new(
             TokenType::Ellipsis,
             self.line,
@@ -1560,34 +1560,34 @@ impl<'a> Lexer<'a> {
     fn handle_octal_escape(&mut self, string_content: &mut String) -> char {
         let mut octal_value = String::with_capacity(3);
         let mut digit_count = 0;
-        
+
         octal_value.push(self.peek_char());
         self.consume_char();
         digit_count += 1;
-        
+
         while digit_count < 3 && !self.is_at_end() && self.peek_char().is_digit(8) {
             octal_value.push(self.peek_char());
             self.consume_char();
             digit_count += 1;
         }
-        
+
         if let Ok(byte) = u8::from_str_radix(&octal_value, 8) {
             string_content.push(byte as char);
         } else {
             let err_msg = format!("Invalid octal escape sequence: \\{}", octal_value);
             self.add_error(&err_msg);
         }
-        
+
         '\0'
     }
 
     fn handle_hex_escape(&mut self, string_content: &mut String) -> char {
         self.consume_char();
-        
+
         let mut hex_value = String::with_capacity(2);
-        
+
         for _ in 0..2 {
-            if !self.is_at_end() && 
+            if !self.is_at_end() &&
                 self.peek_char().is_ascii_hexdigit() {
                 hex_value.push(self.peek_char());
                 self.consume_char();
@@ -1596,30 +1596,30 @@ impl<'a> Lexer<'a> {
                 return '?';
             }
         }
-        
+
         if let Ok(byte) = u8::from_str_radix(&hex_value, 16) {
             string_content.push(byte as char);
         } else {
             let err_msg = format!("Invalid hex escape sequence: \\x{}", hex_value);
             self.add_error(&err_msg);
         }
-        
+
         '\0'
     }
 
     fn handle_unicode_escape(&mut self, string_content: &mut String) -> char {
         self.consume_char();
-        
+
         let has_braces = !self.is_at_end() && self.peek_char() == '{';
         if has_braces {
             self.consume_char();
         }
-        
+
         if !has_braces {
             let mut hex_value = String::with_capacity(4);
-            
+
             for _ in 0..4 {
-                if !self.is_at_end() && 
+                if !self.is_at_end() &&
                    self.peek_char().is_ascii_hexdigit() {
                     hex_value.push(self.peek_char());
                     self.consume_char();
@@ -1628,7 +1628,7 @@ impl<'a> Lexer<'a> {
                     return '?';
                 }
             }
-            
+
             if let Ok(code_point) = u32::from_str_radix(&hex_value, 16) {
                 if let Some(c) = char::from_u32(code_point) {
                     string_content.push(c);
@@ -1643,26 +1643,26 @@ impl<'a> Lexer<'a> {
         }
         else {
             let mut hex_value = String::new();
-            
-            while !self.is_at_end() && 
-                  self.peek_char().is_ascii_hexdigit() && 
+
+            while !self.is_at_end() &&
+                  self.peek_char().is_ascii_hexdigit() &&
                   hex_value.len() < 6 {
                 hex_value.push(self.peek_char());
                 self.consume_char();
             }
-            
+
             if !self.is_at_end() && self.peek_char() == '}' {
                 self.consume_char();
             } else {
                 self.add_error("Unclosed Unicode escape sequence: missing closing brace");
                 return '?';
             }
-            
+
             if hex_value.is_empty() {
                 self.add_error("Empty Unicode escape sequence: \\u{}");
                 return '?';
             }
-            
+
             if let Ok(code_point) = u32::from_str_radix(&hex_value, 16) {
                 if let Some(c) = char::from_u32(code_point) {
                     string_content.push(c);
@@ -1675,15 +1675,15 @@ impl<'a> Lexer<'a> {
                 self.add_error(&err_msg);
             }
         }
-        
+
         '\0'
     }
 
     fn handle_extended_unicode_escape(&mut self, string_content: &mut String) -> char {
         self.consume_char();
-        
+
         let mut hex_value = String::with_capacity(8);
-        
+
         for _ in 0..8 {
             if !self.is_at_end() && self.peek_char().is_ascii_hexdigit() {
                 hex_value.push(self.peek_char());
@@ -1693,7 +1693,7 @@ impl<'a> Lexer<'a> {
                 return '?';
             }
         }
-        
+
         if let Ok(code_point) = u32::from_str_radix(&hex_value, 16) {
             if let Some(c) = char::from_u32(code_point) {
                 string_content.push(c);
@@ -1705,7 +1705,7 @@ impl<'a> Lexer<'a> {
             let err_msg = format!("Invalid Unicode escape sequence: \\U{}", hex_value);
             self.add_error(&err_msg);
         }
-        
+
         '\0'
     }
 }

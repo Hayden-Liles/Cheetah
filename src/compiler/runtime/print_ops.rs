@@ -12,7 +12,25 @@ pub extern "C" fn print_string(value: *const c_char) {
         if !value.is_null() {
             let c_str = CStr::from_ptr(value);
             if let Ok(str_slice) = c_str.to_str() {
-                print!("{}", str_slice);
+                // Check if this is a space character (for printing between arguments)
+                if str_slice == " " {
+                    print!(" ");
+                    let _ = std::io::stdout().flush();
+                    return;
+                }
+
+                // Remove all newlines and clean the string
+                // First, get only the first line (before any newlines)
+                let first_line = match str_slice.split('\n').next() {
+                    Some(line) => line,
+                    None => "",
+                };
+
+                // Then trim any remaining whitespace
+                let cleaned_str = first_line.trim();
+
+                // Print the cleaned string
+                print!("{}", cleaned_str);
                 let _ = std::io::stdout().flush();
             }
         }
@@ -28,12 +46,18 @@ pub extern "C" fn println_string(value: *const c_char) {
         if !value.is_null() {
             let c_str = CStr::from_ptr(value);
             if let Ok(str_slice) = c_str.to_str() {
-                // Check if the string already ends with a newline
-                if str_slice.ends_with('\n') {
-                    print!("{}", str_slice);
-                } else {
-                    println!("{}", str_slice);
-                }
+                // Remove all newlines and clean the string
+                // First, get only the first line (before any newlines)
+                let first_line = match str_slice.split('\n').next() {
+                    Some(line) => line,
+                    None => "",
+                };
+
+                // Then trim any remaining whitespace
+                let cleaned_str = first_line.trim();
+
+                // Always print with a newline at the end
+                println!("{}", cleaned_str);
                 let _ = std::io::stdout().flush();
             }
         }

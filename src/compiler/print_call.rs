@@ -127,7 +127,7 @@ impl<'ctx> CompilationContext<'ctx> {
 
                     // If this is the last argument, print a newline
                     if i == args.len() - 1 {
-                        let newline_str = self.llvm_context.const_string(b"\n", false);
+                        let newline_str = self.llvm_context.const_string(b"\n", true);  // true for null termination
                         let global_str = self.module.add_global(newline_str.get_type(), None, "newline_str");
                         global_str.set_initializer(&newline_str);
 
@@ -139,8 +139,9 @@ impl<'ctx> CompilationContext<'ctx> {
 
                         self.builder.build_call(print_fn, &[str_ptr.into()], "print_newline").unwrap();
                     } else {
-                        // If not the last argument, print a space
-                        let space_str = self.llvm_context.const_string(b" ", false);
+                        // If not the last argument, print a single space character (no newlines)
+                        // Create a clean space string with no extra characters
+                        let space_str = self.llvm_context.const_string(b" ", true);  // true for null termination
                         let global_str = self.module.add_global(space_str.get_type(), None, "space_str");
                         global_str.set_initializer(&space_str);
 
@@ -176,7 +177,8 @@ impl<'ctx> CompilationContext<'ctx> {
                         self.builder.build_call(print_str_fn, &[str_ptr.into()], "print_space").unwrap();
                     } else {
                         // If this is the last argument, print a newline
-                        let newline_str = self.llvm_context.const_string(b"\n", false);
+                        // Use a clean newline string without any extra whitespace
+                        let newline_str = self.llvm_context.const_string(b"\n", true);  // true for null termination
                         let global_str = self.module.add_global(newline_str.get_type(), None, "newline_str");
                         global_str.set_initializer(&newline_str);
 
