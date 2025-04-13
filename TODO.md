@@ -62,19 +62,14 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Fix LLVM validation issues with function calls
    - [x] Implement proper handling for function calls with len()
    - [x] Fix LLVM dominance validation issues with function calls
-3. [x] Implement basic exception handling structure (PARTIALLY COMPLETED)
+3. [x] Implement basic exception handling structure (COMPLETED)
    - [x] Define exception runtime structure
    - [x] Implement basic exception creation and raising
    - [x] Implement simple try-except blocks
    - [x] Add structure for finally blocks
    - [x] Add basic tests for exception handling
-   - [ ] Complete full exception handling implementation (moved to task #5)
-4. [ ] Add support for modules and imports
-   - [ ] Implement basic module loading
-   - [ ] Support for import statements
-   - [ ] Handle module-level variables and functions
-   - [ ] Support relative imports
-5. [x] Complete exception handling implementation (MOSTLY COMPLETED)
+   - [x] Complete full exception handling implementation
+4. [x] Complete exception handling implementation (COMPLETED)
    - [x] Implement proper exception propagation through the call stack
    - [x] Add support for nested exception handling
    - [x] Support exception variables (as in 'except Exception as e')
@@ -84,11 +79,15 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Fix basic block termination issues with return statements in try-except blocks
    - [x] Add simplified tests for raise and catch functionality
    - [x] Add test for exception variable binding
-   - [ ] Add support for custom exception types
-   - [ ] Implement exception chaining (raise ... from ...)
-   - [ ] Implement proper stack unwinding for exceptions
-   - [ ] Support exception type checking
-   - [ ] Enable advanced exception handling tests
+5. [ ] Add support for modules and imports
+   - [ ] Implement basic module loading
+   - [ ] Support for import statements
+   - [ ] Handle module-level variables and functions
+   - [ ] Support relative imports
+   - [ ] Add support for module-level functions and variables
+   - [ ] Implement import caching to avoid duplicate imports
+   - [ ] Support for importing specific symbols from modules
+   - [ ] Add tests for module imports
 
 ### Completed High Priority Features
 4. [x] Enhance dictionary support further
@@ -155,7 +154,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
      - [x] Test complex and deeply nested list comprehensions
      - [x] Test edge cases like empty list comprehensions
      - [x] Support for advanced features (string operations, arithmetic operations, membership operations)
-     - [ ] Support for more advanced features (tuple unpacking in comprehensions, multiple for clauses)
+     - [x] Support for more advanced features (tuple unpacking in comprehensions, multiple for clauses)
 9. [x] Add dictionary support
    - [x] Implement basic dictionary structure in LLVM
    - [x] Add dictionary creation (empty and with key-value pairs)
@@ -212,13 +211,19 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
     - [x] Fix len() function in nested function calls with parameters
     - [x] Fix LLVM validation issues with function calls
     - [x] Implement proper handling for function calls with len()
-19. [x] Implement basic exception handling structure
+19. [x] Implement exception handling structure (COMPLETED)
     - [x] Define exception runtime structure
     - [x] Implement basic exception creation and raising
     - [x] Implement simple try-except blocks
     - [x] Add structure for finally blocks
     - [x] Add basic tests for exception handling
-    - [ ] Complete full exception handling implementation (moved to Current Focus)
+    - [x] Implement proper exception propagation through the call stack
+    - [x] Add support for nested exception handling
+    - [x] Support exception variables (as in 'except Exception as e')
+    - [x] Support try-except-else-finally blocks
+    - [x] Fix function call parameter type mismatch in exception tests
+    - [x] Fix basic block termination issues with return statements in try-except blocks
+    - [x] Add simplified tests for raise and catch functionality
 20. [x] Add more comprehensive test cases for new features
     - [x] Enable previously ignored tests for list comprehensions with string operations
     - [x] Enable previously ignored tests for list comprehensions with arithmetic operations
@@ -236,6 +241,12 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [ ] Implement context managers (with statement)
 - [ ] Add support for lambda functions
 - [ ] Implement proper error handling during compilation
+- [ ] Advanced exception handling features
+  - [ ] Add support for custom exception types
+  - [ ] Implement exception chaining (raise ... from ...)
+  - [ ] Implement proper stack unwinding for exceptions
+  - [ ] Support exception type checking
+  - [ ] Enable advanced exception handling tests
 - [ ] Advanced dictionary features
   - [ ] Add support for dictionary unpacking (**dict)
   - [ ] Implement dictionary merging and update operations
@@ -300,7 +311,10 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
   - ✅ Implemented exception variable binding (as in 'except Exception as e')
   - ✅ Added support for nested try-except blocks
   - ✅ Created comprehensive tests for exception handling functionality
-  - ⏳ More work needed to complete advanced exception handling features
+  - ✅ Fixed basic block termination issues with return statements in try-except blocks
+  - ✅ Added simplified tests for raise and catch functionality
+  - ✅ Added test for exception variable binding
+  - ⏳ Advanced exception handling features moved to medium priority
 - Research how other compilers handle closure environments and variable capture
 - Consider implementing a static analysis pass to identify all nonlocal variables before code generation
 - Look into how Python's exception handling is implemented in CPython for inspiration
