@@ -4282,41 +4282,35 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                             let parent_var_ptr = self.scope_stack.scopes[parent_scope_index].get_variable(id).cloned();
 
                             if let Some(_ptr) = parent_var_ptr {
-                                // Create a unique name for the shadowed variable
-                                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                                let fn_name = current_function.get_name().to_string_lossy().to_string();
-                                let unique_name = format!("__shadowed_{}_{}", fn_name.replace('.', "_"), id);
+                                // For shadowing, we don't need a unique name anymore
+                                // We're creating a new variable with the same name that shadows the outer one
 
-                                // Check if we already have a local variable for this shadowed variable
-                                if let Some(local_ptr) = current_scope.get_variable(&unique_name) {
-                                    // Store the value in the local variable
-                                    self.builder.build_store(*local_ptr, value).unwrap();
-                                    println!("Assigned to shadowed nonlocal variable '{}' using unique name '{}'", id, unique_name);
-                                    return Ok(());
-                                } else {
-                                    // We need to create a local variable for the shadowed variable
-                                    let var_type = self.scope_stack.scopes[parent_scope_index].get_type(id).cloned();
+                                // For shadowing cases, we want to create a new local variable with the same name
+                                // instead of trying to access the outer variable
 
-                                    if let Some(var_type) = var_type {
-                                        // Get the LLVM type for the variable
-                                        let llvm_type = self.get_llvm_type(&var_type);
+                                // Get the LLVM type for the value
+                                let llvm_type = value.get_type();
 
-                                        // Create a local variable to hold the shadowed value
-                                        let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+                                // Create a local variable with the original name (not a unique name)
+                                // This is the key difference - we're creating a new variable that shadows the outer one
+                                let local_ptr = self.builder.build_alloca(llvm_type, id).unwrap();
 
-                                        // Store the value in the local variable
-                                        self.builder.build_store(local_ptr, value).unwrap();
+                                // Store the value in the local variable
+                                self.builder.build_store(local_ptr, value).unwrap();
 
-                                        // Add the variable to the current scope with the unique name
-                                        self.scope_stack.current_scope_mut().map(|scope| {
-                                            scope.add_variable(unique_name.clone(), local_ptr, var_type.clone());
-                                            scope.add_nonlocal_mapping(id.clone(), unique_name.clone());
-                                            println!("Created local variable for shadowed nonlocal variable '{}' with unique name '{}'", id, unique_name);
-                                        });
+                                // Add the variable to the current scope with the original name
+                                self.scope_stack.current_scope_mut().map(|scope| {
+                                    scope.add_variable(id.clone(), local_ptr, value_type.clone());
+                                    println!("Created shadowing variable '{}' in nested function", id);
+                                });
 
-                                        return Ok(());
-                                    }
-                                }
+                                // Also add it to the variables map for backward compatibility
+                                self.variables.insert(id.clone(), local_ptr);
+
+                                // Register the variable type
+                                self.register_variable(id.clone(), value_type.clone());
+
+                                return Ok(());
                             }
                         }
                     }

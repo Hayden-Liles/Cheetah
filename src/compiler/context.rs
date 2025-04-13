@@ -740,48 +740,9 @@ impl<'ctx> CompilationContext<'ctx> {
                 }
             }
 
-            // Create local copies of all outer variables in the entry block
-            for (var_name, _ptr, var_type) in outer_vars {
-                // Skip parameters which are already handled
-                if params.iter().any(|p| p.name == var_name) {
-                    continue;
-                }
-
-                // Create a unique name for this variable
-                let unique_name = format!("__outer_{}_{}_{}", name.replace('.', "_"), self.scope_stack.scopes.len(), var_name);
-
-                // Get the LLVM type for the variable
-                let llvm_type = self.get_llvm_type(&var_type);
-
-                // Create an alloca for this variable
-                let alloca = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
-
-                // Instead of loading from the outer scope directly, which can cause dominance validation issues,
-                // initialize with a default value. The actual value will be passed at runtime.
-                let default_value: inkwell::values::BasicValueEnum<'ctx> = match var_type {
-                    Type::Int => self.llvm_context.i64_type().const_int(0, false).into(),
-                    Type::Float => self.llvm_context.f64_type().const_float(0.0).into(),
-                    Type::Bool => self.llvm_context.bool_type().const_int(0, false).into(),
-                    Type::String => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
-                    Type::List(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
-                    Type::Tuple(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
-                    Type::Dict(_, _) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
-                    Type::Set(_) => self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into(),
-                    _ => self.llvm_context.i64_type().const_int(0, false).into(),
-                };
-
-                // Store the default value in the local variable
-                self.builder.build_store(alloca, default_value).unwrap();
-
-                // Add the variable to the current scope with the unique name
-                self.add_variable_to_scope(unique_name.clone(), alloca, var_type.clone());
-
-                // Add a mapping from the original name to the unique name
-                if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                    current_scope.add_nonlocal_mapping(var_name.clone(), unique_name.clone());
-                    println!("Created local copy of outer scope variable '{}' with unique name '{}'", var_name, unique_name);
-                }
-            }
+            // We don't need to create local copies of outer variables for shadowing cases
+            // The shadowing will be handled in the compile_assignment method
+            // This is a key change to fix the dominance validation issues
         }
 
         // Debug print
