@@ -83,6 +83,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Fix function call parameter type mismatch in exception tests
    - [x] Fix basic block termination issues with return statements in try-except blocks
    - [x] Add simplified tests for raise and catch functionality
+   - [x] Add test for exception variable binding
    - [ ] Add support for custom exception types
    - [ ] Implement exception chaining (raise ... from ...)
    - [ ] Implement proper stack unwinding for exceptions
