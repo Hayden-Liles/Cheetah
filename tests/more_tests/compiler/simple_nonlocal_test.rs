@@ -106,6 +106,7 @@ result = outer()
 "#;
 
     let result = compile_source(source);
+    // Assert that the compilation succeeded
     assert!(result.is_ok(), "Failed to compile simple nonlocal read: {:?}", result.err());
 
     // Print the IR for debugging

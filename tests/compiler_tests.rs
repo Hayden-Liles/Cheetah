@@ -123,6 +123,10 @@ mod string_slice_operations_test;
 #[path = "more_tests/compiler/len_function_test.rs"]
 mod len_function_test;
 
+// Include the exception handling tests
+#[path = "more_tests/compiler/exception_test.rs"]
+mod exception_test;
+
 // Include the list comprehension tests
 #[path = "more_tests/compiler/list_comprehension_test.rs"]
 mod list_comprehension_test;

@@ -9,6 +9,7 @@ pub mod scope;
 pub mod closure;
 pub mod builtins;
 pub mod len_call;
+pub mod exception;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;

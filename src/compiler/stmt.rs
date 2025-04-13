@@ -905,50 +905,15 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
             },
 
             // Compile try/except statement
-            Stmt::Try { body,  orelse, finalbody, .. } => {
-                // In a complete implementation, we'd need to:
-                // 1. Set up exception handling blocks
-                // 2. Execute the body with proper handlers
-                // 3. Handle finally blocks
-
-                // For now, just execute the body and ignore exception handling
-                for stmt in body {
-                    // Skip errors to avoid crashing
-                    let _ = self.compile_stmt(stmt.as_ref());
-                }
-
-                // Execute the else block if we didn't skip due to exceptions
-                // (which we can't detect yet)
-                for stmt in orelse {
-                    let _ = self.compile_stmt(stmt.as_ref());
-                }
-
-                // Always execute the finally block
-                for stmt in finalbody {
-                    let _ = self.compile_stmt(stmt.as_ref());
-                }
-
-                // Note that this is only partially implemented
-                Ok(())
+            Stmt::Try { body, handlers, orelse, finalbody, .. } => {
+                // Use our new exception handling implementation
+                self.compile_try_stmt(body, handlers, orelse, finalbody)
             },
 
             // Compile a raise statement
             Stmt::Raise { exc, cause, .. } => {
-                // In a complete implementation, we'd:
-                // 1. Evaluate the exception and cause expressions
-                // 2. Call runtime functions to raise the exception
-
-                // For now, just evaluate the expressions for side effects
-                if let Some(exc_expr) = exc {
-                    let _ = self.compile_expr(exc_expr)?;
-                }
-
-                if let Some(cause_expr) = cause {
-                    let _ = self.compile_expr(cause_expr)?;
-                }
-
-                // Raise implementation omitted - we'd need runtime support for exceptions
-                Err("Raise statement not fully implemented yet".to_string())
+                // Use our new exception handling implementation
+                self.compile_raise_stmt(exc, cause)
             },
 
             // Compile an import statement

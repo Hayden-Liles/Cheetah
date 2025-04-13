@@ -257,8 +257,24 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 let fn_name = current_function.get_name().to_string_lossy().to_string();
                                 let unique_name = format!("__shadowed_{}_{}", fn_name.replace('.', "_"), id);
 
-                                // Create a local variable to hold the shadowed value
+                                // Create a local variable to hold the shadowed value at the beginning of the function
+                                // Save current position
+                                let current_position = self.builder.get_insert_block().unwrap();
+
+                                // Move to the beginning of the entry block
+                                let current_function = self.current_function.unwrap();
+                                let entry_block = current_function.get_first_basic_block().unwrap();
+                                if let Some(first_instr) = entry_block.get_first_instruction() {
+                                    self.builder.position_before(&first_instr);
+                                } else {
+                                    self.builder.position_at_end(entry_block);
+                                }
+
+                                // Create the alloca at the beginning of the function
                                 let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+
+                                // Restore position
+                                self.builder.position_at_end(current_position);
 
                                 // Load the value from the parent scope
                                 let value = self.builder.build_load(llvm_type, ptr, &format!("load_shadowed_{}", id)).unwrap();
@@ -4291,9 +4307,26 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                                 // Get the LLVM type for the value
                                 let llvm_type = value.get_type();
 
-                                // Create a local variable with the original name (not a unique name)
+                                // Create a local variable with the original name (not a unique name) at the beginning of the function
                                 // This is the key difference - we're creating a new variable that shadows the outer one
+
+                                // Save current position
+                                let current_position = self.builder.get_insert_block().unwrap();
+
+                                // Move to the beginning of the entry block
+                                let current_function = self.current_function.unwrap();
+                                let entry_block = current_function.get_first_basic_block().unwrap();
+                                if let Some(first_instr) = entry_block.get_first_instruction() {
+                                    self.builder.position_before(&first_instr);
+                                } else {
+                                    self.builder.position_at_end(entry_block);
+                                }
+
+                                // Create the alloca at the beginning of the function
                                 let local_ptr = self.builder.build_alloca(llvm_type, id).unwrap();
+
+                                // Restore position
+                                self.builder.position_at_end(current_position);
 
                                 // Store the value in the local variable
                                 self.builder.build_store(local_ptr, value).unwrap();
@@ -4503,7 +4536,40 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                     }
                 } else {
                     // Variable doesn't exist yet, allocate storage for it
-                    let ptr = self.allocate_variable(id.clone(), value_type);
+                    // For nested functions, we need to ensure the allocation happens at the beginning of the function
+                    let ptr = if let Some(current_function) = self.current_function {
+                        let fn_name = current_function.get_name().to_string_lossy();
+                        if fn_name.contains('.') {
+                            // For nested functions, we need to allocate at the beginning of the function
+                            // Save current position
+                            let current_position = self.builder.get_insert_block().unwrap();
+
+                            // Move to the beginning of the entry block
+                            let entry_block = current_function.get_first_basic_block().unwrap();
+                            if let Some(first_instr) = entry_block.get_first_instruction() {
+                                self.builder.position_before(&first_instr);
+                            } else {
+                                self.builder.position_at_end(entry_block);
+                            }
+
+                            // Get the LLVM type for the variable
+                            let llvm_type = self.get_llvm_type(value_type);
+
+                            // Create the alloca at the beginning of the function
+                            let ptr = self.builder.build_alloca(llvm_type, id).unwrap();
+
+                            // Restore position
+                            self.builder.position_at_end(current_position);
+
+                            ptr
+                        } else {
+                            // For regular functions, use the normal allocation method
+                            self.allocate_variable(id.clone(), value_type)
+                        }
+                    } else {
+                        // If not in a function, use the normal allocation method
+                        self.allocate_variable(id.clone(), value_type)
+                    };
 
                     // Register the variable type in the type environment
                     self.register_variable(id.clone(), value_type.clone());

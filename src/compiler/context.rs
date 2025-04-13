@@ -155,7 +155,22 @@ impl<'ctx> CompilationContext<'ctx> {
         // For now, we'll just allocate all variables on the stack
         // In a future implementation, we could add heap allocation for variables accessed by nested functions
         let llvm_type = self.get_llvm_type(ty);
-        let ptr = self.builder.build_alloca(llvm_type, &name).unwrap();
+
+        // Create a unique name for the variable to avoid shadowing issues
+        // This is especially important for nested functions
+        let var_name = if let Some(current_function) = self.current_function {
+            let fn_name = current_function.get_name().to_string_lossy();
+            if fn_name.contains('.') {
+                // For nested functions, prefix the variable name with the function name
+                format!("{}.{}", fn_name, name)
+            } else {
+                name.clone()
+            }
+        } else {
+            name.clone()
+        };
+
+        let ptr = self.builder.build_alloca(llvm_type, &var_name).unwrap();
 
         // Restore the original position
         self.builder.position_at_end(current_position);
@@ -720,31 +735,6 @@ impl<'ctx> CompilationContext<'ctx> {
         // Create a new scope for the function
         self.push_scope(true, false, false); // Create a new scope for the function (is_function=true)
 
-        // Special handling for deeply nested functions (contains at least one dot)
-        let is_deeply_nested = name.matches('.').count() >= 1;
-
-        // If this is a deeply nested function, we need to handle variables from outer scopes
-        if is_deeply_nested {
-            // Find variables from outer scopes that might be accessed in this function
-            let mut outer_vars = Vec::new();
-
-            // Look through all outer scopes except the current one
-            for i in 0..self.scope_stack.scopes.len() - 1 {
-                let scope = &self.scope_stack.scopes[i];
-
-                // Add all variables from this scope to our list
-                for (var_name, &ptr) in &scope.variables {
-                    if let Some(var_type) = scope.get_type(var_name) {
-                        outer_vars.push((var_name.clone(), ptr, var_type.clone()));
-                    }
-                }
-            }
-
-            // We don't need to create local copies of outer variables for shadowing cases
-            // The shadowing will be handled in the compile_assignment method
-            // This is a key change to fix the dominance validation issues
-        }
-
         // Debug print
         println!("After pushing function scope, stack size: {}", self.scope_stack.scopes.len());
 
@@ -787,9 +777,25 @@ impl<'ctx> CompilationContext<'ctx> {
             // Get the parameter value
             let param_value = function.get_nth_param((params.len() + i) as u32).unwrap();
 
-            // Create an alloca for this variable
+            // Create an alloca for this variable at the beginning of the function
             let unique_name = format!("__nonlocal_{}_{}", name.replace('.', "_"), var_name);
+
+            // Save current position
+            let current_position = self.builder.get_insert_block().unwrap();
+
+            // Move to the beginning of the entry block
+            let entry_block = function.get_first_basic_block().unwrap();
+            if let Some(first_instr) = entry_block.get_first_instruction() {
+                self.builder.position_before(&first_instr);
+            } else {
+                self.builder.position_at_end(entry_block);
+            }
+
+            // Create the alloca at the beginning of the function
             let alloca = self.builder.build_alloca(context.i64_type(), &unique_name).unwrap();
+
+            // Restore position
+            self.builder.position_at_end(current_position);
 
             // Store the parameter value in the alloca
             self.builder.build_store(alloca, param_value).unwrap();
@@ -907,9 +913,24 @@ impl<'ctx> CompilationContext<'ctx> {
                     // Add a mapping from the original name to the unique name
                     self.scope_stack.add_nonlocal_mapping(var_name.clone(), unique_name.clone());
 
-                    // Allocate a local variable for the nonlocal variable
+                    // Allocate a local variable for the nonlocal variable at the beginning of the function
+                    // Save current position
+                    let current_position = self.builder.get_insert_block().unwrap();
+
+                    // Move to the beginning of the entry block
+                    let entry_block = function.get_first_basic_block().unwrap();
+                    if let Some(first_instr) = entry_block.get_first_instruction() {
+                        self.builder.position_before(&first_instr);
+                    } else {
+                        self.builder.position_at_end(entry_block);
+                    }
+
+                    // Create the alloca at the beginning of the function
                     let llvm_type = self.get_llvm_type(&var_type);
                     let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+
+                    // Restore position
+                    self.builder.position_at_end(current_position);
 
                     // Initialize the local variable with a default value to avoid uninitialized memory
                     let default_value: inkwell::values::BasicValueEnum<'ctx> = match var_type {
