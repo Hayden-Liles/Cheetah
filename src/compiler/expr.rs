@@ -237,6 +237,49 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 }
                             }
                         }
+
+                        // Special handling for shadowing cases
+                        // If we're in a nested function and the nonlocal variable isn't found in the current scope,
+                        // look for it in the parent scope
+                        if self.scope_stack.scopes.len() >= 2 {
+                            let parent_scope_index = self.scope_stack.scopes.len() - 2;
+
+                            // First, check if the variable exists in the parent scope
+                            let parent_var_ptr = self.scope_stack.scopes[parent_scope_index].get_variable(id).cloned();
+                            let parent_var_type = self.scope_stack.scopes[parent_scope_index].get_type(id).cloned();
+
+                            if let (Some(ptr), Some(var_type)) = (parent_var_ptr, parent_var_type) {
+                                // Get the LLVM type for the variable
+                                let llvm_type = self.get_llvm_type(&var_type);
+
+                                // Create a unique name for the shadowed variable
+                                let current_function = self.current_function.unwrap();
+                                let fn_name = current_function.get_name().to_string_lossy().to_string();
+                                let unique_name = format!("__shadowed_{}_{}", fn_name.replace('.', "_"), id);
+
+                                // Create a local variable to hold the shadowed value
+                                let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+
+                                // Load the value from the parent scope
+                                let value = self.builder.build_load(llvm_type, ptr, &format!("load_shadowed_{}", id)).unwrap();
+
+                                // Store it in the local variable
+                                self.builder.build_store(local_ptr, value).unwrap();
+
+                                // Add the variable to the current scope with the unique name
+                                self.scope_stack.current_scope_mut().map(|scope| {
+                                    scope.add_variable(unique_name.clone(), local_ptr, var_type.clone());
+                                    scope.add_nonlocal_mapping(id.clone(), unique_name.clone());
+                                    println!("Created local variable for shadowed nonlocal variable '{}' with unique name '{}'", id, unique_name);
+                                });
+
+                                // Load the value from the local variable
+                                let value = self.builder.build_load(llvm_type, local_ptr, &format!("load_{}", unique_name)).unwrap();
+                                println!("Loaded shadowed nonlocal variable '{}' using unique name '{}'", id, unique_name);
+
+                                return Ok((value, var_type.clone()));
+                            }
+                        }
                     }
                 }
 
@@ -4158,6 +4201,54 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                                 self.builder.build_store(*ptr, value).unwrap();
                                 println!("Assigned to nonlocal variable '{}' using unique name '{}'", id, unique_name);
                                 return Ok(());
+                            }
+                        }
+
+                        // Special handling for shadowing cases
+                        // If we're in a nested function and the nonlocal variable isn't found in the current scope,
+                        // look for it in the parent scope
+                        if self.scope_stack.scopes.len() >= 2 {
+                            let parent_scope_index = self.scope_stack.scopes.len() - 2;
+
+                            // First, check if the variable exists in the parent scope
+                            let parent_var_ptr = self.scope_stack.scopes[parent_scope_index].get_variable(id).cloned();
+
+                            if let Some(_ptr) = parent_var_ptr {
+                                // Create a unique name for the shadowed variable
+                                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                                let fn_name = current_function.get_name().to_string_lossy().to_string();
+                                let unique_name = format!("__shadowed_{}_{}", fn_name.replace('.', "_"), id);
+
+                                // Check if we already have a local variable for this shadowed variable
+                                if let Some(local_ptr) = current_scope.get_variable(&unique_name) {
+                                    // Store the value in the local variable
+                                    self.builder.build_store(*local_ptr, value).unwrap();
+                                    println!("Assigned to shadowed nonlocal variable '{}' using unique name '{}'", id, unique_name);
+                                    return Ok(());
+                                } else {
+                                    // We need to create a local variable for the shadowed variable
+                                    let var_type = self.scope_stack.scopes[parent_scope_index].get_type(id).cloned();
+
+                                    if let Some(var_type) = var_type {
+                                        // Get the LLVM type for the variable
+                                        let llvm_type = self.get_llvm_type(&var_type);
+
+                                        // Create a local variable to hold the shadowed value
+                                        let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+
+                                        // Store the value in the local variable
+                                        self.builder.build_store(local_ptr, value).unwrap();
+
+                                        // Add the variable to the current scope with the unique name
+                                        self.scope_stack.current_scope_mut().map(|scope| {
+                                            scope.add_variable(unique_name.clone(), local_ptr, var_type.clone());
+                                            scope.add_nonlocal_mapping(id.clone(), unique_name.clone());
+                                            println!("Created local variable for shadowed nonlocal variable '{}' with unique name '{}'", id, unique_name);
+                                        });
+
+                                        return Ok(());
+                                    }
+                                }
                             }
                         }
                     }

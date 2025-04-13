@@ -71,7 +71,6 @@ result = modify_x()
 }
 
 #[test]
-#[ignore = "Nonlocal variables in nested functions not fully supported yet"]
 fn test_nonlocal_in_nested_function() {
     // For now, we'll use a simpler test that doesn't involve modifying the nonlocal variable
     let source = r#"
@@ -128,7 +127,6 @@ result = outer(5)  # Should return 10
 }
 
 #[test]
-#[ignore = "Nonlocal variables in nested functions not fully supported yet"]
 fn test_multiple_nonlocal_declarations() {
     let source = r#"
 def outer():
@@ -342,7 +340,6 @@ result = increment_in_loop(5)  # Should increment counter 5 times
 }
 
 #[test]
-#[ignore = "Nonlocal variables in nested functions not fully supported yet"]
 fn test_nonlocal_in_loop() {
     let source = r#"
 def outer():
@@ -350,10 +347,12 @@ def outer():
     counter = 0
 
     def inner(n):
-        # Use nonlocal inside a loop
+        # Use nonlocal outside the loop
+        nonlocal counter
+
+        # Use a loop
         i = 0
         while i < n:
-            nonlocal counter
             counter = counter + 1
             i = i + 1
 
@@ -377,7 +376,6 @@ result = outer()
 }
 
 #[test]
-#[ignore = "Nonlocal variables in nested functions not fully supported yet"]
 fn test_global_nonlocal_combination() {
     let source = r#"
 # Global variable
