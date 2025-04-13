@@ -6,6 +6,9 @@ pub mod string_ops_register;
 pub mod dict_ops;
 pub mod dict_methods;
 pub mod int_ops;
+pub mod exception_ops;
+pub mod exception_state;
+pub mod exception_runtime;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -23,4 +26,10 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register integer operation functions
     int_ops::register_int_functions(context, module);
+
+    // Register exception handling functions
+    exception_ops::register_exception_functions(context, module);
+
+    // Register exception state functions
+    exception_state::register_exception_state_functions(context, module);
 }

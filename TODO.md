@@ -57,16 +57,35 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Fix LLVM validation issues with nonlocal variables in shadowing cases
    - [x] Fix LLVM dominance validation issues with deeply nested functions
    - [x] Fix LLVM dominance validation issues with variable shadowing in nested functions
-2. [ ] Implement exception handling (try/except/finally)
-   - [ ] Add basic exception raising mechanism
-   - [ ] Implement try/except blocks
-   - [ ] Add support for finally blocks
-   - [ ] Implement exception propagation
-3. [ ] Add support for modules and imports
+2. [x] Fix LLVM validation issues with function calls (COMPLETED)
+   - [x] Fix len() function in nested function calls with parameters
+   - [x] Fix LLVM validation issues with function calls
+   - [x] Implement proper handling for function calls with len()
+   - [x] Fix LLVM dominance validation issues with function calls
+3. [x] Implement basic exception handling structure (PARTIALLY COMPLETED)
+   - [x] Define exception runtime structure
+   - [x] Implement basic exception creation and raising
+   - [x] Implement simple try-except blocks
+   - [x] Add structure for finally blocks
+   - [x] Add basic tests for exception handling
+   - [ ] Complete full exception handling implementation (moved to task #5)
+4. [ ] Add support for modules and imports
    - [ ] Implement basic module loading
    - [ ] Support for import statements
    - [ ] Handle module-level variables and functions
    - [ ] Support relative imports
+5. [x] Complete exception handling implementation (MOSTLY COMPLETED)
+   - [x] Implement proper exception propagation through the call stack
+   - [x] Add support for nested exception handling
+   - [x] Support exception variables (as in 'except Exception as e')
+   - [x] Enable basic exception handling tests
+   - [x] Support try-except-else-finally blocks
+   - [ ] Fix function call parameter type mismatch in exception tests
+   - [ ] Add support for custom exception types
+   - [ ] Implement exception chaining (raise ... from ...)
+   - [ ] Implement proper stack unwinding for exceptions
+   - [ ] Support exception type checking
+   - [ ] Enable advanced exception handling tests
 
 ### Completed High Priority Features
 4. [x] Enhance dictionary support further
@@ -169,8 +188,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
     - [x] Implement len() function for strings and lists
       - [x] Basic len() function implementation
       - [x] Support for len() in expressions and control flow
-      - [ ] Fix len() function in nested function calls with parameters
-      - [ ] Fix LLVM dominance validation issues with function calls
+      - [x] Fix len() function in nested function calls with parameters
+      - [x] Fix LLVM dominance validation issues with function calls
       - [x] Extend len() function to support dictionaries and other collections
     - [x] Implement type conversion functions (int(), float(), bool(), str())
     - [ ] Implement other common built-in functions (min, max, etc.)
@@ -186,13 +205,24 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
     - [x] Add more test cases for complex nonlocal scenarios
     - [x] Fix LLVM dominance validation issues in deeply nested functions
     - [x] Implement proper handling for variable shadowing in nested functions
-18. [x] Add more comprehensive test cases for new features
+18. [x] Fix failing tests for len() function
+    - [x] Fix len() function in nested function calls with parameters
+    - [x] Fix LLVM validation issues with function calls
+    - [x] Implement proper handling for function calls with len()
+19. [x] Implement basic exception handling structure
+    - [x] Define exception runtime structure
+    - [x] Implement basic exception creation and raising
+    - [x] Implement simple try-except blocks
+    - [x] Add structure for finally blocks
+    - [x] Add basic tests for exception handling
+    - [ ] Complete full exception handling implementation (moved to Current Focus)
+20. [x] Add more comprehensive test cases for new features
     - [x] Enable previously ignored tests for list comprehensions with string operations
     - [x] Enable previously ignored tests for list comprehensions with arithmetic operations
     - [x] Enable previously ignored tests for list comprehensions with membership operations
-19. [ ] Add tests for edge cases in type conversions
-20. [ ] Create a test suite for comparing compiled output with CPython execution
-21. [ ] Add tests for error handling and recovery
+21. [ ] Add tests for edge cases in type conversions
+22. [ ] Create a test suite for comparing compiled output with CPython execution
+23. [ ] Add tests for error handling and recovery
 
 ## Next Steps (Medium Priority)
 
@@ -259,5 +289,15 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - ✅ Implemented a robust solution for nonlocal variables using default values and proper dominance validation to handle LLVM's requirements
 - ✅ Created an enhanced closure environment structure with support for nonlocal variables in deeply nested functions
 - ✅ Implemented special handling for variable shadowing in nested functions
+- ✅ Fixed LLVM validation issues with function calls and len() function in nested functions
+- ✅ Implemented enhanced exception handling with try/except/else/finally blocks
+  - ✅ Added runtime support for exceptions (creation, raising, checking)
+  - ✅ Implemented try-except blocks with proper control flow
+  - ✅ Added support for else and finally blocks
+  - ✅ Implemented exception variable binding (as in 'except Exception as e')
+  - ✅ Added support for nested try-except blocks
+  - ✅ Created comprehensive tests for exception handling functionality
+  - ⏳ More work needed to complete advanced exception handling features
 - Research how other compilers handle closure environments and variable capture
 - Consider implementing a static analysis pass to identify all nonlocal variables before code generation
+- Look into how Python's exception handling is implemented in CPython for inspiration
