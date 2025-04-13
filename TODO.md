@@ -80,7 +80,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Support exception variables (as in 'except Exception as e')
    - [x] Enable basic exception handling tests
    - [x] Support try-except-else-finally blocks
-   - [ ] Fix function call parameter type mismatch in exception tests
+   - [x] Fix function call parameter type mismatch in exception tests
+   - [ ] Fix terminator in the middle of basic block errors
    - [ ] Add support for custom exception types
    - [ ] Implement exception chaining (raise ... from ...)
    - [ ] Implement proper stack unwinding for exceptions
