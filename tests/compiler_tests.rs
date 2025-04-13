@@ -182,3 +182,7 @@ mod dict_function_minimal_test;
 // Include the dictionary function return tests
 #[path = "more_tests/compiler/dict_function_return_test.rs"]
 mod dict_function_return_test;
+
+// Include the print function tests
+#[path = "more_tests/compiler/print_function_test.rs"]
+mod print_function_test;

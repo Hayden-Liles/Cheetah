@@ -9,6 +9,7 @@ pub mod int_ops;
 pub mod exception_ops;
 pub mod exception_state;
 pub mod exception_runtime;
+pub mod print_ops;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -32,4 +33,7 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register exception state functions
     exception_state::register_exception_state_functions(context, module);
+
+    // Register print functions
+    print_ops::register_print_functions(context, module);
 }

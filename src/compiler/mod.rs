@@ -9,6 +9,7 @@ pub mod scope;
 pub mod closure;
 pub mod builtins;
 pub mod len_call;
+pub mod print_call;
 pub mod exception;
 
 use crate::compiler::context::CompilationContext;
@@ -151,6 +152,7 @@ impl<'ctx> Compiler<'ctx> {
 
         // Register built-in functions
         self.context.register_len_function();
+        self.context.register_print_function();
     }
 
     fn create_conversion_functions(&mut self) {

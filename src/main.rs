@@ -13,6 +13,7 @@ use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
+use cheetah::compiler::runtime::print_ops::{print_string, println_string, print_int, print_float, print_bool};
 use cheetah::parse;
 
 use inkwell::context;
@@ -25,8 +26,16 @@ use inkwell::targets::{InitializationConfig, Target};
 #[command(version = "0.1.0")]
 #[command(about = "Cheetah programming language interpreter", long_about = None)]
 struct Cli {
+    /// Source file to run (with .ch extension)
+    #[arg(value_name = "FILE")]
+    file: Option<String>,
+
+    /// Use LLVM JIT compilation instead of interpreter
+    #[arg(short = 'j', long, default_value = "false")]
+    jit: bool,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -123,35 +132,50 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // Handle direct file execution (cheetah main.ch)
+    if let Some(file) = cli.file {
+        if cli.jit {
+            run_file_jit(&file)?
+        } else {
+            run_file(&file)?
+        }
+        return Ok(());
+    }
+
+    // Handle subcommands
     match cli.command {
-        Commands::Run { file, jit } => {
+        Some(Commands::Run { file, jit }) => {
             if jit {
                 run_file_jit(&file)?;
             } else {
                 run_file(&file)?;
             }
         }
-        Commands::Repl { jit } => {
+        Some(Commands::Repl { jit }) => {
             if jit {
                 run_repl_jit()?;
             } else {
                 run_repl()?;
             }
         }
-        Commands::Lex { file, verbose, color, line_numbers } => {
+        Some(Commands::Lex { file, verbose, color, line_numbers }) => {
             lex_file(&file, verbose, color, line_numbers)?;
         }
-        Commands::Parse { file, verbose } => {
+        Some(Commands::Parse { file, verbose }) => {
             parse_file(&file, verbose)?;
         }
-        Commands::Check { file, verbose } => {
+        Some(Commands::Check { file, verbose }) => {
             check_file(&file, verbose)?;
         }
-        Commands::Format { file, write, indent } => {
+        Some(Commands::Format { file, write, indent }) => {
             format_file(&file, write, indent)?;
         }
-        Commands::Compile { file, output, opt, object, target } => {
+        Some(Commands::Compile { file, output, opt, object, target }) => {
             compile_file(&file, output, opt, object, target)?;
+        }
+        None => {
+            // If no file and no command, start REPL
+            run_repl()?
         }
     }
 
@@ -171,8 +195,24 @@ fn initialize_llvm_targets() {
     Target::initialize_all(&config);
 }
 
+/// Ensure the file has a .ch extension, adding it if necessary
+fn ensure_ch_extension(filename: &str) -> String {
+    let path = PathBuf::from(filename);
+    if let Some(ext) = path.extension() {
+        if ext == "ch" {
+            return filename.to_string();
+        }
+    }
+
+    // If no extension or not .ch, add .ch extension
+    let mut path_with_ext = path.clone();
+    path_with_ext.set_extension("ch");
+    path_with_ext.to_string_lossy().to_string()
+}
+
 fn run_file(filename: &str) -> Result<()> {
-    let source = fs::read_to_string(filename)
+    let filename = ensure_ch_extension(filename);
+    let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
     // First, lex the file
@@ -208,9 +248,10 @@ fn run_file(filename: &str) -> Result<()> {
 }
 
 fn run_file_jit(filename: &str) -> Result<()> {
+    let filename = ensure_ch_extension(filename);
     println!("{}", format!("JIT compiling and executing {}", filename).bright_green());
 
-    let source = fs::read_to_string(filename)
+    let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
     // Parse the source code
@@ -218,7 +259,7 @@ fn run_file_jit(filename: &str) -> Result<()> {
         Ok(module) => {
             // Create LLVM context and compiler
             let context = context::Context::create();
-            let mut compiler = Compiler::new(&context, filename);
+            let mut compiler = Compiler::new(&context, &filename);
 
             // Compile the AST
             match compiler.compile_module(&module) {
@@ -236,9 +277,23 @@ fn run_file_jit(filename: &str) -> Result<()> {
                         println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
                     }
 
-                    // TODO: JIT execution of the "main" function would go here
-                    println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
-                    println!("{}", compiler.get_ir());
+                    // Execute the "main" function using the JIT execution engine
+                    unsafe {
+                        // Look up the main function in the module
+                        match execution_engine.get_function::<unsafe extern "C" fn() -> ()>("main") {
+                            Ok(main_fn) => {
+                                // Execute the main function
+                                println!("{}", "Executing main function...".bright_green());
+                                main_fn.call();
+                                println!("{}", "Execution completed.".bright_green());
+                            },
+                            Err(e) => {
+                                println!("{}", format!("Warning: Failed to find main function: {}", e).bright_yellow());
+                                println!("{}", "Displaying IR instead:".bright_yellow());
+                                println!("{}", compiler.get_ir());
+                            }
+                        }
+                    }
 
                     Ok(())
                 },
@@ -418,9 +473,23 @@ fn run_repl_jit() -> Result<()> {
                                             println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
                                         }
 
-                                        // TODO: JIT execution would go here
-                                        println!("{}", "Warning: JIT execution not yet implemented. Displaying IR:".bright_yellow());
-                                        println!("{}", compiler.get_ir());
+                                        // Execute the "main" function using the JIT execution engine
+                                        unsafe {
+                                            // Look up the main function in the module
+                                            match execution_engine.get_function::<unsafe extern "C" fn() -> ()>("main") {
+                                                Ok(main_fn) => {
+                                                    // Execute the main function
+                                                    println!("{}", "Executing main function...".bright_green());
+                                                    main_fn.call();
+                                                    println!("{}", "Execution completed.".bright_green());
+                                                },
+                                                Err(e) => {
+                                                    println!("{}", format!("Warning: Failed to find main function: {}", e).bright_yellow());
+                                                    println!("{}", "Displaying IR instead:".bright_yellow());
+                                                    println!("{}", compiler.get_ir());
+                                                }
+                                            }
+                                        }
                                     },
                                     Err(e) => {
                                         eprintln!("{}", format!("Failed to create execution engine: {}", e).bright_red());
@@ -474,7 +543,8 @@ fn update_repl_state(input: &str, paren_level: &mut usize, bracket_level: &mut u
 }
 
 fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) -> Result<()> {
-    let source = fs::read_to_string(filename)
+    let filename = ensure_ch_extension(filename);
+    let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
     let mut lexer = Lexer::new(&source);
@@ -542,7 +612,8 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
 
 /// New function to parse a file and print the AST
 fn parse_file(filename: &str, verbose: bool) -> Result<()> {
-    let source = fs::read_to_string(filename)
+    let filename = ensure_ch_extension(filename);
+    let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
     // First, lex the file
@@ -603,7 +674,8 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
 }
 
 fn check_file(filename: &str, verbose: bool) -> Result<()> {
-    let source = fs::read_to_string(filename)
+    let filename = ensure_ch_extension(filename);
+    let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
     // Check for lexical errors first
@@ -660,7 +732,8 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
 }
 
 fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
-    let source = fs::read_to_string(filename)
+    let filename = ensure_ch_extension(filename);
+    let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
     // First, check for lexical errors
@@ -685,7 +758,7 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
             let formatted_source = formatter.get_output().to_string();
 
             if write {
-                fs::write(filename, &formatted_source)
+                fs::write(&filename, &formatted_source)
                     .with_context(|| format!("Failed to write to file: {}", filename))?;
                 println!("Formatted and wrote changes to '{}'", filename);
             } else {
@@ -712,9 +785,10 @@ fn compile_file(
     target_triple: Option<String>
 ) -> Result<()> {
     let _ = target_triple;
+    let filename = ensure_ch_extension(filename);
     println!("{}", format!("Compiling {} with optimization level {}", filename, opt_level).bright_green());
 
-    let source = fs::read_to_string(filename)
+    let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
     // Parse the source code
@@ -722,7 +796,7 @@ fn compile_file(
         Ok(module) => {
             // Create LLVM context and compiler
             let context = context::Context::create();
-            let mut compiler = Compiler::new(&context, filename);
+            let mut compiler = Compiler::new(&context, &filename);
 
             // Set optimization level
             // We'll implement this in the Compiler later
@@ -849,6 +923,25 @@ fn register_runtime_functions(
         }
     }
 
+    // Range functions
+    if let Some(function) = module.get_function("range_1") {
+        {
+            engine.add_global_mapping(&function, jit_range_1 as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("range_2") {
+        {
+            engine.add_global_mapping(&function, jit_range_2 as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("range_3") {
+        {
+            engine.add_global_mapping(&function, jit_range_3 as usize);
+        }
+    }
+
     if let Some(function) = module.get_function("string_to_int") {
         {
             engine.add_global_mapping(&function, jit_string_to_int as usize);
@@ -889,6 +982,37 @@ fn register_runtime_functions(
     if let Some(function) = module.get_function("str_bool") {
         {
             engine.add_global_mapping(&function, jit_str_bool as usize);
+        }
+    }
+
+    // Print functions
+    if let Some(function) = module.get_function("print_string") {
+        {
+            engine.add_global_mapping(&function, print_string as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("println_string") {
+        {
+            engine.add_global_mapping(&function, println_string as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("print_int") {
+        {
+            engine.add_global_mapping(&function, print_int as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("print_float") {
+        {
+            engine.add_global_mapping(&function, print_float as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("print_bool") {
+        {
+            engine.add_global_mapping(&function, print_bool as usize);
         }
     }
 
@@ -1003,4 +1127,26 @@ extern "C" fn jit_string_length(string: *const c_char) -> i64 {
     let cstr = unsafe { CStr::from_ptr(string) };
     let s = cstr.to_str().unwrap_or("");
     s.len() as i64
+}
+
+// Range function implementations
+extern "C" fn jit_range_1(stop: i64) -> i64 {
+    // For now, just return the stop value
+    // In a real implementation, this would create a range object
+    stop
+}
+
+extern "C" fn jit_range_2(start: i64, stop: i64) -> i64 {
+    // For now, just return the difference
+    // In a real implementation, this would create a range object
+    stop - start
+}
+
+extern "C" fn jit_range_3(start: i64, stop: i64, step: i64) -> i64 {
+    // For now, just return the number of steps
+    // In a real implementation, this would create a range object
+    if step == 0 {
+        return 0; // Avoid division by zero
+    }
+    (stop - start) / step
 }

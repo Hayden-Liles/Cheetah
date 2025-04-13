@@ -705,6 +705,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             return self.compile_len_call(&args_slice);
                         }
 
+                        // Check for print function
+                        if id == "print" {
+                            // Convert args to slice
+                            let args_slice: Vec<Expr> = args.iter().map(|arg| (**arg).clone()).collect();
+                            return self.compile_print_call(&args_slice);
+                        }
+
                         // Check if this is a polymorphic function call and we have arguments
                         if id == "str" && !arg_types.is_empty() {
                             // Get the appropriate implementation based on the argument type

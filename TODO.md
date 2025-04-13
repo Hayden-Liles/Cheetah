@@ -131,7 +131,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [ ] Implement advanced class features (inheritance, metaclasses)
 
 ### Tooling
-- [ ] Create a REPL for interactive use
+- [x] Create a REPL for interactive use
+- [x] Implement command-line interface with .ch file extension support
 - [ ] Add a debugger
 - [ ] Implement a profiler
 - [ ] Create a package manager
@@ -142,7 +143,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [ ] Set up continuous integration
 - [ ] Add automated release process
 - [ ] Improve build system
-- [ ] Create installation packages
+- [x] Create installation script
+- [ ] Create distribution packages
 
 ### Community
 - [ ] Create contribution guidelines
@@ -173,6 +175,16 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
     - Test exception handling with different data types (int, string, list, etc.)
     - Test memory management during exception handling
     - Compare behavior with CPython for compatibility
+- ✅ Implemented command-line interface with .ch file extension support
+  - ✅ Added support for running files directly with `cheetah main.ch`
+  - ✅ Standardized on .ch file extension for Cheetah source files
+  - ✅ Created installation script for system-wide availability
+  - ✅ Added example files with .ch extension
+- ✅ Implemented print() function
+  - ✅ Added support for printing different data types (string, int, float, bool)
+  - ✅ Implemented proper newline handling
+  - ✅ Added support for printing multiple arguments
+  - ✅ Created test examples for print functionality
 - Research how other compilers handle closure environments and variable capture
 - Consider implementing a static analysis pass to identify all nonlocal variables before code generation
 - Look into how Python's exception handling is implemented in CPython for inspiration
