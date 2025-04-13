@@ -4,6 +4,7 @@ use crate::compiler::context::CompilationContext;
 use crate::compiler::expr::{ExprCompiler, AssignmentCompiler, BinaryOpCompiler};
 use crate::compiler::types::Type;
 use inkwell::values::BasicValue;
+use inkwell::types::BasicType;
 
 pub trait StmtCompiler<'ctx> {
     /// Compile a statement
@@ -171,7 +172,37 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                     }
                 }
 
+                // Before popping the scope, collect variables that need to be promoted to parent scope
+                let mut vars_to_promote = Vec::new();
+                {
+                    let current_scope = self.scope_stack.current_scope().unwrap();
+
+                    // Collect variables that might need to be accessible after the if statement
+                    for (var_name, var_ptr) in &current_scope.variables {
+                        // Skip variables that are already in the parent scope
+                        if self.scope_stack.scopes.len() >= 2 {
+                            let parent_scope = &self.scope_stack.scopes[self.scope_stack.scopes.len() - 2];
+                            if parent_scope.get_variable(var_name).is_some() {
+                                continue;
+                            }
+                        }
+
+                        // Get the variable type
+                        if let Some(var_type) = current_scope.get_type(var_name) {
+                            vars_to_promote.push((var_name.clone(), *var_ptr, var_type.clone()));
+                        }
+                    }
+                }
+
                 self.pop_scope(); // Pop the scope for the then block
+
+                // Promote variables to parent scope
+                for (var_name, var_ptr, var_type) in vars_to_promote {
+                    if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                        current_scope.add_variable(var_name.clone(), var_ptr, var_type);
+                        println!("Promoted variable '{}' from then block to parent scope", var_name);
+                    }
+                }
 
                 // Only add a branch to the merge block if we don't already have a terminator
                 if !has_terminator && !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
@@ -244,7 +275,37 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                     }
                 }
 
+                // Before popping the scope, collect variables that need to be promoted to parent scope
+                let mut vars_to_promote = Vec::new();
+                {
+                    let current_scope = self.scope_stack.current_scope().unwrap();
+
+                    // Collect variables that might need to be accessible after the if statement
+                    for (var_name, var_ptr) in &current_scope.variables {
+                        // Skip variables that are already in the parent scope
+                        if self.scope_stack.scopes.len() >= 2 {
+                            let parent_scope = &self.scope_stack.scopes[self.scope_stack.scopes.len() - 2];
+                            if parent_scope.get_variable(var_name).is_some() {
+                                continue;
+                            }
+                        }
+
+                        // Get the variable type
+                        if let Some(var_type) = current_scope.get_type(var_name) {
+                            vars_to_promote.push((var_name.clone(), *var_ptr, var_type.clone()));
+                        }
+                    }
+                }
+
                 self.pop_scope(); // Pop the scope for the else block
+
+                // Promote variables to parent scope
+                for (var_name, var_ptr, var_type) in vars_to_promote {
+                    if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                        current_scope.add_variable(var_name.clone(), var_ptr, var_type);
+                        println!("Promoted variable '{}' from else block to parent scope", var_name);
+                    }
+                }
 
                 // Only add a branch to the merge block if we don't already have a terminator
                 if !has_terminator && !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
@@ -335,6 +396,40 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                     }
                 }
 
+                // Copy variables from parent scope that might be needed in the loop body
+                // This ensures variables like 'sum' are accessible in both loops
+                if self.scope_stack.scopes.len() >= 2 {
+                    // Collect variables from parent scope to avoid borrowing issues
+                    let parent_scope_index = self.scope_stack.scopes.len() - 2;
+                    let mut vars_to_add = Vec::new();
+
+                    // First, collect all the variables we need to add
+                    {
+                        let parent_scope = &self.scope_stack.scopes[parent_scope_index];
+                        let current_scope = self.scope_stack.current_scope().unwrap();
+
+                        for (var_name, var_ptr) in &parent_scope.variables {
+                            // Skip variables that are already in the current scope
+                            if current_scope.get_variable(var_name).is_some() {
+                                continue;
+                            }
+
+                            // Get the variable type
+                            if let Some(var_type) = parent_scope.get_type(var_name) {
+                                vars_to_add.push((var_name.clone(), *var_ptr, var_type.clone()));
+                            }
+                        }
+                    }
+
+                    // Now add all the collected variables to the current scope
+                    for (var_name, var_ptr, var_type) in vars_to_add {
+                        if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                            current_scope.add_variable(var_name.clone(), var_ptr, var_type);
+                            println!("Added variable '{}' to current scope", var_name);
+                        }
+                    }
+                }
+
                 for stmt in body {
                     self.compile_stmt(stmt.as_ref())?;
                 }
@@ -388,6 +483,40 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                                     self.builder.build_store(local_ptr, default_value).unwrap();
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Copy variables from parent scope that might be needed in the else block
+                // This ensures variables like 'sum' are accessible in both loops
+                if self.scope_stack.scopes.len() >= 2 {
+                    // Collect variables from parent scope to avoid borrowing issues
+                    let parent_scope_index = self.scope_stack.scopes.len() - 2;
+                    let mut vars_to_add = Vec::new();
+
+                    // First, collect all the variables we need to add
+                    {
+                        let parent_scope = &self.scope_stack.scopes[parent_scope_index];
+                        let current_scope = self.scope_stack.current_scope().unwrap();
+
+                        for (var_name, var_ptr) in &parent_scope.variables {
+                            // Skip variables that are already in the current scope
+                            if current_scope.get_variable(var_name).is_some() {
+                                continue;
+                            }
+
+                            // Get the variable type
+                            if let Some(var_type) = parent_scope.get_type(var_name) {
+                                vars_to_add.push((var_name.clone(), *var_ptr, var_type.clone()));
+                            }
+                        }
+                    }
+
+                    // Now add all the collected variables to the current scope
+                    for (var_name, var_ptr, var_type) in vars_to_add {
+                        if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                            current_scope.add_variable(var_name.clone(), var_ptr, var_type);
+                            println!("Added variable '{}' to current scope", var_name);
                         }
                     }
                 }
@@ -814,6 +943,57 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 // Register each name as a global variable in the current scope
                 for name in names {
                     self.declare_global(name.clone());
+
+                    // Check if we're in a function
+                    if self.current_function.is_some() {
+                        // If we're in a function, we need to make sure the global variable exists
+                        // in the global scope and is accessible from the function
+
+                        // First, check if the variable exists in the global scope
+                        let var_exists_in_global = if let Some(global_scope) = self.scope_stack.global_scope() {
+                            global_scope.get_variable(&name).is_some()
+                        } else {
+                            false
+                        };
+
+                        if !var_exists_in_global {
+                            // The variable doesn't exist in the global scope, so we need to create it
+                            // This can happen if the global variable is declared in a function but not at the module level
+
+                            // First, get the variable type
+                            let var_type = self.lookup_variable_type(&name).cloned().unwrap_or(Type::Int);
+
+                            // Create a global variable with the appropriate type
+                            let llvm_type = self.get_llvm_type(&var_type);
+                            let global_var = self.module.add_global(llvm_type, None, &name);
+
+                            // Initialize with a default value
+                            match var_type {
+                                Type::Int => {
+                                    global_var.set_initializer(&self.llvm_context.i64_type().const_int(0, false));
+                                },
+                                Type::Float => {
+                                    global_var.set_initializer(&self.llvm_context.f64_type().const_float(0.0));
+                                },
+                                Type::Bool => {
+                                    global_var.set_initializer(&self.llvm_context.bool_type().const_int(0, false));
+                                },
+                                _ => {
+                                    // For other types, use a null pointer
+                                    let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                                    global_var.set_initializer(&ptr_type.const_null());
+                                }
+                            }
+
+                            // Add the variable to the global scope
+                            if let Some(global_scope) = self.scope_stack.global_scope_mut() {
+                                global_scope.add_variable(name.clone(), global_var.as_pointer_value(), var_type.clone());
+                                println!("Created global variable '{}' in global scope with type {:?}", name, var_type);
+                            }
+                        } else {
+                            println!("Found global variable '{}' in global scope", name);
+                        }
+                    }
                 }
                 Ok(())
             },
@@ -832,6 +1012,17 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                         if let Some(_) = self.scope_stack.scopes[parent_scope_index].get_variable(&name) {
                             found_in_outer_scope = true;
                             println!("Found variable '{}' in immediate outer scope {} for nonlocal declaration", name, parent_scope_index);
+                        }
+                    }
+
+                    // If not found in the immediate outer scope, check all outer scopes
+                    if !found_in_outer_scope && self.scope_stack.scopes.len() >= 2 {
+                        for i in (0..self.scope_stack.scopes.len()-1).rev() {
+                            if let Some(_) = self.scope_stack.scopes[i].get_variable(&name) {
+                                found_in_outer_scope = true;
+                                println!("Found variable '{}' in outer scope {} for nonlocal declaration", name, i);
+                                break;
+                            }
                         }
                     }
 

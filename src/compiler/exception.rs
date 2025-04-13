@@ -49,7 +49,14 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // Compile the body of the try block
         let mut has_terminator = false;
-        for stmt in body {
+        for (i, stmt) in body.iter().enumerate() {
+            // Check if the current block already has a terminator
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                // If it does, create a new block to continue compilation
+                let continue_block = self.llvm_context.append_basic_block(function, &format!("continue_try_{}", i));
+                self.builder.position_at_end(continue_block);
+            }
+
             self.compile_stmt(stmt.as_ref())?;
 
             // Check if the statement was a terminator (break, continue, return)
@@ -94,6 +101,9 @@ impl<'ctx> CompilationContext<'ctx> {
             // Compile the handler body
             self.builder.position_at_end(handler_body_block);
 
+            // Make sure all basic blocks have terminators
+            // This is important for LLVM validation
+
             // Make sure we're positioned at the handler body block
             let _current_block = self.builder.get_insert_block().unwrap();
 
@@ -118,6 +128,13 @@ impl<'ctx> CompilationContext<'ctx> {
             // Compile the handler body
             let mut has_terminator = false;
             for stmt in &handler.body {
+                // Check if the current block already has a terminator
+                if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                    // If it does, create a new block to continue compilation
+                    let continue_block = self.llvm_context.append_basic_block(function, &format!("continue_except_{}", i));
+                    self.builder.position_at_end(continue_block);
+                }
+
                 self.compile_stmt(stmt.as_ref())?;
 
                 // Check if the statement was a terminator (break, continue, return)
@@ -156,7 +173,14 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // Compile the else body
         let mut has_terminator = false;
-        for stmt in orelse {
+        for (i, stmt) in orelse.iter().enumerate() {
+            // Check if the current block already has a terminator
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                // If it does, create a new block to continue compilation
+                let continue_block = self.llvm_context.append_basic_block(function, &format!("continue_else_{}", i));
+                self.builder.position_at_end(continue_block);
+            }
+
             self.compile_stmt(stmt.as_ref())?;
 
             // Check if the statement was a terminator (break, continue, return)
@@ -182,7 +206,14 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // Compile the finally body
         let mut has_terminator = false;
-        for stmt in finalbody {
+        for (i, stmt) in finalbody.iter().enumerate() {
+            // Check if the current block already has a terminator
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                // If it does, create a new block to continue compilation
+                let continue_block = self.llvm_context.append_basic_block(function, &format!("continue_finally_{}", i));
+                self.builder.position_at_end(continue_block);
+            }
+
             self.compile_stmt(stmt.as_ref())?;
 
             // Check if the statement was a terminator (break, continue, return)
