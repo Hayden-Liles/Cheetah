@@ -19,7 +19,13 @@ pub extern "C" fn print_string(value: *const c_char) {
                     return;
                 }
 
-                // Remove all newlines and clean the string
+                // Check if this is a newline character (for ending print statements)
+                if str_slice == "\n" {
+                    println!("");  // Print a newline
+                    return;
+                }
+
+                // Remove embedded newlines and clean the string
                 // First, get only the first line (before any newlines)
                 let first_line = match str_slice.split('\n').next() {
                     Some(line) => line,
