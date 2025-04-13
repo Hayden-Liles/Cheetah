@@ -124,8 +124,8 @@ while i < 5:
 counter = 5
 while counter > 0:
     # Loop scope
-    temp = counter
-    sum = sum + temp
+    temp_counter = counter  # Renamed to avoid variable name collision
+    sum = sum + temp_counter
     counter = counter - 1
 "#;
 

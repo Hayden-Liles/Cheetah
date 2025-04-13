@@ -107,6 +107,16 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
   - [ ] Add support for dictionary views (dict.keys() as a view)
 
 ### Optimizations
+- [ ] Eliminate recursive code generation patterns
+  - [x] Rewrite `compile_expr` to use an explicit work stack instead of recursion
+  - [ ] Implement non-recursive versions of `compile_subscript`
+  - [ ] Implement non-recursive versions of `compile_subscript_with_value`
+  - [ ] Implement non-recursive versions of `compile_slice_operation`
+  - [ ] Implement non-recursive versions of `compile_list_comprehension`
+  - [ ] Implement non-recursive versions of `compile_dict_comprehension`
+  - [ ] Implement non-recursive versions of `compile_attribute_access`
+  - [ ] Implement non-recursive versions of `compile_binary_op`
+  - [ ] Implement non-recursive versions of `compile_comparison`
 - [ ] Implement constant folding
 - [ ] Add dead code elimination
 - [ ] Optimize numeric operations
@@ -153,6 +163,12 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [ ] Create tutorials for new users
 
 ## Notes and Ideas
+
+- ⚠️ Stack overflow issues identified in recursive code generation patterns
+  - The compiler experiences stack overflow around 532,000 iterations when using print(i) in a loop
+  - Need to rewrite recursive code generation to use explicit work stacks instead of recursion
+  - Key functions to rewrite: compile_expr, compile_subscript, compile_list_comprehension, etc.
+  - Consider implementing tail call optimization, adaptive chunking strategies, and simplified stack tracking
 
 - ✅ Implemented a robust solution for nonlocal variables using closure environments
 - ✅ Fixed LLVM validation issues with function calls and len() function in nested functions

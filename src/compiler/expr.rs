@@ -24,6 +24,9 @@ pub trait ExprCompiler<'ctx> {
     /// Compile an expression and return the resulting LLVM value with its type
     fn compile_expr(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
+    /// Original recursive implementation of compile_expr (for reference and fallback)
+    fn compile_expr_original(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+
     /// Compile a numeric literal
     fn compile_number(&mut self, num: &Number) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
@@ -70,6 +73,13 @@ pub trait ComparisonCompiler<'ctx> {
 
 impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     fn compile_expr(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Use the non-recursive implementation to avoid stack overflow
+        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+        self.compile_expr_non_recursive(expr)
+    }
+
+    // Original recursive implementation - kept for reference
+    fn compile_expr_original(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         match expr {
             Expr::Num { value, .. } => self.compile_number(value),
             Expr::NameConstant { value, .. } => self.compile_name_constant(value),

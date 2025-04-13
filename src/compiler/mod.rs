@@ -12,6 +12,9 @@ pub mod len_call;
 pub mod print_call;
 pub mod exception;
 pub mod loop_optimizer;
+pub mod expr_non_recursive;
+pub mod loop_flattener;
+pub mod tail_call_optimizer;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;

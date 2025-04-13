@@ -330,15 +330,23 @@ impl<'ctx> CompilationContext<'ctx> {
                     // Get the print_bool function
                     let print_fn = self.module.get_function("print_bool").unwrap();
 
-                    // Convert to bool if needed
+                    // For boolean values, we need to convert them to the expected type
+                    // The print_bool function expects a bool (i1) value
                     let bool_val = if arg_val.is_int_value() {
-                        let int_val = arg_val.into_int_value();
-                        self.builder.build_int_compare(
-                            inkwell::IntPredicate::NE,
-                            int_val,
-                            self.llvm_context.i64_type().const_int(0, false),
-                            "bool_val"
-                        ).unwrap()
+                        // If it's already a boolean value (i1), use it directly
+                        if arg_val.get_type().is_int_type() &&
+                           arg_val.get_type().into_int_type().get_bit_width() == 1 {
+                            arg_val.into_int_value()
+                        } else {
+                            // Otherwise, convert from i64 to i1
+                            let int_val = arg_val.into_int_value();
+                            self.builder.build_int_compare(
+                                inkwell::IntPredicate::NE,
+                                int_val,
+                                int_val.get_type().const_zero(),
+                                "bool_val"
+                            ).unwrap()
+                        }
                     } else {
                         // If it's not an int, we need to convert it
                         return Err(format!("Cannot convert {:?} to bool", arg_type));

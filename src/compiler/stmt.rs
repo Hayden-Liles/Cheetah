@@ -4,7 +4,6 @@ use crate::compiler::context::CompilationContext;
 use crate::compiler::expr::{ExprCompiler, AssignmentCompiler, BinaryOpCompiler};
 use crate::compiler::types::Type;
 use inkwell::values::BasicValue;
-use inkwell::types::BasicType;
 
 pub trait StmtCompiler<'ctx> {
     /// Compile a statement
