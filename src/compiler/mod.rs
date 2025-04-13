@@ -11,6 +11,7 @@ pub mod builtins;
 pub mod len_call;
 pub mod print_call;
 pub mod exception;
+pub mod loop_optimizer;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;

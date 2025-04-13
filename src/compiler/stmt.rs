@@ -439,6 +439,9 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 // Create an index variable initialized to 0
                 let i64_type = self.llvm_context.i64_type();
                 let index_ptr = self.builder.build_alloca(i64_type, "for.index").unwrap();
+
+                // For all loops, use the standard approach
+                // Initialize the index variable to 0
                 self.builder.build_store(index_ptr, i64_type.const_int(0, false)).unwrap();
 
                 // Get the length of the iterable
@@ -482,6 +485,10 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 // Body block with its own scope
                 self.builder.position_at_end(body_block);
                 self.push_scope(false, true, false); // Create a new scope for the loop body (is_loop=true)
+
+                // Load the current index value
+                let i64_type = self.llvm_context.i64_type();
+                let index_val = self.builder.build_load(i64_type, index_ptr, "index").unwrap().into_int_value();
 
                 // Assign the current index to the target variable
                 if let Expr::Name { id, .. } = target.as_ref() {
@@ -572,8 +579,9 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
 
                 // Increment block
                 self.builder.position_at_end(increment_block);
+                let current_index = self.builder.build_load(i64_type, index_ptr, "current.index").unwrap().into_int_value();
                 let next_index = self.builder.build_int_add(
-                    index_val,
+                    current_index,
                     i64_type.const_int(1, false),
                     "index.next"
                 ).unwrap();

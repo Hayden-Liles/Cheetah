@@ -10,6 +10,8 @@ pub mod exception_ops;
 pub mod exception_state;
 pub mod exception_runtime;
 pub mod print_ops;
+pub mod buffered_output;
+pub mod debug_utils;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
