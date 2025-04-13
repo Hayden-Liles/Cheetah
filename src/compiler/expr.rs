@@ -397,6 +397,74 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         Ok((value, var_type_clone))
                     }
                 } else {
+                    // Special handling for deeply nested functions
+                    // If we're in a nested function and trying to access a variable from an outer scope
+                    // that isn't explicitly declared as nonlocal, we need to handle it specially
+                    if self.current_function.is_some() && self.current_environment.is_some() {
+                        let fn_name = self.current_function.unwrap().get_name().to_string_lossy().to_string();
+
+                        // Check if this is a deeply nested function (contains at least one dot)
+                        if fn_name.matches('.').count() >= 1 {
+                            // First, find the variable in outer scopes without borrowing self.scope_stack mutably
+                            let mut found_var = None;
+
+                            for i in (0..self.scope_stack.scopes.len() - 1).rev() {
+                                if let Some(ptr) = self.scope_stack.scopes[i].get_variable(id) {
+                                    if let Some(var_type) = self.scope_stack.scopes[i].get_type(id) {
+                                        // We found the variable, store its information
+                                        found_var = Some((i, *ptr, var_type.clone()));
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // If we found the variable, handle it
+                            if let Some((scope_index, ptr, var_type)) = found_var {
+                                // Get the LLVM type for the variable
+                                let llvm_type = self.get_llvm_type(&var_type);
+
+                                // Create a unique name for the variable in this function
+                                let unique_name = format!("__outer_{}_{}", fn_name.replace('.', "_"), id);
+
+                                // Get the current function
+                                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+
+                                // Get the entry block of the function
+                                let entry_block = current_function.get_first_basic_block().unwrap();
+
+                                // Save the current position
+                                let current_block = self.builder.get_insert_block().unwrap();
+
+                                // Move to the entry block
+                                self.builder.position_at_end(entry_block);
+
+                                // Create an alloca in the entry block
+                                let local_ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
+
+                                // Restore the original position
+                                self.builder.position_at_end(current_block);
+
+                                // Load the value from the outer scope
+                                let value = self.builder.build_load(llvm_type, ptr, &format!("load_{}_from_scope_{}", id, scope_index)).unwrap();
+
+                                // Store the value in the local variable
+                                self.builder.build_store(local_ptr, value).unwrap();
+
+                                // Now we can safely borrow self.scope_stack mutably
+                                if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                                    current_scope.add_variable(unique_name.clone(), local_ptr, var_type.clone());
+                                    println!("Created local variable for outer scope variable '{}' with unique name '{}'", id, unique_name);
+                                }
+
+                                // Load the value from the local variable
+                                let result = self.builder.build_load(llvm_type, local_ptr, &format!("load_{}", unique_name)).unwrap();
+                                println!("Loaded outer scope variable '{}' using unique name '{}'", id, unique_name);
+
+                                return Ok((result, var_type));
+                            }
+                        }
+                    }
+
                     Err(format!("Undefined variable: {}", id))
                 }
             },
