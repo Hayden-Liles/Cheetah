@@ -34,11 +34,14 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [x] Fix remaining LLVM validation issues with nonlocal variables in complex scenarios (shadowing, nested nonlocals)
 - [x] Implement a more robust solution for nonlocal variables using global variables with unique names
 - [x] Add tests for closure support
+- [x] Fix LLVM dominance validation issues with nonlocal variables in deeply nested functions
+- [x] Implement proper handling for variable shadowing in nested functions
+- [x] Create an enhanced closure environment structure with support for nonlocal variables
 
 ## Current Focus (High Priority)
 
 ### Core Language Features
-1. [x] Fix LLVM validation issues with nonlocal variables
+1. [x] Fix LLVM validation issues with nonlocal variables (COMPLETED)
    - [x] Implement a basic closure environment solution for nonlocal variables
    - [x] Create a closure environment structure to store nonlocal variables
    - [x] Pass the environment pointer to nested functions
@@ -52,8 +55,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Fix LLVM validation issues with nonlocal variables in nested functions with multiple levels
    - [x] Improve nonlocal variable lookup to properly handle variables in outer scopes
    - [x] Fix LLVM validation issues with nonlocal variables in shadowing cases
-   - [ ] Fix LLVM dominance validation issues with deeply nested functions
-   - [ ] Fix LLVM dominance validation issues with variable shadowing in nested functions
+   - [x] Fix LLVM dominance validation issues with deeply nested functions
+   - [x] Fix LLVM dominance validation issues with variable shadowing in nested functions
 2. [ ] Implement exception handling (try/except/finally)
    - [ ] Add basic exception raising mechanism
    - [ ] Implement try/except blocks
@@ -181,6 +184,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
     - [x] Ensure basic nonlocal variable tests pass
     - [x] Fix complex nonlocal variable tests (loops, conditionals, shadowing)
     - [x] Add more test cases for complex nonlocal scenarios
+    - [x] Fix LLVM dominance validation issues in deeply nested functions
+    - [x] Implement proper handling for variable shadowing in nested functions
 18. [x] Add more comprehensive test cases for new features
     - [x] Enable previously ignored tests for list comprehensions with string operations
     - [x] Enable previously ignored tests for list comprehensions with arithmetic operations
@@ -251,6 +256,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 
 - Research performance improvements for numeric operations
 - Explore Symbol from JS and how it could be used in Cheetah.
-- For nonlocal variables, consider implementing a more robust solution using LLVM's phi nodes to handle dominance validation issues
+- ✅ Implemented a robust solution for nonlocal variables using default values and proper dominance validation to handle LLVM's requirements
+- ✅ Created an enhanced closure environment structure with support for nonlocal variables in deeply nested functions
+- ✅ Implemented special handling for variable shadowing in nested functions
 - Research how other compilers handle closure environments and variable capture
 - Consider implementing a static analysis pass to identify all nonlocal variables before code generation
