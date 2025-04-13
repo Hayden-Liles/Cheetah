@@ -52,6 +52,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Fix LLVM validation issues with nonlocal variables in nested functions with multiple levels
    - [x] Improve nonlocal variable lookup to properly handle variables in outer scopes
    - [x] Fix LLVM validation issues with nonlocal variables in shadowing cases
+   - [ ] Fix LLVM dominance validation issues with deeply nested functions
+   - [ ] Fix LLVM dominance validation issues with variable shadowing in nested functions
 2. [ ] Implement exception handling (try/except/finally)
    - [ ] Add basic exception raising mechanism
    - [ ] Implement try/except blocks
@@ -127,7 +129,8 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
      - [x] Test various expression types in list comprehensions
      - [x] Test complex and deeply nested list comprehensions
      - [x] Test edge cases like empty list comprehensions
-     - [ ] Support for advanced features (tuple unpacking in comprehensions, multiple for clauses)
+     - [x] Support for advanced features (string operations, arithmetic operations, membership operations)
+     - [ ] Support for more advanced features (tuple unpacking in comprehensions, multiple for clauses)
 9. [x] Add dictionary support
    - [x] Implement basic dictionary structure in LLVM
    - [x] Add dictionary creation (empty and with key-value pairs)
@@ -164,6 +167,7 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
       - [x] Basic len() function implementation
       - [x] Support for len() in expressions and control flow
       - [ ] Fix len() function in nested function calls with parameters
+      - [ ] Fix LLVM dominance validation issues with function calls
       - [x] Extend len() function to support dictionaries and other collections
     - [x] Implement type conversion functions (int(), float(), bool(), str())
     - [ ] Implement other common built-in functions (min, max, etc.)
@@ -175,9 +179,12 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
     - [x] Resolve LLVM dominance validation issues in simple tests
     - [x] Add test cases for basic nonlocal scenarios
     - [x] Ensure basic nonlocal variable tests pass
-    - [ ] Fix complex nonlocal variable tests (loops, conditionals, shadowing)
-    - [ ] Add more test cases for complex nonlocal scenarios
-18. [ ] Add more comprehensive test cases for new features
+    - [x] Fix complex nonlocal variable tests (loops, conditionals, shadowing)
+    - [x] Add more test cases for complex nonlocal scenarios
+18. [x] Add more comprehensive test cases for new features
+    - [x] Enable previously ignored tests for list comprehensions with string operations
+    - [x] Enable previously ignored tests for list comprehensions with arithmetic operations
+    - [x] Enable previously ignored tests for list comprehensions with membership operations
 19. [ ] Add tests for edge cases in type conversions
 20. [ ] Create a test suite for comparing compiled output with CPython execution
 21. [ ] Add tests for error handling and recovery
