@@ -127,6 +127,10 @@ mod len_function_test;
 #[path = "more_tests/compiler/exception_test.rs"]
 mod exception_test;
 
+// Include the exception validation tests
+#[path = "more_tests/compiler/exception_validation_test.rs"]
+mod exception_validation_test;
+
 // Include the list comprehension tests
 #[path = "more_tests/compiler/list_comprehension_test.rs"]
 mod list_comprehension_test;
