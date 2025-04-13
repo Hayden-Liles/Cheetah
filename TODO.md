@@ -79,7 +79,15 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
    - [x] Fix basic block termination issues with return statements in try-except blocks
    - [x] Add simplified tests for raise and catch functionality
    - [x] Add test for exception variable binding
-5. [ ] Add support for modules and imports
+5. [ ] Validate and enhance exception handling implementation
+   - [ ] Create real-world examples using exception handling
+   - [ ] Test exception handling with complex control flow
+   - [ ] Verify exception propagation across function boundaries
+   - [ ] Test exception handling with different data types
+   - [ ] Ensure proper resource cleanup in finally blocks
+   - [ ] Benchmark exception handling performance
+   - [ ] Compare behavior with CPython for compatibility
+6. [ ] Add support for modules and imports
    - [ ] Implement basic module loading
    - [ ] Support for import statements
    - [ ] Handle module-level variables and functions
@@ -228,9 +236,18 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
     - [x] Enable previously ignored tests for list comprehensions with string operations
     - [x] Enable previously ignored tests for list comprehensions with arithmetic operations
     - [x] Enable previously ignored tests for list comprehensions with membership operations
-21. [ ] Add tests for edge cases in type conversions
-22. [ ] Create a test suite for comparing compiled output with CPython execution
-23. [ ] Add tests for error handling and recovery
+21. [ ] Add comprehensive validation for exception handling
+    - [ ] Create integration tests comparing exception behavior with CPython
+    - [ ] Test exception propagation through multiple function calls
+    - [ ] Test exception handling in nested functions with nonlocal variables
+    - [ ] Test interaction between exceptions and other control flow (loops, conditionals)
+    - [ ] Test memory management during exception handling
+    - [ ] Test exception handling with different data types
+    - [ ] Verify correct cleanup in finally blocks
+    - [ ] Test exception handling performance under load
+22. [ ] Add tests for edge cases in type conversions
+23. [ ] Create a test suite for comparing compiled output with CPython execution
+24. [ ] Add tests for error handling and recovery
 
 ## Next Steps (Medium Priority)
 
@@ -315,6 +332,14 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
   - ✅ Added simplified tests for raise and catch functionality
   - ✅ Added test for exception variable binding
   - ⏳ Advanced exception handling features moved to medium priority
+  - ℹ️ Suggested test cases for validating exception handling:
+    - Test exception propagation through multiple function calls
+    - Test exception handling in nested functions with nonlocal variables
+    - Test interaction between exceptions and loops/conditionals
+    - Test resource cleanup in finally blocks with various exit scenarios
+    - Test exception handling with different data types (int, string, list, etc.)
+    - Test memory management during exception handling
+    - Compare behavior with CPython for compatibility
 - Research how other compilers handle closure environments and variable capture
 - Consider implementing a static analysis pass to identify all nonlocal variables before code generation
 - Look into how Python's exception handling is implemented in CPython for inspiration
