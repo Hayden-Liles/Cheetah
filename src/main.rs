@@ -16,7 +16,7 @@ use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
-use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops};
+use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, memory_profiler};
 use cheetah::parse;
 
 use inkwell::context;
@@ -309,6 +309,15 @@ fn run_file_jit(filename: &str) -> Result<()> {
     // Initialize range operations
     range_ops::init();
 
+    // Initialize range iterator system
+    range_iterator::init();
+
+    // Initialize circular buffer
+    circular_buffer::init();
+
+    // Initialize memory profiler
+    memory_profiler::init();
+
     let filename = ensure_ch_extension(filename);
     println!("{}", format!("JIT compiling and executing {}", filename).bright_green());
 
@@ -371,6 +380,15 @@ fn run_file_jit(filename: &str) -> Result<()> {
 
                                 // Clean up range operations
                                 cheetah::compiler::runtime::range_ops::cleanup();
+
+                                // Clean up range iterator system
+                                cheetah::compiler::runtime::range_iterator::cleanup();
+
+                                // Clean up circular buffer
+                                cheetah::compiler::runtime::circular_buffer::cleanup();
+
+                                // Clean up memory profiler
+                                cheetah::compiler::runtime::memory_profiler::cleanup();
 
                                 println!("{}", format!("Execution completed in {:.2?}", elapsed).bright_green());
                             },
@@ -576,6 +594,15 @@ fn run_repl_jit() -> Result<()> {
 
                                                     // Clean up range operations
                                                     cheetah::compiler::runtime::range_ops::cleanup();
+
+                                                    // Clean up range iterator system
+                                                    cheetah::compiler::runtime::range_iterator::cleanup();
+
+                                                    // Clean up circular buffer
+                                                    cheetah::compiler::runtime::circular_buffer::cleanup();
+
+                                                    // Clean up memory profiler
+                                                    cheetah::compiler::runtime::memory_profiler::cleanup();
 
                                                     println!("{}", "Execution completed.".bright_green());
                                                 },

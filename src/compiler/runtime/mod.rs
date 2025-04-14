@@ -13,6 +13,9 @@ pub mod print_ops;
 pub mod buffered_output;
 pub mod debug_utils;
 pub mod range_ops;
+pub mod range_iterator;
+pub mod circular_buffer;
+pub mod memory_profiler;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -42,4 +45,10 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register range functions
     range_ops::register_range_functions(context, module);
+
+    // Register range iterator functions
+    range_iterator::register_range_iterator_functions(context, module);
+
+    // Register memory profiler functions
+    memory_profiler::register_memory_functions(context, module);
 }
