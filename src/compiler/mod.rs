@@ -16,6 +16,7 @@ pub mod expr_non_recursive;
 pub mod stmt_non_recursive;
 pub mod loop_flattener;
 pub mod tail_call_optimizer;
+pub mod parallel_loop_optimizer;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;

@@ -119,6 +119,7 @@ dependencies = [
  "libc",
  "nom",
  "quickcheck",
+ "rayon",
  "ryu",
  "test-case",
  "thiserror 2.0.12",

@@ -285,8 +285,6 @@ result2 = conditional_increment(0)  # False equivalent
 
 #[test]
 fn test_global_shadowing() {
-    // Skip this test for now until we fix the global variable handling
-    return;
 
     // Simplified test without nested functions
     let source = r#"

@@ -16,7 +16,7 @@ use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
-use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, memory_profiler};
+use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, memory_profiler, parallel_ops};
 use cheetah::parse;
 
 use inkwell::context;
@@ -318,6 +318,9 @@ fn run_file_jit(filename: &str) -> Result<()> {
     // Initialize memory profiler
     memory_profiler::init();
 
+    // Initialize parallel processing
+    parallel_ops::init();
+
     let filename = ensure_ch_extension(filename);
     println!("{}", format!("JIT compiling and executing {}", filename).bright_green());
 
@@ -389,6 +392,9 @@ fn run_file_jit(filename: &str) -> Result<()> {
 
                                 // Clean up memory profiler
                                 cheetah::compiler::runtime::memory_profiler::cleanup();
+
+                                // Clean up parallel processing
+                                cheetah::compiler::runtime::parallel_ops::cleanup();
 
                                 println!("{}", format!("Execution completed in {:.2?}", elapsed).bright_green());
                             },
@@ -603,6 +609,9 @@ fn run_repl_jit() -> Result<()> {
 
                                                     // Clean up memory profiler
                                                     cheetah::compiler::runtime::memory_profiler::cleanup();
+
+                                                    // Clean up parallel processing
+                                                    cheetah::compiler::runtime::parallel_ops::cleanup();
 
                                                     println!("{}", "Execution completed.".bright_green());
                                                 },

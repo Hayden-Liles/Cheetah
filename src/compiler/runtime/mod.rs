@@ -16,6 +16,7 @@ pub mod range_ops;
 pub mod range_iterator;
 pub mod circular_buffer;
 pub mod memory_profiler;
+pub mod parallel_ops;
 
 use inkwell::context::Context;
 use inkwell::module::Module;

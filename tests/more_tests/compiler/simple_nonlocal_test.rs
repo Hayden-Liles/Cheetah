@@ -71,8 +71,6 @@ result = outer()
 
 #[test]
 fn test_simple_global_variable() {
-    // Skip this test for now until we fix the global variable handling
-    return;
     // Test a simple global variable
     let source = r#"
 x = 10
