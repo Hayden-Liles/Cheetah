@@ -7,8 +7,13 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 
 // Constants for loop optimization
-const CHUNK_SIZE: u64 = 10; // Process loops in chunks of 10 iterations to prevent stack overflow
-// Using a very small chunk size is critical to prevent stack overflow
+const MIN_CHUNK_SIZE: u64 = 1000; // Minimum chunk size for better performance
+const MAX_CHUNK_SIZE: u64 = 100000; // Maximum chunk size to prevent stack overflow
+const DEFAULT_CHUNK_SIZE: u64 = 10000; // Default chunk size for most loops
+
+// Threshold for large ranges that need special handling
+const LARGE_RANGE_THRESHOLD: u64 = 1000000; // 1 million iterations is considered large
+const VERY_LARGE_RANGE_THRESHOLD: u64 = 10000000; // 10 million iterations is very large
 
 /// Loop optimization helper functions
 pub struct LoopOptimizer<'ctx> {
@@ -27,6 +32,45 @@ impl<'ctx> LoopOptimizer<'ctx> {
         // Always chunk loops to prevent stack overflow
         // This is the most reliable way to prevent stack overflows in large loops
         true
+    }
+
+    /// Calculate an appropriate chunk size based on the range size
+    pub fn calculate_chunk_size(&self, start_val: IntValue<'ctx>, end_val: IntValue<'ctx>) -> u64 {
+        // Try to get constant values if available
+        if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
+            let range_size = if end_const > start_const {
+                (end_const - start_const) as u64
+            } else {
+                return MIN_CHUNK_SIZE; // Invalid range, use minimum chunk size
+            };
+
+            // For extremely large ranges, use a fixed large chunk size
+            // This is more efficient than using very small chunks
+            if range_size > VERY_LARGE_RANGE_THRESHOLD {
+                // For extremely large ranges, use a fixed large chunk size
+                // This is more efficient and prevents excessive chunking
+                return MAX_CHUNK_SIZE;
+            }
+            // For very large ranges, use a dynamic chunk size
+            else if range_size > LARGE_RANGE_THRESHOLD {
+                // Use a square root scale for very large ranges
+                // This provides a better balance between performance and stack usage
+                let sqrt_factor = (range_size as f64).sqrt() as u64 / 100;
+                let adjusted_size = DEFAULT_CHUNK_SIZE * sqrt_factor;
+                return adjusted_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE);
+            }
+            // For medium-large ranges, use the maximum chunk size
+            else if range_size > MAX_CHUNK_SIZE {
+                return MAX_CHUNK_SIZE;
+            }
+            // For medium ranges, use the range size itself (process in one chunk)
+            else if range_size > MIN_CHUNK_SIZE {
+                return range_size;
+            }
+        }
+
+        // Default to a reasonable chunk size if we can't determine the range size
+        DEFAULT_CHUNK_SIZE
     }
 
     /// Optimize a range-based for loop
@@ -91,6 +135,19 @@ impl<'ctx> LoopOptimizer<'ctx> {
         body_block: BasicBlock<'ctx>,
         exit_block: BasicBlock<'ctx>,
     ) -> BasicBlock<'ctx> {
+        // Log the range size if we can determine it
+        if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
+            let range_size = if end_const > start_const {
+                (end_const - start_const) as u64
+            } else {
+                0 // Invalid range
+            };
+
+            if range_size > VERY_LARGE_RANGE_THRESHOLD {
+                // For very large ranges, log a warning
+                println!("[LOOP WARNING] Very large range detected: {} iterations", range_size);
+            }
+        }
         let i64_type = self.context.i64_type();
         let entry_block = self.builder.get_insert_block().unwrap();
 
@@ -134,9 +191,34 @@ impl<'ctx> LoopOptimizer<'ctx> {
         // Chunk body block
         self.builder.position_at_end(chunk_body_block);
 
-        // Calculate the end of this chunk - use a very small chunk size to prevent stack overflow
-        let chunk_size = i64_type.const_int(CHUNK_SIZE, false);
+        // Calculate the end of this chunk using a dynamic chunk size
+        let dynamic_chunk_size = self.calculate_chunk_size(start_val, end_val);
+        let chunk_size = i64_type.const_int(dynamic_chunk_size, false);
         let chunk_end = self.builder.build_int_add(current_chunk, chunk_size, "chunk_end").unwrap();
+
+        // Log the chunk size for debugging
+        if cfg!(debug_assertions) {
+            println!("Using chunk size: {} for loop", dynamic_chunk_size);
+        }
+
+        // For very large ranges, we'll add a debug message
+        // This helps with debugging and prevents excessive memory usage
+        if cfg!(debug_assertions) {
+            if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
+                let range_size = if end_const > start_const {
+                    (end_const - start_const) as u64
+                } else {
+                    0 // Invalid range
+                };
+
+                if range_size > VERY_LARGE_RANGE_THRESHOLD {
+                    println!("[LOOP CHUNK] Processing chunk {} to {} (size {})",
+                             current_chunk.get_sign_extended_constant().unwrap_or(0),
+                             chunk_end.get_sign_extended_constant().unwrap_or(0),
+                             dynamic_chunk_size);
+                }
+            }
+        }
 
         // We'll use a simpler approach for debugging - just add a comment
         // This helps prevent stack overflow by using smaller chunks

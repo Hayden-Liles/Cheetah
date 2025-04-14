@@ -16,7 +16,7 @@ use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
-use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output};
+use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops};
 use cheetah::parse;
 
 use inkwell::context;
@@ -132,19 +132,40 @@ enum Commands {
 // Function to increase the stack size limit
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn increase_stack_size() {
-    // Set stack size to 64MB (64 * 1024 * 1024)
-    let stack_size = 64 * 1024 * 1024;
-    let rlim = libc::rlimit {
-        rlim_cur: stack_size,
-        rlim_max: stack_size,
+    // Set stack size to 256MB (256 * 1024 * 1024) for large ranges
+    let stack_size = 256 * 1024 * 1024;
+
+    // Get current limits
+    let mut current_rlim = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
     };
 
     unsafe {
+        // Get current limits first
+        if libc::getrlimit(libc::RLIMIT_STACK, &mut current_rlim) != 0 {
+            eprintln!("Warning: Failed to get current stack size limits.");
+        }
+
+        // Use the maximum available or our desired size, whichever is smaller
+        let new_size = if current_rlim.rlim_max != libc::RLIM_INFINITY && current_rlim.rlim_max < stack_size {
+            eprintln!("Note: System maximum stack size is {}MB, using that instead of requested {}MB",
+                     current_rlim.rlim_max / (1024 * 1024), stack_size / (1024 * 1024));
+            current_rlim.rlim_max
+        } else {
+            stack_size
+        };
+
+        let rlim = libc::rlimit {
+            rlim_cur: new_size,
+            rlim_max: current_rlim.rlim_max,
+        };
+
         // Try to increase the stack size
         if libc::setrlimit(libc::RLIMIT_STACK, &rlim) != 0 {
-            eprintln!("Warning: Failed to increase stack size. Stack overflows may occur.");
+            eprintln!("Warning: Failed to increase stack size. Stack overflows may occur with large ranges.");
         } else {
-            println!("{}", format!("Stack size increased to {}MB", stack_size / (1024 * 1024)).bright_green());
+            println!("{}", format!("Stack size increased to {}MB for handling large ranges", new_size / (1024 * 1024)).bright_green());
         }
     }
 }
@@ -285,6 +306,9 @@ fn run_file_jit(filename: &str) -> Result<()> {
     // Then initialize the buffered output system
     buffered_output::init();
 
+    // Initialize range operations
+    range_ops::init();
+
     let filename = ensure_ch_extension(filename);
     println!("{}", format!("JIT compiling and executing {}", filename).bright_green());
 
@@ -344,6 +368,9 @@ fn run_file_jit(filename: &str) -> Result<()> {
 
                                 // Flush any remaining output
                                 cheetah::compiler::runtime::buffered_output::flush_output_buffer();
+
+                                // Clean up range operations
+                                cheetah::compiler::runtime::range_ops::cleanup();
 
                                 println!("{}", format!("Execution completed in {:.2?}", elapsed).bright_green());
                             },
@@ -546,6 +573,10 @@ fn run_repl_jit() -> Result<()> {
                                                     main_fn.call();
                                                     // Flush any remaining output
                                                     cheetah::compiler::runtime::buffered_output::flush_output_buffer();
+
+                                                    // Clean up range operations
+                                                    cheetah::compiler::runtime::range_ops::cleanup();
+
                                                     println!("{}", "Execution completed.".bright_green());
                                                 },
                                                 Err(e) => {
@@ -1007,19 +1038,25 @@ fn register_runtime_functions(
     // Range functions
     if let Some(function) = module.get_function("range_1") {
         {
-            engine.add_global_mapping(&function, jit_range_1 as usize);
+            engine.add_global_mapping(&function, range_ops::range_1 as usize);
         }
     }
 
     if let Some(function) = module.get_function("range_2") {
         {
-            engine.add_global_mapping(&function, jit_range_2 as usize);
+            engine.add_global_mapping(&function, range_ops::range_2 as usize);
         }
     }
 
     if let Some(function) = module.get_function("range_3") {
         {
-            engine.add_global_mapping(&function, jit_range_3 as usize);
+            engine.add_global_mapping(&function, range_ops::range_3 as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("range_cleanup") {
+        {
+            engine.add_global_mapping(&function, range_ops::range_cleanup as usize);
         }
     }
 
@@ -1239,38 +1276,4 @@ extern "C" fn jit_string_length(string: *const c_char) -> i64 {
     s.len() as i64
 }
 
-// Range function implementations - optimized for performance
-extern "C" fn jit_range_1(stop: i64) -> i64 {
-    // Fast path for common case in loops
-    if stop > 0 {
-        return stop;
-    }
-    0 // Return 0 for negative or zero values
-}
-
-extern "C" fn jit_range_2(start: i64, stop: i64) -> i64 {
-    // Fast path for common case in loops
-    if start < stop {
-        return stop - start;
-    }
-    0 // Return 0 for invalid ranges
-}
-
-extern "C" fn jit_range_3(start: i64, stop: i64, step: i64) -> i64 {
-    // Fast path for common case in loops
-    if step == 0 {
-        return 0; // Avoid division by zero
-    }
-
-    // Optimize for the common case where step is 1
-    if step == 1 && start < stop {
-        return stop - start;
-    }
-
-    // Handle other cases
-    if (step > 0 && start < stop) || (step < 0 && start > stop) {
-        return (stop - start) / step + ((stop - start) % step != 0) as i64;
-    }
-
-    0 // Return 0 for invalid ranges
-}
+// Range functions are now implemented in src/compiler/runtime/range_ops.rs

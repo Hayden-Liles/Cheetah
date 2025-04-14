@@ -12,6 +12,7 @@ pub mod exception_runtime;
 pub mod print_ops;
 pub mod buffered_output;
 pub mod debug_utils;
+pub mod range_ops;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -38,4 +39,7 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register print functions
     print_ops::register_print_functions(context, module);
+
+    // Register range functions
+    range_ops::register_range_functions(context, module);
 }
