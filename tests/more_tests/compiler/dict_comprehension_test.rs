@@ -75,16 +75,13 @@ value_2 = data["2"]
 #[test]
 fn test_dict_comprehension_with_list_iteration() {
     let source = r#"
-# Create individual variables
-a = 1
-b = 2
-c = 3
+# Create a list of numbers
+numbers = [1, 2, 3, 4, 5]
 
 # Create a dictionary manually
 data = {}
-data[a] = a*a
-data[b] = b*b
-data[c] = c*c
+for x in numbers:
+    data[x] = x*x
 
 # Access some values
 value_1 = data[1]

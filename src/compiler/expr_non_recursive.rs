@@ -53,6 +53,33 @@ enum ExprTask<'a> {
         body: Box<Expr>,
         orelse: Box<Expr>,
     },
+
+    // Process a tuple creation after evaluating all elements
+    ProcessTuple {
+        elements_count: usize,
+    },
+
+    // Process a list creation after evaluating all elements
+    ProcessList {
+        elements_count: usize,
+    },
+
+    // Process a dictionary creation after evaluating all key-value pairs
+    ProcessDict {
+        elements_count: usize,
+    },
+
+    // Process a set creation after evaluating all elements
+    ProcessSet {
+        elements_count: usize,
+    },
+
+    // Process an attribute access after evaluating the value
+    ProcessAttribute {
+        attr: String,
+    },
+
+
 }
 
 // Result of an expression evaluation
@@ -62,6 +89,7 @@ struct ExprResult<'ctx> {
 }
 
 impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
+
     // Non-recursive implementation of compile_expr
     fn compile_expr_non_recursive(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Create work stack and result stack
@@ -297,10 +325,124 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                         },
 
                         // Handle list comprehensions
-                        Expr::ListComp { elt, generators, .. } => {
-                            // Use the non-recursive list comprehension implementation
-                            let (value, ty) = self.compile_list_comprehension_non_recursive(elt, generators)?;
+                        Expr::ListComp { .. } => {
+                            // Use the fallback implementation for list comprehensions
+                            // This is more reliable until we can properly implement the non-recursive version
+                            let (value, ty) = self.compile_expr_fallback(expr)?;
                             result_stack.push(ExprResult { value, ty });
+                        },
+
+                        // Handle string literals
+                        Expr::Str { value, .. } => {
+                            // Create the string constant with null terminator
+                            let const_str = self.llvm_context.const_string(value.as_bytes(), true);
+
+                            // Get the type of the constant string
+                            let str_type = const_str.get_type();
+
+                            // Create a global variable with the same type as the constant
+                            let global_str = self.module.add_global(str_type, None, "str_const");
+                            global_str.set_constant(true);
+                            global_str.set_initializer(&const_str);
+
+                            // Get a pointer to the string
+                            let str_ptr = self.builder.build_pointer_cast(
+                                global_str.as_pointer_value(),
+                                self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                "str_ptr"
+                            ).unwrap();
+
+                            // Add to result stack
+                            result_stack.push(ExprResult { value: str_ptr.into(), ty: Type::String });
+                        },
+
+                        // Handle tuple literals
+                        Expr::Tuple { elts, .. } => {
+                            // For tuples, we need to evaluate each element and then create a tuple
+                            // First, add a task to process the tuple after all elements are evaluated
+                            let elements_count = elts.len();
+                            work_stack.push_front(ExprTask::ProcessTuple { elements_count });
+
+                            // Then, evaluate each element in reverse order
+                            // This ensures they're processed in the correct order
+                            for elt in elts.iter().rev() {
+                                work_stack.push_front(ExprTask::Evaluate(elt));
+                            }
+                        },
+
+                        // Handle list literals
+                        Expr::List { elts, .. } => {
+                            // For lists, we need to evaluate each element and then create a list
+                            // First, add a task to process the list after all elements are evaluated
+                            let elements_count = elts.len();
+                            work_stack.push_front(ExprTask::ProcessList { elements_count });
+
+                            // Then, evaluate each element in reverse order
+                            // This ensures they're processed in the correct order
+                            for elt in elts.iter().rev() {
+                                work_stack.push_front(ExprTask::Evaluate(elt));
+                            }
+                        },
+
+                        // Handle dictionary literals
+                        Expr::Dict { keys, values, .. } => {
+                            // For dictionaries, we need to evaluate each key-value pair and then create a dict
+                            // First, add a task to process the dict after all elements are evaluated
+                            let elements_count = keys.len();
+                            work_stack.push_front(ExprTask::ProcessDict { elements_count });
+
+                            // Then, evaluate each key-value pair in reverse order
+                            // This ensures they're processed in the correct order
+                            for i in (0..keys.len()).rev() {
+                                if let Some(key) = &keys[i] {
+                                    work_stack.push_front(ExprTask::Evaluate(&values[i]));
+                                    work_stack.push_front(ExprTask::Evaluate(key));
+                                }
+                            }
+                        },
+
+                        // Handle set literals
+                        Expr::Set { elts, .. } => {
+                            // For sets, we need to evaluate each element and then create a set
+                            // First, add a task to process the set after all elements are evaluated
+                            let elements_count = elts.len();
+                            work_stack.push_front(ExprTask::ProcessSet { elements_count });
+
+                            // Then, evaluate each element in reverse order
+                            // This ensures they're processed in the correct order
+                            for elt in elts.iter().rev() {
+                                work_stack.push_front(ExprTask::Evaluate(elt));
+                            }
+                        },
+
+                        // Handle subscript expressions (e.g., list[0])
+                        Expr::Subscript { value, slice, .. } => {
+                            // Use the non-recursive subscript implementation
+                            let (value_val, ty) = self.compile_subscript_non_recursive(value, slice)?;
+                            result_stack.push(ExprResult { value: value_val, ty });
+                        },
+
+                        // Handle attribute access (e.g., obj.attr)
+                        Expr::Attribute { value, attr, .. } => {
+                            // First, evaluate the value
+                            work_stack.push_front(ExprTask::ProcessAttribute { attr: attr.clone() });
+                            work_stack.push_front(ExprTask::Evaluate(value));
+                        },
+
+                        // Handle call expressions (e.g., func())
+                        Expr::Call { .. } => {
+                            // For now, use the fallback implementation for function calls
+                            // This is more reliable until we can properly implement the non-recursive version
+                            let (call_val, call_type) = self.compile_expr_fallback(expr)?;
+                            result_stack.push(ExprResult { value: call_val, ty: call_type });
+                        },
+
+                        // Handle dictionary comprehensions
+                        Expr::DictComp { .. } => {
+                            // Use the fallback implementation for dictionary comprehensions
+                            // This is more reliable until we can properly implement the non-recursive version
+                            let (dict_val, dict_type) = self.compile_expr_fallback(expr)?;
+                            result_stack.push(ExprResult { value: dict_val, ty: dict_type });
                         },
 
                         // For other expression types, fall back to the original recursive implementation
@@ -651,7 +793,237 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                         ty: result_type,
                     });
                 },
-                // Add more task types as needed
+                ExprTask::ProcessTuple { elements_count } => {
+                    // Get the elements from the result stack
+                    if result_stack.len() < elements_count {
+                        return Err(format!("Not enough elements for tuple: expected {}, got {}", elements_count, result_stack.len()));
+                    }
+
+                    // Collect the elements and their types
+                    let mut elements = Vec::with_capacity(elements_count);
+                    let mut element_types = Vec::with_capacity(elements_count);
+
+                    // Get the elements from the result stack in reverse order
+                    // (since they were pushed in reverse order)
+                    for _ in 0..elements_count {
+                        let idx = result_stack.len() - 1;
+                        let element = result_stack.remove(idx);
+                        elements.push(element.value);
+                        element_types.push(element.ty);
+                    }
+
+                    // Reverse the elements to get them in the correct order
+                    elements.reverse();
+                    element_types.reverse();
+
+                    // Build the tuple
+                    let tuple_ptr = self.build_tuple(elements, &element_types)?;
+
+                    // Push the result onto the result stack
+                    result_stack.push(ExprResult {
+                        value: tuple_ptr.into(),
+                        ty: Type::Tuple(element_types),
+                    });
+                },
+                ExprTask::ProcessList { elements_count } => {
+                    // Get the elements from the result stack
+                    if result_stack.len() < elements_count {
+                        return Err(format!("Not enough elements for list: expected {}, got {}", elements_count, result_stack.len()));
+                    }
+
+                    // Collect the elements
+                    let mut elements = Vec::with_capacity(elements_count);
+                    let mut element_type = Type::Unknown;
+
+                    // Get the elements from the result stack in reverse order
+                    for _ in 0..elements_count {
+                        let idx = result_stack.len() - 1;
+                        let element = result_stack.remove(idx);
+                        elements.push(element.value);
+
+                        // Use the most specific type that can represent all elements
+                        if element_type == Type::Unknown {
+                            element_type = element.ty;
+                        } else if element_type != element.ty {
+                            // For simplicity, use a common type or Any
+                            element_type = Type::Any;
+                        }
+                    }
+
+                    // Reverse the elements to get them in the correct order
+                    elements.reverse();
+
+                    // Build the list
+                    let list_ptr = self.build_list(elements, &element_type)?;
+
+                    // Push the result onto the result stack
+                    result_stack.push(ExprResult {
+                        value: list_ptr.into(),
+                        ty: Type::List(Box::new(element_type)),
+                    });
+                },
+                ExprTask::ProcessDict { elements_count } => {
+                    // Get the key-value pairs from the result stack
+                    if result_stack.len() < elements_count * 2 {
+                        return Err(format!("Not enough elements for dict: expected {}, got {}", elements_count * 2, result_stack.len()));
+                    }
+
+                    // Collect the keys and values
+                    let mut keys = Vec::with_capacity(elements_count);
+                    let mut values = Vec::with_capacity(elements_count);
+                    let mut key_type = Type::Unknown;
+                    let mut value_type = Type::Unknown;
+
+                    // Get the key-value pairs from the result stack
+                    // Each pair consists of a key followed by a value
+                    for _ in 0..elements_count {
+                        // Get the value (pushed last, so it's on top)
+                        let value_idx = result_stack.len() - 1;
+                        let value = result_stack.remove(value_idx);
+                        values.push(value.value);
+
+                        // Update the value type
+                        if value_type == Type::Unknown {
+                            value_type = value.ty;
+                        } else if value_type != value.ty {
+                            value_type = Type::Any;
+                        }
+
+                        // Get the key (pushed before the value)
+                        let key_idx = result_stack.len() - 1;
+                        let key = result_stack.remove(key_idx);
+                        keys.push(key.value);
+
+                        // Update the key type
+                        if key_type == Type::Unknown {
+                            key_type = key.ty;
+                        } else if key_type != key.ty {
+                            key_type = Type::Any;
+                        }
+                    }
+
+                    // Reverse the keys and values to get them in the correct order
+                    keys.reverse();
+                    values.reverse();
+
+                    // Build the dictionary
+                    let dict_ptr = self.build_dict(keys, values, &key_type, &value_type)?;
+
+                    // Push the result onto the result stack
+                    result_stack.push(ExprResult {
+                        value: dict_ptr.into(),
+                        ty: Type::Dict(Box::new(key_type), Box::new(value_type)),
+                    });
+                },
+                ExprTask::ProcessSet { elements_count } => {
+                    // Get the elements from the result stack
+                    if result_stack.len() < elements_count {
+                        return Err(format!("Not enough elements for set: expected {}, got {}", elements_count, result_stack.len()));
+                    }
+
+                    // Collect the elements
+                    let mut elements = Vec::with_capacity(elements_count);
+                    let mut element_type = Type::Unknown;
+
+                    // Get the elements from the result stack in reverse order
+                    for _ in 0..elements_count {
+                        let idx = result_stack.len() - 1;
+                        let element = result_stack.remove(idx);
+                        elements.push(element.value);
+
+                        // Use the most specific type that can represent all elements
+                        if element_type == Type::Unknown {
+                            element_type = element.ty;
+                        } else if element_type != element.ty {
+                            // For simplicity, use a common type or Any
+                            element_type = Type::Any;
+                        }
+                    }
+
+                    // Reverse the elements to get them in the correct order
+                    elements.reverse();
+
+                    // Build the set
+                    let set_ptr = self.build_set(elements, &element_type)?;
+
+                    // Push the result onto the result stack
+                    result_stack.push(ExprResult {
+                        value: set_ptr.into(),
+                        ty: Type::Set(Box::new(element_type)),
+                    });
+                },
+                ExprTask::ProcessAttribute { attr } => {
+                    // Get the value from the result stack
+                    if result_stack.is_empty() {
+                        return Err("No value found for attribute access".to_string());
+                    }
+
+                    // Get the value
+                    let value_idx = result_stack.len() - 1;
+                    let value_result = result_stack.remove(value_idx);
+
+                    // Access the attribute
+                    let (attr_val, attr_type) = match value_result.ty {
+                        Type::Dict(_, _) => {
+                            // For dictionaries, we can access methods like keys(), values(), etc.
+                            match attr.as_str() {
+                                "keys" | "values" | "items" | "get" | "pop" | "clear" | "update" => {
+                                    // These are methods, so we need to return a function
+                                    // For now, just return a placeholder
+                                    let placeholder = self.llvm_context.i32_type().const_int(0, false);
+                                    (placeholder.into(), Type::function(vec![], Type::Any))
+                                },
+                                _ => return Err(format!("Unknown attribute '{}' for dictionary", attr)),
+                            }
+                        },
+                        Type::List(_) => {
+                            // For lists, we can access methods like append(), pop(), etc.
+                            match attr.as_str() {
+                                "append" | "pop" | "clear" | "extend" | "insert" | "remove" | "sort" => {
+                                    // These are methods, so we need to return a function
+                                    // For now, just return a placeholder
+                                    let placeholder = self.llvm_context.i32_type().const_int(0, false);
+                                    (placeholder.into(), Type::function(vec![], Type::Any))
+                                },
+                                _ => return Err(format!("Unknown attribute '{}' for list", attr)),
+                            }
+                        },
+                        Type::String => {
+                            // For strings, we can access methods like upper(), lower(), etc.
+                            match attr.as_str() {
+                                "upper" | "lower" | "strip" | "split" | "join" | "replace" => {
+                                    // These are methods, so we need to return a function
+                                    // For now, just return a placeholder
+                                    let placeholder = self.llvm_context.i32_type().const_int(0, false);
+                                    (placeholder.into(), Type::function(vec![], Type::Any))
+                                },
+                                _ => return Err(format!("Unknown attribute '{}' for string", attr)),
+                            }
+                        },
+                        Type::Class { methods, .. } => {
+                            // For classes, we can access methods and fields
+                            if let Some(method_type) = methods.get(&attr) {
+                                // This is a method, so we need to return a function
+                                // For now, just return a placeholder
+                                let placeholder = self.llvm_context.i32_type().const_int(0, false);
+                                (placeholder.into(), (**method_type).clone())
+                            } else {
+                                // This might be a field, try to access it
+                                // For now, just return a placeholder
+                                let placeholder = self.llvm_context.i32_type().const_int(0, false);
+                                (placeholder.into(), Type::Any)
+                            }
+                        },
+                        _ => return Err(format!("Cannot access attribute '{}' on value of type {:?}", attr, value_result.ty)),
+                    };
+
+                    // Push the result onto the result stack
+                    result_stack.push(ExprResult {
+                        value: attr_val,
+                        ty: attr_type,
+                    });
+                },
+
             }
         }
 

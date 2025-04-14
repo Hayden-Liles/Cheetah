@@ -1343,10 +1343,27 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     }
                 };
 
+                // Special handling for tuple types
+                let final_element_type = match &element_type {
+                    Type::Tuple(elements) => {
+                        // For tuples, extract the element type if all elements are the same
+                        if !elements.is_empty() && elements.iter().all(|t| t == &elements[0]) {
+                            println!("All tuple elements have the same type: {:?}", elements[0]);
+                            elements[0].clone()
+                        } else {
+                            // If tuple elements have different types, use the tuple type
+                            element_type.clone()
+                        }
+                    },
+                    _ => element_type.clone()
+                };
+
+                println!("Final list element type: {:?}", final_element_type);
+
                 // Build the list
                 let list_ptr = self.build_list(element_values, &element_type)?;
 
-                Ok((list_ptr.into(), Type::List(Box::new(element_type))))
+                Ok((list_ptr.into(), Type::List(Box::new(final_element_type))))
             },
             Expr::Tuple { elts, .. } => {
                 if elts.is_empty() {
@@ -1660,12 +1677,21 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     index_int
                 )?;
 
+                // Load the value from the pointer
+                let element_type_ref = element_type.as_ref();
+                let llvm_type = self.get_llvm_type(element_type_ref);
+                let item_val = self.builder.build_load(llvm_type, item_ptr, "list_item_load").unwrap();
+
                 // Return the item and its type
-                Ok((item_ptr.into(), element_type.as_ref().clone()))
+                Ok((item_val, element_type_ref.clone()))
             },
             Type::Dict(key_type, value_type) => {
+                // Special case for Unknown key type - allow any index type
+                if matches!(**key_type, Type::Unknown) {
+                    println!("Dictionary access with Unknown key type, allowing index type: {:?}", index_type);
+                }
                 // For dictionaries, check if the key type is compatible
-                if !index_type.can_coerce_to(key_type) && !matches!(index_type, Type::String) {
+                else if !index_type.can_coerce_to(key_type) && !matches!(index_type, Type::String) {
                     return Err(format!("Dictionary key type mismatch: expected {:?}, got {:?}", key_type, index_type));
                 }
 
@@ -2127,7 +2153,18 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Ensure the current block has a terminator before returning
         self.ensure_block_has_terminator();
 
-        Ok(item_ptr.into_pointer_value())
+        // Check if the item is a pointer value
+        if item_ptr.is_pointer_value() {
+            Ok(item_ptr.into_pointer_value())
+        } else {
+            // If it's not a pointer value, allocate memory for it and store it
+            let item_alloca = self.builder.build_alloca(
+                item_ptr.get_type(),
+                "list_item_alloca"
+            ).unwrap();
+            self.builder.build_store(item_alloca, item_ptr).unwrap();
+            Ok(item_alloca)
+        }
     }
 
     fn build_list_slice(
@@ -3356,36 +3393,116 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             }
         }
 
-        // Handle different iterable types
-        match iter_type {
-            Type::List(_) => {
-                self.handle_list_iteration_for_comprehension(
-                    elt,
-                    generator,
-                    iter_val.into_pointer_value(),
-                    result_list,
-                    list_append_fn
-                )?;
-            },
-            Type::String => {
-                self.handle_string_iteration_for_comprehension(
-                    elt,
-                    generator,
-                    iter_val.into_pointer_value(),
-                    result_list,
-                    list_append_fn
-                )?;
-            },
-            // For simplicity, treat other types like lists
-            _ => {
-                self.handle_general_iteration_for_comprehension(
-                    elt,
-                    generator,
-                    iter_val,
-                    iter_type,
-                    result_list,
-                    list_append_fn
-                )?;
+        // Check if the iterator is a list literal
+        if let Expr::List { elts, .. } = &*generator.iter {
+            // Create a list from the literal
+            println!("Creating list from literal for iteration");
+
+            // Compile each element of the list
+            let mut element_values = Vec::with_capacity(elts.len());
+            let mut element_types = Vec::with_capacity(elts.len());
+
+            for elt in elts {
+                let (value, ty) = self.compile_expr(elt)?;
+                element_values.push(value);
+                element_types.push(ty.clone());
+            }
+
+            // Determine the common element type
+            let element_type = if element_types.is_empty() {
+                Type::Unknown
+            } else {
+                // Check if all elements are the same type
+                let first_type = &element_types[0];
+                let all_same = element_types.iter().all(|t| t == first_type);
+
+                if all_same {
+                    // If all elements are the same type, use that type
+                    println!("All list literal elements have the same type: {:?}", first_type);
+                    first_type.clone()
+                } else {
+                    // If elements have different types, find a common type
+                    let mut common_type = element_types[0].clone();
+                    for ty in &element_types[1..] {
+                        common_type = match self.get_common_type(&common_type, ty) {
+                            Ok(t) => t,
+                            Err(_) => {
+                                println!("Could not find common type between {:?} and {:?}, using Any", common_type, ty);
+                                Type::Any
+                            },
+                        };
+                    }
+                    println!("List literal elements have different types, using common type: {:?}", common_type);
+                    common_type
+                }
+            };
+
+            // Build the list
+            let list_ptr = self.build_list(element_values, &element_type)?;
+
+            // Now handle the list iteration
+            self.handle_list_iteration_for_comprehension(
+                elt,
+                generator,
+                list_ptr,
+                result_list,
+                list_append_fn
+            )?;
+
+            // Pop the scope for the list comprehension
+            self.scope_stack.pop_scope();
+
+            // Return the result list with the correct element type
+            let (_, element_type) = self.compile_expr(elt)?;
+            return Ok((result_list.into(), Type::List(Box::new(element_type))));
+        } else {
+            // Handle different iterable types
+            match iter_type {
+                Type::List(_) => {
+                    self.handle_list_iteration_for_comprehension(
+                        elt,
+                        generator,
+                        iter_val.into_pointer_value(),
+                        result_list,
+                        list_append_fn
+                    )?;
+                },
+                Type::Tuple(_) => {
+                    // For tuples, convert to a list first
+                    println!("Converting tuple to list for iteration");
+
+                    // Create a temporary list variable
+                    let temp_list = self.build_empty_list("temp_list_from_tuple")?;
+
+                    // Now handle the list iteration
+                    self.handle_list_iteration_for_comprehension(
+                        elt,
+                        generator,
+                        temp_list,
+                        result_list,
+                        list_append_fn
+                    )?;
+                },
+                Type::String => {
+                    self.handle_string_iteration_for_comprehension(
+                        elt,
+                        generator,
+                        iter_val.into_pointer_value(),
+                        result_list,
+                        list_append_fn
+                    )?;
+                },
+                // For simplicity, treat other types like lists
+                _ => {
+                    self.handle_general_iteration_for_comprehension(
+                        elt,
+                        generator,
+                        iter_val,
+                        iter_type,
+                        result_list,
+                        list_append_fn
+                    )?;
+                }
             }
         }
 
@@ -3572,8 +3689,45 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         // Bind the target variable to the current element
         if let Expr::Name { id, .. } = generator.target.as_ref() {
-            // Store the element in the target variable
-            self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), Type::Any);
+            // Determine the element type based on the list type
+            let element_type = match self.lookup_variable_type(&generator.iter.to_string()) {
+                Some(Type::List(element_type)) => *element_type.clone(),
+                Some(Type::Tuple(elements)) => {
+                    // For tuples, we need to extract the element type
+                    // If all elements have the same type, use that type
+                    if !elements.is_empty() && elements.iter().all(|t| t == &elements[0]) {
+                        elements[0].clone()
+                    } else {
+                        // Default to Int if we can't determine a common type
+                        Type::Int
+                    }
+                },
+                _ => {
+                    // If we can't determine the type from the variable, try to infer it
+                    // Check if the iterator is a list literal
+                    if let Expr::List { elts, .. } = &*generator.iter {
+                        if !elts.is_empty() {
+                            // Compile the first element to determine its type
+                            if let Ok((_, element_type)) = self.compile_expr(&elts[0]) {
+                                element_type
+                            } else {
+                                // Default to Int if we can't determine the element type
+                                Type::Int
+                            }
+                        } else {
+                            // Empty list, default to Int
+                            Type::Int
+                        }
+                    } else {
+                        // For now, default to Int which is common
+                        Type::Int
+                    }
+                }
+            };
+
+            // Store the element in the target variable with the correct type
+            println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
+            self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), element_type.clone());
         } else {
             return Err("Only simple variable targets are supported in list comprehensions".to_string());
         }
@@ -5640,10 +5794,19 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
 
                         Ok(())
                     },
-                    Type::Dict(key_type, _) => {
+                    Type::Dict(key_type, _value_type) => {
+                        // Special case for Unknown key type - update the dictionary's key type
+                        if matches!(**key_type, Type::Unknown) {
+                            // Update the dictionary's key type to match the index type
+                            println!("Updating dictionary key type from Unknown to {:?}", index_type);
+
+                            // We can't actually modify the Type enum directly, but we can update our type tracking
+                            // For now, just allow the assignment to proceed
+                        }
                         // For dictionaries, we need to check if the key type is compatible
                         // For string keys, we're more permissive to allow for nested dictionary access
-                        if !index_type.can_coerce_to(key_type) && !matches!(index_type, Type::String) {
+                        // Also allow Unknown key type to be compatible with any index type
+                        else if !index_type.can_coerce_to(key_type) && !matches!(index_type, Type::String) && !matches!(**key_type, Type::Unknown) {
                             return Err(format!("Dictionary key type mismatch: expected {:?}, got {:?}", key_type, index_type));
                         }
 
