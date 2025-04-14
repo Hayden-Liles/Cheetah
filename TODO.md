@@ -109,9 +109,9 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 ### Optimizations
 - [ ] Eliminate recursive code generation patterns
   - [x] Rewrite `compile_expr` to use an explicit work stack instead of recursion
-  - [ ] Implement non-recursive versions of `compile_subscript`
-  - [ ] Implement non-recursive versions of `compile_subscript_with_value`
-  - [ ] Implement non-recursive versions of `compile_slice_operation`
+  - [x] Implement non-recursive versions of `compile_subscript`
+  - [x] Implement non-recursive versions of `compile_subscript_with_value`
+  - [x] Implement non-recursive versions of `compile_slice_operation`
   - [ ] Implement non-recursive versions of `compile_list_comprehension`
   - [ ] Implement non-recursive versions of `compile_dict_comprehension`
   - [ ] Implement non-recursive versions of `compile_attribute_access`
