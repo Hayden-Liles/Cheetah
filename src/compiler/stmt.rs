@@ -84,6 +84,9 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
 
             // Compile an if statement
             Stmt::If { test, body, orelse, .. } => {
+                // Ensure the current block has a terminator before creating new blocks
+                self.ensure_block_has_terminator();
+
                 // Get the current function
                 let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
 
@@ -92,8 +95,14 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 let else_block = self.llvm_context.append_basic_block(current_function, "else");
                 let merge_block = self.llvm_context.append_basic_block(current_function, "if.end");
 
+                // Ensure the current block has a terminator before compiling the test expression
+                self.ensure_block_has_terminator();
+
                 // Compile the test expression
                 let (test_val, test_type) = self.compile_expr(test)?;
+
+                // Ensure the current block has a terminator after compiling the test expression
+                self.ensure_block_has_terminator();
 
                 // Convert to boolean if needed
                 let cond_val = if test_type != Type::Bool {
@@ -101,6 +110,9 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
                 } else {
                     test_val.into_int_value()
                 };
+
+                // Ensure the current block has a terminator before creating the conditional branch
+                self.ensure_block_has_terminator();
 
                 // Create the conditional branch
                 self.builder.build_conditional_branch(cond_val, then_block, else_block).unwrap();
@@ -205,6 +217,8 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
 
                 // Only add a branch to the merge block if we don't already have a terminator
                 if !has_terminator && !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                    // Ensure the current block has a terminator before branching to the merge block
+                    self.ensure_block_has_terminator();
                     self.builder.build_unconditional_branch(merge_block).unwrap();
                 }
 
@@ -308,11 +322,19 @@ impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
 
                 // Only add a branch to the merge block if we don't already have a terminator
                 if !has_terminator && !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                    // Ensure the current block has a terminator before branching to the merge block
+                    self.ensure_block_has_terminator();
                     self.builder.build_unconditional_branch(merge_block).unwrap();
                 }
 
+                // Ensure the current block has a terminator before positioning at the merge block
+                self.ensure_block_has_terminator();
+
                 // Continue at the merge block
                 self.builder.position_at_end(merge_block);
+
+                // Ensure the merge block has a terminator
+                self.ensure_block_has_terminator();
 
                 Ok(())
             },

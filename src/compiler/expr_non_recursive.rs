@@ -296,9 +296,16 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                             work_stack.push_front(ExprTask::Evaluate(test));
                         },
 
+                        // Handle list comprehensions
+                        Expr::ListComp { elt, generators, .. } => {
+                            // Use the non-recursive list comprehension implementation
+                            let (value, ty) = self.compile_list_comprehension_non_recursive(elt, generators)?;
+                            result_stack.push(ExprResult { value, ty });
+                        },
+
                         // For other expression types, fall back to the original recursive implementation
                         _ => {
-                            let (value, ty) = <Self as ExprCompiler>::compile_expr_original(self, expr)?;
+                            let (value, ty) = self.compile_expr_fallback(expr)?;
                             result_stack.push(ExprResult { value, ty });
                         }
                     }
@@ -571,18 +578,27 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                         test_val.into_int_value()
                     };
 
+                    // Ensure the current block has a terminator before creating the conditional branch
+                    self.ensure_block_has_terminator();
+
                     // Create the conditional branch
                     self.builder.build_conditional_branch(cond_val, then_block, else_block).unwrap();
 
                     // Compile the then block
                     self.builder.position_at_end(then_block);
                     let (then_val, then_type) = self.compile_expr(&body)?;
+
+                    // Ensure the then block has a terminator before branching to the merge block
+                    self.ensure_block_has_terminator();
                     self.builder.build_unconditional_branch(merge_block).unwrap();
                     let then_block = self.builder.get_insert_block().unwrap(); // Get the updated block
 
                     // Compile the else block
                     self.builder.position_at_end(else_block);
                     let (else_val, else_type) = self.compile_expr(&orelse)?;
+
+                    // Ensure the else block has a terminator before branching to the merge block
+                    self.ensure_block_has_terminator();
                     self.builder.build_unconditional_branch(merge_block).unwrap();
                     let else_block = self.builder.get_insert_block().unwrap(); // Get the updated block
 
@@ -612,6 +628,9 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
 
                     // Create a merge block with phi node
                     self.builder.position_at_end(merge_block);
+
+                    // Ensure the merge block has a terminator before creating the phi node
+                    self.ensure_block_has_terminator();
 
                     // Create the phi node
                     let llvm_type = self.get_llvm_type(&result_type);

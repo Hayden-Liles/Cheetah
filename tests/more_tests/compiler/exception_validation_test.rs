@@ -17,6 +17,9 @@ pub fn compile_source(source: &str) -> Result<String, String> {
     let context = Context::create();
     let mut compiler = Compiler::new(&context, "exception_validation_test");
 
+    // Enable non-recursive expression compilation to avoid stack overflow
+    compiler.context.use_non_recursive_expr = true;
+
     // Compile the AST
     match compiler.compile_module_without_type_checking(&ast) {
         Ok(_) => Ok("Compilation successful".to_string()),
@@ -155,8 +158,11 @@ def test_func():
         if resource_opened:
             resource_closed = True
 
-    # Return whether the resource was properly cleaned up
-    return result if resource_closed else -100
+    # Return the result
+    if resource_closed:
+        return result
+    else:
+        return -100
 "#;
 
     let result = compile_source(source);

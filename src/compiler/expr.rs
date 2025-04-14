@@ -1191,8 +1191,14 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             },
 
             Expr::IfExp { test, body, orelse, .. } => {
+                // Ensure the current block has a terminator before creating new blocks
+                self.ensure_block_has_terminator();
+
                 // Compile the test expression
                 let (test_val, test_type) = self.compile_expr(test)?;
+
+                // Ensure the current block has a terminator after compiling the test expression
+                self.ensure_block_has_terminator();
 
                 // Convert to boolean if needed
                 let cond_val = if test_type != Type::Bool {
@@ -1201,24 +1207,46 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     test_val.into_int_value()
                 };
 
+                // Ensure the current block has a terminator before creating basic blocks
+                self.ensure_block_has_terminator();
+
                 // Create basic blocks for then, else, and merge
                 let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
                 let then_block = self.llvm_context.append_basic_block(current_function, "if_then");
                 let else_block = self.llvm_context.append_basic_block(current_function, "if_else");
                 let merge_block = self.llvm_context.append_basic_block(current_function, "if_merge");
 
+                // Ensure the current block has a terminator before creating the conditional branch
+                self.ensure_block_has_terminator();
+
                 // Branch based on the condition
                 self.builder.build_conditional_branch(cond_val, then_block, else_block).unwrap();
 
                 // Compile the then expression
                 self.builder.position_at_end(then_block);
+
+                // Ensure the then block has a terminator before compiling the body
+                self.ensure_block_has_terminator();
+
                 let (then_val, then_type) = self.compile_expr(body)?;
+
+                // Ensure the then block has a terminator after compiling the body
+                self.ensure_block_has_terminator();
+
                 let then_block = self.builder.get_insert_block().unwrap();
                 self.builder.build_unconditional_branch(merge_block).unwrap();
 
                 // Compile the else expression
                 self.builder.position_at_end(else_block);
+
+                // Ensure the else block has a terminator before compiling the orelse
+                self.ensure_block_has_terminator();
+
                 let (else_val, else_type) = self.compile_expr(orelse)?;
+
+                // Ensure the else block has a terminator after compiling the orelse
+                self.ensure_block_has_terminator();
+
                 let else_block = self.builder.get_insert_block().unwrap();
                 self.builder.build_unconditional_branch(merge_block).unwrap();
 
@@ -1246,8 +1274,14 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     else_val
                 };
 
+                // Ensure the current block has a terminator before positioning at the merge block
+                self.ensure_block_has_terminator();
+
                 // Create a merge block with phi node
                 self.builder.position_at_end(merge_block);
+
+                // Ensure the merge block has a terminator before creating the phi node
+                self.ensure_block_has_terminator();
 
                 // Create the phi node - fixed error by using llvm_type directly
                 let llvm_type = self.get_llvm_type(&result_type);
@@ -2142,6 +2176,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         upper: Option<&Expr>,
         step: Option<&Expr>
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Ensure the current block has a terminator before we create new blocks
+        self.ensure_block_has_terminator();
+
         // Only certain types support slicing
         match &value_type {
             Type::List(element_type) => {
@@ -2166,6 +2203,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Compile the slice bounds without recursion
                 let i64_type = self.llvm_context.i64_type();
 
+                // Ensure the current block has a terminator before compiling the start index
+                self.ensure_block_has_terminator();
+
                 // Handle start index (default = 0)
                 let start_val = match lower {
                     Some(expr) => {
@@ -2173,6 +2213,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         if !start_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice start index must be an integer, got {:?}", start_type));
                         }
+
+                        // Ensure the current block has a terminator after compiling the start index
+                        self.ensure_block_has_terminator();
 
                         // Convert to integer if needed
                         if start_type != Type::Int {
@@ -2184,6 +2227,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     None => i64_type.const_int(0, false)
                 };
 
+                // Ensure the current block has a terminator before compiling the stop index
+                self.ensure_block_has_terminator();
+
                 // Handle stop index (default = list length)
                 let stop_val = match upper {
                     Some(expr) => {
@@ -2191,6 +2237,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         if !stop_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice stop index must be an integer, got {:?}", stop_type));
                         }
+
+                        // Ensure the current block has a terminator after compiling the stop index
+                        self.ensure_block_has_terminator();
 
                         // Convert to integer if needed
                         if stop_type != Type::Int {
@@ -2202,6 +2251,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     None => list_len_int
                 };
 
+                // Ensure the current block has a terminator before compiling the step index
+                self.ensure_block_has_terminator();
+
                 // Handle step (default = 1)
                 let step_val = match step {
                     Some(expr) => {
@@ -2209,6 +2261,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         if !step_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice step must be an integer, got {:?}", step_type));
                         }
+
+                        // Ensure the current block has a terminator after compiling the step index
+                        self.ensure_block_has_terminator();
 
                         // Convert to integer if needed
                         if step_type != Type::Int {
@@ -2220,8 +2275,14 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     None => i64_type.const_int(1, false)
                 };
 
+                // Ensure the current block has a terminator before calling list_slice
+                self.ensure_block_has_terminator();
+
                 // Call the list_slice function without recursion
                 let slice_ptr = self.build_list_slice(list_ptr, start_val, stop_val, step_val)?;
+
+                // Ensure the current block has a terminator before returning
+                self.ensure_block_has_terminator();
 
                 // Return the slice and its type
                 Ok((slice_ptr.into(), Type::List(element_type.clone())))
@@ -2302,8 +2363,14 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     None => i64_type.const_int(1, false)
                 };
 
+                // Ensure the current block has a terminator before calling string_slice
+                self.ensure_block_has_terminator();
+
                 // Call the string_slice function without recursion
                 let slice_ptr = self.build_string_slice(str_ptr, start_val, stop_val, step_val)?;
+
+                // Ensure the current block has a terminator before returning
+                self.ensure_block_has_terminator();
 
                 // Return the slice and its type
                 Ok((slice_ptr.into(), Type::String))
@@ -2532,6 +2599,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
     /// Compile a list comprehension expression
     fn compile_list_comprehension(&mut self, elt: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Use the non-recursive implementation to avoid stack overflow if the flag is set
+        if self.use_non_recursive_expr {
+            return self.compile_list_comprehension_non_recursive(elt, generators);
+        }
         if generators.is_empty() {
             return Err("List comprehension must have at least one generator".to_string());
         }
@@ -3208,8 +3279,14 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             return Err("List comprehension must have at least one generator".to_string());
         }
 
+        // Ensure the current block has a terminator before creating new blocks
+        self.ensure_block_has_terminator();
+
         // Create an empty list to store the results
         let result_list = self.build_empty_list("list_comp_result")?;
+
+        // Ensure the current block has a terminator after creating the empty list
+        self.ensure_block_has_terminator();
 
         // Get the list_append function
         let list_append_fn = match self.module.get_function("list_append") {
@@ -3224,8 +3301,15 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // A full implementation would need to handle multiple generators
         let generator = &generators[0];
 
+        // Ensure the current block has a terminator before compiling the iterable expression
+        self.ensure_block_has_terminator();
+
         // Compile the iterable expression
-        let (iter_val, iter_type) = self.compile_expr(&generator.iter)?;
+        let (iter_val, iter_type_original) = self.compile_expr(&generator.iter)?;
+        let iter_type = iter_type_original.clone();
+
+        // Ensure the current block has a terminator after compiling the iterable expression
+        self.ensure_block_has_terminator();
 
         // Special case for range function
         if let Expr::Call { func, .. } = &*generator.iter {
@@ -3242,8 +3326,32 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     // Pop the scope for the list comprehension
                     self.scope_stack.pop_scope();
 
-                    // Return the result list
-                    return Ok((result_list.into(), Type::List(Box::new(Type::Unknown))));
+                    // Create a temporary scope to compile the element expression
+                    self.scope_stack.push_scope(false, false, false);
+
+                    // Bind the target variable to a dummy value for type inference
+                    if let Expr::Name { id, .. } = generator.target.as_ref() {
+                        // Create a dummy Int variable for range iteration
+                        let dummy_type = Type::Int;
+
+                        // Allocate space for the dummy variable
+                        let dummy_alloca = self.builder.build_alloca(
+                            self.get_llvm_type(&dummy_type),
+                            id
+                        ).unwrap();
+
+                        // Add the variable to the scope
+                        self.scope_stack.add_variable(id.to_string(), dummy_alloca, dummy_type);
+                    }
+
+                    // Compile the element expression to determine the element type
+                    let (_, element_type) = self.compile_expr(elt)?;
+
+                    // Pop the temporary scope
+                    self.scope_stack.pop_scope();
+
+                    // Return the result list with the correct element type
+                    return Ok((result_list.into(), Type::List(Box::new(element_type))));
                 }
             }
         }
@@ -3284,8 +3392,39 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Pop the scope for the list comprehension
         self.scope_stack.pop_scope();
 
-        // Return the result list
-        Ok((result_list.into(), Type::List(Box::new(Type::Unknown))))
+        // Ensure the current block has a terminator before returning
+        self.ensure_block_has_terminator();
+
+        // Create a temporary scope to compile the element expression
+        self.scope_stack.push_scope(false, false, false);
+
+        // Bind the target variable to a dummy value for type inference
+        if let Expr::Name { id, .. } = generator.target.as_ref() {
+            // Create a dummy variable of the appropriate type
+            let dummy_type = match &iter_type_original {
+                Type::List(elem_type) => *elem_type.clone(),
+                Type::String => Type::String,
+                _ => Type::Int, // Default to Int for range and other types
+            };
+
+            // Allocate space for the dummy variable
+            let dummy_alloca = self.builder.build_alloca(
+                self.get_llvm_type(&dummy_type),
+                id
+            ).unwrap();
+
+            // Add the variable to the scope
+            self.scope_stack.add_variable(id.to_string(), dummy_alloca, dummy_type);
+        }
+
+        // Compile the element expression to determine the element type
+        let (_, element_type) = self.compile_expr(elt)?;
+
+        // Pop the temporary scope
+        self.scope_stack.pop_scope();
+
+        // Return the result list with the correct element type
+        Ok((result_list.into(), Type::List(Box::new(element_type))))
     }
 
     fn handle_range_list_comprehension(
