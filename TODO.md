@@ -113,10 +113,17 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
   - [x] Implement non-recursive versions of `compile_subscript_with_value`
   - [x] Implement non-recursive versions of `compile_slice_operation`
   - [ ] Implement non-recursive versions of `compile_list_comprehension`
+    - [ ] Implement `compile_list_comprehension_non_recursive`
+    - [ ] Implement `handle_general_iteration_for_comprehension_non_recursive`
+    - [ ] Implement `handle_range_list_comprehension_non_recursive`
+    - [ ] Implement `evaluate_comprehension_conditions_non_recursive`
   - [ ] Implement non-recursive versions of `compile_dict_comprehension`
   - [ ] Implement non-recursive versions of `compile_attribute_access`
   - [ ] Implement non-recursive versions of `compile_binary_op`
   - [ ] Implement non-recursive versions of `compile_comparison`
+  - [ ] Add comprehensive tests for all non-recursive implementations
+  - [ ] Validate memory management in non-recursive implementations
+  - [ ] Add performance benchmarks comparing recursive vs non-recursive implementations
 - [ ] Implement constant folding
 - [ ] Add dead code elimination
 - [ ] Optimize numeric operations
@@ -163,46 +170,6 @@ This document tracks tasks, features, and improvements for the Cheetah Python co
 - [ ] Create tutorials for new users
 
 ## Notes and Ideas
-
-- ⚠️ Stack overflow issues identified in recursive code generation patterns
-  - The compiler experiences stack overflow around 532,000 iterations when using print(i) in a loop
-  - Need to rewrite recursive code generation to use explicit work stacks instead of recursion
-  - Key functions to rewrite: compile_expr, compile_subscript, compile_list_comprehension, etc.
-  - Consider implementing tail call optimization, adaptive chunking strategies, and simplified stack tracking
-
-- ✅ Implemented a robust solution for nonlocal variables using closure environments
-- ✅ Fixed LLVM validation issues with function calls and len() function in nested functions
-- ✅ Implemented enhanced exception handling with try/except/else/finally blocks
-  - ✅ Added runtime support for exceptions (creation, raising, checking)
-  - ✅ Implemented try-except blocks with proper control flow
-  - ✅ Added support for else and finally blocks
-  - ✅ Implemented exception variable binding (as in 'except Exception as e')
-  - ✅ Added support for nested try-except blocks
-  - ✅ Created comprehensive tests for exception handling functionality
-  - ✅ Fixed basic block termination issues with return statements in try-except blocks
-  - ✅ Added simplified tests for raise and catch functionality
-  - ✅ Added test for exception variable binding
-  - ⏳ Advanced exception handling features moved to medium priority
-  - ℹ️ Suggested test cases for validating exception handling:
-    - Test exception propagation through multiple function calls
-    - Test exception handling in nested functions with nonlocal variables
-    - Test interaction between exceptions and loops/conditionals
-    - Test resource cleanup in finally blocks with various exit scenarios
-    - Test exception handling with different data types (int, string, list, etc.)
-    - Test memory management during exception handling
-    - Compare behavior with CPython for compatibility
-- ✅ Implemented command-line interface with .ch file extension support
-  - ✅ Added support for running files directly with `cheetah main.ch`
-  - ✅ Standardized on .ch file extension for Cheetah source files
-  - ✅ Created installation script for system-wide availability
-  - ✅ Added example files with .ch extension
-- ✅ Implemented print() function
-  - ✅ Added support for printing different data types (string, int, float, bool)
-  - ✅ Implemented proper newline handling
-  - ✅ Added support for printing multiple arguments
-  - ✅ Created test examples for print functionality
 - Research how other compilers handle closure environments and variable capture
-- Consider implementing a static analysis pass to identify all nonlocal variables before code generation
-- Look into how Python's exception handling is implemented in CPython for inspiration
 - Research performance improvements for numeric operations
 - Explore Symbol from JS and how it could be used in Cheetah
