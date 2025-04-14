@@ -1,0 +1,320 @@
+; ModuleID = 'benchmarks/loop_unrolling_simple.ch'
+source_filename = "benchmarks/loop_unrolling_simple.ch"
+
+@__current_exception = global ptr null
+@str_const = constant [39 x i8] c"Small loop (should be fully unrolled):\00"
+@str_const.7 = constant [39 x i8] c"Small loop (should be fully unrolled):\00"
+@newline_str = global [2 x i8] c"\0A\00"
+@str_const.8 = constant [8 x i8] c"Result:\00"
+@str_const.9 = constant [8 x i8] c"Result:\00"
+@newline_str.10 = global [2 x i8] c"\0A\00"
+@newline_str.11 = global [2 x i8] c"\0A\00"
+@str_const.12 = constant [44 x i8] c"Medium loop (should be partially unrolled):\00"
+@str_const.13 = constant [44 x i8] c"Medium loop (should be partially unrolled):\00"
+@newline_str.14 = global [2 x i8] c"\0A\00"
+@str_const.15 = constant [8 x i8] c"Result:\00"
+@str_const.16 = constant [8 x i8] c"Result:\00"
+@newline_str.17 = global [2 x i8] c"\0A\00"
+@newline_str.18 = global [2 x i8] c"\0A\00"
+@str_const.19 = constant [32 x i8] c"Large loop (should be chunked):\00"
+@str_const.20 = constant [32 x i8] c"Large loop (should be chunked):\00"
+@newline_str.21 = global [2 x i8] c"\0A\00"
+@str_const.22 = constant [8 x i8] c"Result:\00"
+@str_const.23 = constant [8 x i8] c"Result:\00"
+@newline_str.24 = global [2 x i8] c"\0A\00"
+@newline_str.25 = global [2 x i8] c"\0A\00"
+
+define void @main() {
+entry:
+  %result = alloca i64, align 8
+  call void @print_string(ptr @str_const.7)
+  call void @print_string(ptr @newline_str)
+  store i64 0, ptr %result, align 4
+  %call_range = call i64 @range_1(i64 8)
+  br label %for.init
+
+for.init:                                         ; preds = %entry
+  %call_range1 = call i64 @range_1(i64 8)
+  %for.index = alloca i64, align 8
+  store i64 0, ptr %for.index, align 4
+  br label %for.cond
+
+for.cond:                                         ; preds = %for.inc, %for.init
+  %index = load i64, ptr %for.index, align 4
+  %loop.cond = icmp slt i64 %index, %call_range1
+  br i1 %loop.cond, label %for.body, label %for.else
+
+for.body:                                         ; preds = %for.cond
+  %index2 = load i64, ptr %for.index, align 4
+  %i = alloca i64, align 8
+  store i64 %index2, ptr %i, align 4
+  %result3 = load i64, ptr %result, align 4
+  %i4 = load i64, ptr %i, align 4
+  %int_add = add i64 %result3, %i4
+  store i64 %int_add, ptr %result, align 4
+  br label %for.inc
+
+for.inc:                                          ; preds = %for.body
+  %index5 = load i64, ptr %for.index, align 4
+  %next_index = add i64 %index5, 1
+  store i64 %next_index, ptr %for.index, align 4
+  br label %for.cond
+
+for.else:                                         ; preds = %for.cond
+  br label %for.end
+
+for.end:                                          ; preds = %for.else
+  call void @print_string(ptr @str_const.9)
+  call void @print_string(ptr @newline_str.10)
+  %result6 = load i64, ptr %result, align 4
+  %result7 = load i64, ptr %result, align 4
+  call void @print_int(i64 %result7)
+  call void @print_string(ptr @newline_str.11)
+  call void @print_string(ptr @str_const.13)
+  call void @print_string(ptr @newline_str.14)
+  store i64 0, ptr %result, align 4
+  %call_range8 = call i64 @range_1(i64 100)
+  br label %for.init9
+
+for.init9:                                        ; preds = %for.end
+  %call_range15 = call i64 @range_1(i64 100)
+  %for.index16 = alloca i64, align 8
+  store i64 0, ptr %for.index16, align 4
+  br label %for.cond10
+
+for.cond10:                                       ; preds = %for.inc12, %for.init9
+  %index17 = load i64, ptr %for.index16, align 4
+  %loop.cond18 = icmp slt i64 %index17, %call_range15
+  br i1 %loop.cond18, label %for.body11, label %for.else13
+
+for.body11:                                       ; preds = %for.cond10
+  %index19 = load i64, ptr %for.index16, align 4
+  %i20 = alloca i64, align 8
+  store i64 %index19, ptr %i20, align 4
+  %result21 = load i64, ptr %result, align 4
+  %i22 = load i64, ptr %i20, align 4
+  %int_add23 = add i64 %result21, %i22
+  store i64 %int_add23, ptr %result, align 4
+  br label %for.inc12
+
+for.inc12:                                        ; preds = %for.body11
+  %index24 = load i64, ptr %for.index16, align 4
+  %next_index25 = add i64 %index24, 1
+  store i64 %next_index25, ptr %for.index16, align 4
+  br label %for.cond10
+
+for.else13:                                       ; preds = %for.cond10
+  br label %for.end14
+
+for.end14:                                        ; preds = %for.else13
+  call void @print_string(ptr @str_const.16)
+  call void @print_string(ptr @newline_str.17)
+  %result26 = load i64, ptr %result, align 4
+  %result27 = load i64, ptr %result, align 4
+  call void @print_int(i64 %result27)
+  call void @print_string(ptr @newline_str.18)
+  call void @print_string(ptr @str_const.20)
+  call void @print_string(ptr @newline_str.21)
+  store i64 0, ptr %result, align 4
+  %call_range28 = call i64 @range_1(i64 10000)
+  br label %for.init29
+
+for.init29:                                       ; preds = %for.end14
+  %call_range35 = call i64 @range_1(i64 10000)
+  %for.index36 = alloca i64, align 8
+  store i64 0, ptr %for.index36, align 4
+  br label %for.cond30
+
+for.cond30:                                       ; preds = %for.inc32, %for.init29
+  %index37 = load i64, ptr %for.index36, align 4
+  %loop.cond38 = icmp slt i64 %index37, %call_range35
+  br i1 %loop.cond38, label %for.body31, label %for.else33
+
+for.body31:                                       ; preds = %for.cond30
+  %index39 = load i64, ptr %for.index36, align 4
+  %i40 = alloca i64, align 8
+  store i64 %index39, ptr %i40, align 4
+  %result41 = load i64, ptr %result, align 4
+  %i42 = load i64, ptr %i40, align 4
+  %int_add43 = add i64 %result41, %i42
+  store i64 %int_add43, ptr %result, align 4
+  br label %for.inc32
+
+for.inc32:                                        ; preds = %for.body31
+  %index44 = load i64, ptr %for.index36, align 4
+  %next_index45 = add i64 %index44, 1
+  store i64 %next_index45, ptr %for.index36, align 4
+  br label %for.cond30
+
+for.else33:                                       ; preds = %for.cond30
+  br label %for.end34
+
+for.end34:                                        ; preds = %for.else33
+  call void @print_string(ptr @str_const.23)
+  call void @print_string(ptr @newline_str.24)
+  %result46 = load i64, ptr %result, align 4
+  %result47 = load i64, ptr %result, align 4
+  call void @print_int(i64 %result47)
+  call void @print_string(ptr @newline_str.25)
+  ret void
+}
+
+declare ptr @int_to_string(i64)
+
+declare ptr @float_to_string(double)
+
+declare ptr @bool_to_string(i64)
+
+declare i64 @range_1(i64)
+
+declare i64 @range_2(i64, i64)
+
+declare i64 @range_3(i64, i64, i64)
+
+declare i64 @string_to_int(ptr)
+
+declare double @string_to_float(ptr)
+
+declare i1 @string_to_bool(ptr)
+
+declare void @free_string(ptr)
+
+declare ptr @string_concat(ptr, ptr)
+
+declare i1 @string_equals(ptr, ptr)
+
+declare i64 @string_length(ptr)
+
+declare ptr @list_new()
+
+declare ptr @list_with_capacity(i64)
+
+declare ptr @list_get(ptr, i64)
+
+declare ptr @list_slice(ptr, i64, i64, i64)
+
+declare void @list_set(ptr, i64, ptr)
+
+declare void @list_append(ptr, ptr)
+
+declare ptr @list_concat(ptr, ptr)
+
+declare ptr @list_repeat(ptr, i64)
+
+declare void @list_free(ptr)
+
+declare i64 @list_len(ptr)
+
+declare i64 @string_get_char(ptr, i64)
+
+declare ptr @char_to_string(i64)
+
+declare ptr @string_slice(ptr, i64, i64, i64)
+
+declare i64 @string_len(ptr)
+
+declare ptr @string_concat.1(ptr, ptr)
+
+declare void @free_string.2(ptr)
+
+declare ptr @dict_new()
+
+declare ptr @dict_with_capacity(i64)
+
+declare ptr @dict_get(ptr, ptr)
+
+declare void @dict_set(ptr, ptr, ptr)
+
+declare i8 @dict_contains(ptr, ptr)
+
+declare i8 @dict_remove(ptr, ptr)
+
+declare void @dict_clear(ptr)
+
+declare i64 @dict_len(ptr)
+
+declare void @dict_free(ptr)
+
+declare ptr @dict_merge(ptr, ptr)
+
+declare void @dict_update(ptr, ptr)
+
+declare ptr @dict_keys(ptr)
+
+declare ptr @dict_values(ptr)
+
+declare ptr @dict_items(ptr)
+
+declare ptr @int_to_ptr(i64)
+
+declare ptr @exception_new(ptr, ptr)
+
+declare void @exception_raise(ptr)
+
+declare i1 @exception_check(ptr, ptr)
+
+declare ptr @exception_get_message(ptr)
+
+declare ptr @exception_get_type(ptr)
+
+declare void @exception_free(ptr)
+
+define ptr @get_current_exception() {
+entry:
+  %current_exception = load ptr, ptr @__current_exception, align 8
+  ret ptr %current_exception
+}
+
+define void @set_current_exception(ptr %0) {
+entry:
+  store ptr %0, ptr @__current_exception, align 8
+  ret void
+}
+
+define void @clear_current_exception() {
+entry:
+  store ptr null, ptr @__current_exception, align 8
+  ret void
+}
+
+declare void @print_string(ptr)
+
+declare void @println_string(ptr)
+
+declare void @print_int(i64)
+
+declare void @print_float(double)
+
+declare void @print_bool(i1)
+
+declare i64 @range_1.3(i64)
+
+declare i64 @range_2.4(i64, i64)
+
+declare i64 @range_3.5(i64, i64, i64)
+
+declare void @range_cleanup()
+
+declare ptr @range_iterator_1(i64)
+
+declare ptr @range_iterator_2(i64, i64)
+
+declare ptr @range_iterator_3(i64, i64, i64)
+
+declare i1 @range_iterator_next(ptr, ptr)
+
+declare i64 @range_iterator_size(ptr)
+
+declare void @range_iterator_free(ptr)
+
+declare void @track_allocation(i64, ptr)
+
+declare void @track_deallocation(i64)
+
+declare i64 @get_current_memory_usage()
+
+declare i64 @get_peak_memory_usage()
+
+declare i64 @len(ptr)
+
+declare void @print_string.6(ptr)
