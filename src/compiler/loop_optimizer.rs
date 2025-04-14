@@ -6,6 +6,9 @@ use inkwell::IntPredicate;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 
+// Import memory profiler for dynamic chunk sizing
+use crate::compiler::runtime::memory_profiler;
+
 // Constants for loop optimization
 const MIN_CHUNK_SIZE: u64 = 1000; // Minimum chunk size for better performance
 const MAX_CHUNK_SIZE: u64 = 100000; // Maximum chunk size to prevent stack overflow
@@ -14,6 +17,11 @@ const DEFAULT_CHUNK_SIZE: u64 = 10000; // Default chunk size for most loops
 // Threshold for large ranges that need special handling
 const LARGE_RANGE_THRESHOLD: u64 = 1000000; // 1 million iterations is considered large
 const VERY_LARGE_RANGE_THRESHOLD: u64 = 10000000; // 10 million iterations is very large
+
+// Constants for adaptive chunk sizing
+const ADAPTIVE_CHUNK_FACTOR: f64 = 0.75; // Factor to adjust chunk size based on complexity
+const MEMORY_SCALING_FACTOR: f64 = 0.5; // Factor to scale chunk size based on available memory
+const SYSTEM_MEMORY_THRESHOLD: f64 = 0.8; // Memory usage threshold (80%) to reduce chunk size
 
 // Constants for loop unrolling
 const UNROLL_THRESHOLD: u64 = 0; // Maximum number of iterations to fully unroll
@@ -38,43 +46,121 @@ impl<'ctx> LoopOptimizer<'ctx> {
         true
     }
 
-    /// Calculate an appropriate chunk size based on the range size
+    /// Calculate an appropriate chunk size based on the range size and system conditions
+    ///
+    /// This function dynamically determines the optimal chunk size for loop processing
+    /// based on multiple factors:
+    /// 1. The size of the range being processed
+    /// 2. Current memory usage of the system
+    /// 3. Complexity of the loop (estimated)
+    /// 4. Available system resources
     pub fn calculate_chunk_size(&self, start_val: IntValue<'ctx>, end_val: IntValue<'ctx>) -> u64 {
         // Try to get constant values if available
-        if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
-            let range_size = if end_const > start_const {
+        let range_size = if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
+            if end_const > start_const {
                 (end_const - start_const) as u64
             } else {
                 return MIN_CHUNK_SIZE; // Invalid range, use minimum chunk size
-            };
+            }
+        } else {
+            // If we can't determine the range size statically, use a default size
+            // but adjust it based on memory usage
+            return self.adjust_chunk_size_for_memory(DEFAULT_CHUNK_SIZE);
+        };
 
-            // For extremely large ranges, use a fixed large chunk size
-            // This is more efficient than using very small chunks
-            if range_size > VERY_LARGE_RANGE_THRESHOLD {
-                // For extremely large ranges, use a fixed large chunk size
-                // This is more efficient and prevents excessive chunking
-                return MAX_CHUNK_SIZE;
-            }
-            // For very large ranges, use a dynamic chunk size
-            else if range_size > LARGE_RANGE_THRESHOLD {
-                // Use a square root scale for very large ranges
-                // This provides a better balance between performance and stack usage
-                let sqrt_factor = (range_size as f64).sqrt() as u64 / 100;
-                let adjusted_size = DEFAULT_CHUNK_SIZE * sqrt_factor;
-                return adjusted_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE);
-            }
-            // For medium-large ranges, use the maximum chunk size
-            else if range_size > MAX_CHUNK_SIZE {
-                return MAX_CHUNK_SIZE;
-            }
-            // For medium ranges, use the range size itself (process in one chunk)
-            else if range_size > MIN_CHUNK_SIZE {
-                return range_size;
-            }
+        // Get the base chunk size based on range size
+        let base_chunk_size = self.get_base_chunk_size(range_size);
+
+        // Adjust the chunk size based on current memory usage
+        let memory_adjusted_size = self.adjust_chunk_size_for_memory(base_chunk_size);
+
+        // Apply complexity adjustment if we can estimate it
+        let final_chunk_size = self.adjust_for_complexity(memory_adjusted_size);
+
+        // Log the chunk size calculation for debugging
+        if cfg!(debug_assertions) {
+            println!("[CHUNK SIZE] Range: {}, Base: {}, Memory-adjusted: {}, Final: {}",
+                     range_size, base_chunk_size, memory_adjusted_size, final_chunk_size);
         }
 
-        // Default to a reasonable chunk size if we can't determine the range size
-        DEFAULT_CHUNK_SIZE
+        final_chunk_size
+    }
+
+    /// Get the base chunk size based on the range size
+    fn get_base_chunk_size(&self, range_size: u64) -> u64 {
+        // For extremely large ranges, use a fixed large chunk size
+        if range_size > VERY_LARGE_RANGE_THRESHOLD {
+            // For extremely large ranges, use a fixed large chunk size
+            // This is more efficient and prevents excessive chunking
+            MAX_CHUNK_SIZE
+        }
+        // For very large ranges, use a dynamic chunk size
+        else if range_size > LARGE_RANGE_THRESHOLD {
+            // Use a square root scale for very large ranges
+            // This provides a better balance between performance and stack usage
+            let sqrt_factor = (range_size as f64).sqrt() as u64 / 100;
+            let adjusted_size = DEFAULT_CHUNK_SIZE * sqrt_factor;
+            adjusted_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
+        }
+        // For medium-large ranges, use the maximum chunk size
+        else if range_size > MAX_CHUNK_SIZE {
+            MAX_CHUNK_SIZE
+        }
+        // For medium ranges, use the range size itself (process in one chunk)
+        else if range_size > MIN_CHUNK_SIZE {
+            range_size
+        }
+        // For small ranges, use the minimum chunk size
+        else {
+            MIN_CHUNK_SIZE
+        }
+    }
+
+    /// Adjust chunk size based on current memory usage
+    fn adjust_chunk_size_for_memory(&self, chunk_size: u64) -> u64 {
+        // Get current memory usage from the memory profiler
+        // If memory profiler is not available, return the original chunk size
+        let current_memory = memory_profiler::get_current_memory_usage() as f64;
+        let peak_memory = memory_profiler::get_peak_memory_usage() as f64;
+
+        // If we don't have meaningful memory data, return the original size
+        if current_memory == 0.0 || peak_memory == 0.0 {
+            return chunk_size;
+        }
+
+        // Calculate memory usage ratio
+        let memory_ratio = current_memory / peak_memory;
+
+        // If memory usage is high, reduce chunk size to prevent excessive memory usage
+        if memory_ratio > SYSTEM_MEMORY_THRESHOLD {
+            // Scale down chunk size based on how close we are to peak memory
+            let scale_factor = 1.0 - ((memory_ratio - SYSTEM_MEMORY_THRESHOLD) / (1.0 - SYSTEM_MEMORY_THRESHOLD));
+            let scaled_size = (chunk_size as f64 * scale_factor * MEMORY_SCALING_FACTOR) as u64;
+
+            // Ensure we don't go below the minimum chunk size
+            scaled_size.max(MIN_CHUNK_SIZE)
+        } else {
+            // Memory usage is acceptable, use the original chunk size
+            chunk_size
+        }
+    }
+
+    /// Adjust chunk size based on estimated loop complexity
+    fn adjust_for_complexity(&self, chunk_size: u64) -> u64 {
+        // In a more sophisticated implementation, we could analyze the loop body
+        // to estimate its complexity and adjust the chunk size accordingly.
+        // For now, we'll use a simple heuristic based on the ADAPTIVE_CHUNK_FACTOR.
+
+        // This is a placeholder for future improvements where we could analyze
+        // the loop body instructions to determine complexity.
+
+        // Apply a simple adjustment using the adaptive chunk factor
+        // This slightly reduces the chunk size to be more conservative
+        // which is generally safer for complex loops
+        let adjusted_size = (chunk_size as f64 * ADAPTIVE_CHUNK_FACTOR) as u64;
+
+        // Ensure we don't go below the minimum chunk size
+        adjusted_size.max(MIN_CHUNK_SIZE)
     }
 
     /// Optimize a range-based for loop
@@ -215,7 +301,25 @@ impl<'ctx> LoopOptimizer<'ctx> {
 
         // Log the chunk size for debugging
         if cfg!(debug_assertions) {
-            println!("Using chunk size: {} for loop", dynamic_chunk_size);
+            // Get range size for logging if possible
+            let range_size_str = if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
+                format!("{}", (end_const - start_const) as u64)
+            } else {
+                "unknown".to_string()
+            };
+
+            println!("[LOOP CHUNKING] Using dynamic chunk size: {} for loop with range size: {}",
+                     dynamic_chunk_size, range_size_str);
+
+            // Log memory usage if available
+            let current_memory = memory_profiler::get_current_memory_usage();
+            let peak_memory = memory_profiler::get_peak_memory_usage();
+            if current_memory > 0 && peak_memory > 0 {
+                println!("[LOOP MEMORY] Current memory: {:.2} MB, Peak: {:.2} MB, Usage ratio: {:.2}%",
+                         current_memory as f64 / (1024.0 * 1024.0),
+                         peak_memory as f64 / (1024.0 * 1024.0),
+                         (current_memory as f64 / peak_memory as f64) * 100.0);
+            }
         }
 
         // For very large ranges, we'll add a debug message
