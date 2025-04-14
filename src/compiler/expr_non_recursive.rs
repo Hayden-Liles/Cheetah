@@ -14,6 +14,9 @@ pub trait ExprNonRecursive<'ctx> {
 
     // This is a helper method for the non-recursive implementation
     fn compile_expr_original(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String>;
+
+    // This is a helper method for the non-recursive implementation
+    fn compile_expr_fallback(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String>;
 }
 
 // Task for the work stack
@@ -652,5 +655,10 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
             Expr::NameConstant { value, .. } => self.compile_name_constant(value),
             _ => Err(format!("Unsupported expression type in fallback implementation: {:?}", expr)),
         }
+    }
+
+    fn compile_expr_fallback(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String> {
+        // Fallback to original recursive implementation
+        <Self as ExprCompiler>::compile_expr_original(self, expr)
     }
 }
