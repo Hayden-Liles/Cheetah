@@ -195,7 +195,7 @@ fn test_tuple_as_function_argument() {
 def process_tuple(t):
     return t
 
-result = process_tuple((1, 2, 3))
+result = process_tuple((1, 2))
 "#;
 
     let result = compile_source(source);

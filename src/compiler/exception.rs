@@ -411,7 +411,7 @@ impl<'ctx> CompilationContext<'ctx> {
     }
 
     /// Create a global variable to track if an exception was raised
-    fn create_exception_state(&self) -> PointerValue<'ctx> {
+    pub fn create_exception_state(&self) -> PointerValue<'ctx> {
         // Check if we already have an exception state variable
         if let Some(var) = self.module.get_global("__exception_raised") {
             return var.as_pointer_value();
@@ -431,7 +431,7 @@ impl<'ctx> CompilationContext<'ctx> {
     }
 
     /// Reset the exception state to false
-    fn reset_exception_state(&self, exception_raised: PointerValue<'ctx>) {
+    pub fn reset_exception_state(&self, exception_raised: PointerValue<'ctx>) {
         let false_val = self.llvm_context.bool_type().const_int(0, false);
         let _ = self.builder.build_store(exception_raised, false_val);
     }
@@ -443,14 +443,14 @@ impl<'ctx> CompilationContext<'ctx> {
     }
 
     /// Load the exception state
-    fn load_exception_state(&self, exception_raised: PointerValue<'ctx>) -> inkwell::values::IntValue<'ctx> {
+    pub fn load_exception_state(&self, exception_raised: PointerValue<'ctx>) -> inkwell::values::IntValue<'ctx> {
         self.builder.build_load(self.llvm_context.bool_type(), exception_raised, "exception_raised")
             .expect("Failed to load exception state")
             .into_int_value()
     }
 
     /// Get the current exception
-    fn get_current_exception(&self) -> PointerValue<'ctx> {
+    pub fn get_current_exception(&self) -> PointerValue<'ctx> {
         // Get the current exception from the global state
         let get_current_exception_fn = match self.module.get_function("get_current_exception") {
             Some(f) => f,

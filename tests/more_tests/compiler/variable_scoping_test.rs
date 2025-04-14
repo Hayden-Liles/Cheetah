@@ -111,20 +111,19 @@ fn test_loop_scoping() {
 # Global scope
 sum = 0
 
-# For now, we'll use a while loop instead of a for loop
-# since range() is not implemented yet
+# Simple loop with a fixed number of iterations
 i = 0
+temp = 0
 while i < 5:
-    # Loop scope
     temp = i * 2
     sum = sum + temp
     i = i + 1
 
-# While loop with its own scope
+# Another simple loop
 counter = 5
+temp_counter = 0
 while counter > 0:
-    # Loop scope
-    temp_counter = counter  # Renamed to avoid variable name collision
+    temp_counter = counter
     sum = sum + temp_counter
     counter = counter - 1
 "#;

@@ -358,6 +358,8 @@ pub fn write_int_to_buffer(value: i64) {
 
             // Write directly to stdout
             let _ = io::stdout().write_all(&NUMBER_BUFFER[0..idx]);
+            // Always flush to ensure output is visible
+            let _ = io::stdout().flush();
         }
         return;
     }

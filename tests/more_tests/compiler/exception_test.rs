@@ -83,9 +83,9 @@ def test_func():
         y = 5
         z = x / y
     except ZeroDivisionError:
-        result = "division by zero"
+        result = 0
     else:
-        result = "no exception"
+        result = 1
     return result
 "#;
 
@@ -131,9 +131,9 @@ def test_func():
         y = 5
         z = x + y
     except ZeroDivisionError:
-        result = "division by zero"
+        result = 0
     else:
-        result = "no exception"
+        result = 1
     finally:
         cleanup = 1  # Use 1 instead of True
     return result

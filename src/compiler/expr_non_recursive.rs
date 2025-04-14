@@ -281,9 +281,12 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                             if let Some(var_ptr) = self.scope_stack.get_variable_respecting_declarations(id) {
                                 // Get the variable type
                                 if let Some(var_type) = self.scope_stack.get_type_respecting_declarations(id) {
+                                    // Get the LLVM type for the variable
+                                    let llvm_type = self.get_llvm_type(&var_type);
+
                                     // Load the variable value
                                     let var_val = self.builder.build_load(
-                                        self.get_llvm_type(&var_type),
+                                        llvm_type,
                                         *var_ptr,
                                         &format!("load_{}", id)
                                     ).unwrap();
@@ -293,8 +296,28 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                     return Err(format!("Variable found but type unknown: {}", id));
                                 }
                             } else {
-                                // Variable not found
-                                return Err(format!("Undefined variable: {}", id));
+                                // Check if it's a global variable in the variables map
+                                if let Some(var_ptr) = self.variables.get(id) {
+                                    // Check if the type is in the type environment
+                                    if let Some(var_type) = self.type_env.get(id) {
+                                        // Get the LLVM type for the variable
+                                        let llvm_type = self.get_llvm_type(var_type);
+
+                                        // Load the variable value
+                                        let var_val = self.builder.build_load(
+                                            llvm_type,
+                                            *var_ptr,
+                                            &format!("load_{}", id)
+                                        ).unwrap();
+
+                                        result_stack.push(ExprResult { value: var_val, ty: var_type.clone() });
+                                    } else {
+                                        return Err(format!("Global variable found but type unknown: {}", id));
+                                    }
+                                } else {
+                                    // Variable not found
+                                    return Err(format!("Undefined variable: {}", id));
+                                }
                             }
                         },
                         Expr::IfExp { test, body, orelse, .. } => {

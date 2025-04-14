@@ -64,6 +64,9 @@ pub struct CompilationContext<'ctx> {
 
     /// Flag to use non-recursive expression compilation to avoid stack overflow
     pub use_non_recursive_expr: bool,
+
+    /// Flag to use non-recursive statement compilation to avoid stack overflow
+    pub use_non_recursive_stmt: bool,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -88,6 +91,7 @@ impl<'ctx> CompilationContext<'ctx> {
             closure_environments: HashMap::new(),
             current_environment: None,
             use_non_recursive_expr: false,
+            use_non_recursive_stmt: false,
         }
     }
 

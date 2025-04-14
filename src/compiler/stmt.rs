@@ -15,6 +15,12 @@ pub trait StmtCompiler<'ctx> {
 
 impl<'ctx> StmtCompiler<'ctx> for CompilationContext<'ctx> {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        // Use the non-recursive implementation to avoid stack overflow if the flag is set
+        if self.use_non_recursive_stmt {
+            use crate::compiler::stmt_non_recursive::StmtNonRecursive;
+            return self.compile_stmt_non_recursive(stmt);
+        }
+
         match stmt {
             // Compile an expression statement
             Stmt::Expr { value, .. } => {

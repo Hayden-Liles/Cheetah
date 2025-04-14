@@ -147,7 +147,9 @@ pub extern "C" fn print_int(value: i64) {
     // CRITICAL: Use direct output to prevent stack overflow
     // This is the most reliable way to prevent stack overflows in large loops
     print!("{}", value);
-    // No flush for better performance - will be flushed by newline or when needed
+    // Explicitly flush stdout to ensure output is visible
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
 }
 
 /// Print a float to stdout (C-compatible wrapper)
