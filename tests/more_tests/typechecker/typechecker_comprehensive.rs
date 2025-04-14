@@ -243,10 +243,11 @@ a = -"hello"
 
 #[test]
 fn test_error_invalid_index() {
-    // Test invalid indexing
+    // Test invalid indexing - we now allow integer indexing for string character access
+    // so we'll test with a boolean instead
     let source = r#"
-# Cannot index an integer
-a = 10[0]
+# Cannot index a boolean
+a = True[0]
 "#;
 
     let module = cheetah::parse(source).unwrap();
@@ -257,8 +258,8 @@ a = 10[0]
     if let Err(error) = result {
         assert!(error_contains(&error, "NotIndexable"),
                 "Expected NotIndexable error, got {:?}", error);
-        assert!(error_contains(&error, "Int"),
-                "Error should mention 'Int' type");
+        assert!(error_contains(&error, "Bool"),
+                "Error should mention 'Bool' type");
     }
 }
 

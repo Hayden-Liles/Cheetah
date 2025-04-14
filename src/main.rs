@@ -1041,6 +1041,12 @@ fn register_runtime_functions(
         }
     }
 
+    if let Some(function) = module.get_function("char_to_string") {
+        {
+            engine.add_global_mapping(&function, jit_char_to_string as usize);
+        }
+    }
+
     if let Some(function) = module.get_function("free_string") {
         {
             engine.add_global_mapping(&function, jit_free_string as usize);
@@ -1145,6 +1151,18 @@ extern "C" fn jit_float_to_string(value: f64) -> *mut c_char {
 
 extern "C" fn jit_bool_to_string(value: i64) -> *mut c_char {
     let s = if value != 0 { "True" } else { "False" }.to_string();
+    let c_str = CString::new(s).unwrap();
+    c_str.into_raw()
+}
+
+extern "C" fn jit_char_to_string(value: i64) -> *mut c_char {
+    // Convert the character code to a Rust char
+    let c = std::char::from_u32(value as u32).unwrap_or('\0');
+
+    // Create a string with just this character
+    let s = c.to_string();
+
+    // Convert to C string and return
     let c_str = CString::new(s).unwrap();
     c_str.into_raw()
 }

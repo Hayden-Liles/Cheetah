@@ -61,6 +61,9 @@ pub struct CompilationContext<'ctx> {
 
     /// Currently active closure environment (if any)
     pub current_environment: Option<String>,
+
+    /// Flag to use non-recursive expression compilation to avoid stack overflow
+    pub use_non_recursive_expr: bool,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -84,6 +87,7 @@ impl<'ctx> CompilationContext<'ctx> {
             scope_stack: ScopeStack::new(),
             closure_environments: HashMap::new(),
             current_environment: None,
+            use_non_recursive_expr: false,
         }
     }
 
@@ -224,6 +228,28 @@ impl<'ctx> CompilationContext<'ctx> {
             return Some(ptr);
         }
 
+        None
+    }
+
+    /// Ensure the current block has a terminator
+    /// If it doesn't, add a branch to a new block and position at that block
+    pub fn ensure_block_has_terminator(&self) -> Option<BasicBlock<'ctx>> {
+        let current_block = self.builder.get_insert_block().unwrap();
+        if current_block.get_terminator().is_none() {
+            // Get the current function
+            if let Some(current_function) = current_block.get_parent() {
+                // Create a new block
+                let new_block = self.llvm_context.append_basic_block(current_function, "continue_block");
+
+                // Add a branch to the new block
+                self.builder.build_unconditional_branch(new_block).unwrap();
+
+                // Position at the new block
+                self.builder.position_at_end(new_block);
+
+                return Some(new_block);
+            }
+        }
         None
     }
 

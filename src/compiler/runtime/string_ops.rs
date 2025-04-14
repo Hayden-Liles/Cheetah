@@ -69,6 +69,20 @@ pub extern "C" fn string_get_char(value: *const c_char, index: i64) -> i64 {
     s.chars().nth(index).map(|c| c as i64).unwrap_or(0)
 }
 
+/// Convert a character code to a string (C-compatible wrapper)
+#[unsafe(no_mangle)]
+pub extern "C" fn char_to_string(value: i64) -> *mut c_char {
+    // Convert the character code to a Rust char
+    let c = std::char::from_u32(value as u32).unwrap_or('\0');
+
+    // Create a string with just this character
+    let s = c.to_string();
+
+    // Convert to C string and return
+    let c_str = CString::new(s).unwrap();
+    c_str.into_raw() // Caller is responsible for freeing this memory
+}
+
 /// Get a slice of a string (C-compatible wrapper)
 #[unsafe(no_mangle)]
 pub extern "C" fn string_slice(value: *const c_char, start: i64, stop: i64, step: i64) -> *mut c_char {

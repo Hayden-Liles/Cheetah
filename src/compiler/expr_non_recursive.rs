@@ -658,7 +658,16 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
     }
 
     fn compile_expr_fallback(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String> {
-        // Fallback to original recursive implementation
-        <Self as ExprCompiler>::compile_expr_original(self, expr)
+        // Temporarily disable non-recursive mode to avoid infinite recursion
+        let old_flag = self.use_non_recursive_expr;
+        self.use_non_recursive_expr = false;
+
+        // Call the original implementation
+        let result = <Self as ExprCompiler>::compile_expr(self, expr);
+
+        // Restore the flag
+        self.use_non_recursive_expr = old_flag;
+
+        result
     }
 }

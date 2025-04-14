@@ -113,9 +113,13 @@ pub trait ComparisonCompiler<'ctx> {
 
 impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     fn compile_expr(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        // Use the non-recursive implementation to avoid stack overflow
-        use crate::compiler::expr_non_recursive::ExprNonRecursive;
-        self.compile_expr_non_recursive(expr)
+        // Use the non-recursive implementation to avoid stack overflow if the flag is set
+        if self.use_non_recursive_expr {
+            use crate::compiler::expr_non_recursive::ExprNonRecursive;
+            self.compile_expr_non_recursive(expr)
+        } else {
+            self.compile_expr_original(expr)
+        }
     }
 
     // Original recursive implementation - kept for reference
@@ -1541,472 +1545,34 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     }
 
     fn compile_subscript_non_recursive(&mut self, value: &Expr, slice: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        // Create a stack to track subscript operations
-        struct SubscriptOp<'a> {
-            slice_expr: &'a Expr,
-            is_slice_notation: bool,
-        }
+        // Stack for tracking operations
+        let mut work_stack = Vec::new();
+        let mut value_stack = Vec::new();
 
-        // Initialize with the base value expression
-        let mut current_value = value;
-        let mut op_stack = vec![SubscriptOp {
-            slice_expr: slice,
-            is_slice_notation: matches!(slice, Expr::Slice { .. })
-        }];
+        // Start with the base value
+        work_stack.push((value, slice));
 
-        // Unwrap nested subscripts to flatten the recursion tree
-        let mut nesting_depth = 0;
-        while let Expr::Subscript { value: inner_value, slice: inner_slice, .. } = current_value {
-            nesting_depth += 1;
-            // Push the inner slice operation onto the stack
-            op_stack.push(SubscriptOp {
-                slice_expr: inner_slice,
-                is_slice_notation: matches!(**inner_slice, Expr::Slice { .. })
-            });
+        while let Some((current_value, current_slice)) = work_stack.pop() {
+            // Compile the value
+            let (value_val, value_type) = self.compile_expr(current_value)?;
 
-            // Move to the inner value
-            current_value = inner_value;
-
-            // Safety check to prevent potential infinite loops
-            if nesting_depth > 100 {
-                return Err("Excessive nesting in subscript expression (possible circular reference)".to_string());
-            }
-        }
-
-        // Debug output to track nesting depth
-        if op_stack.len() > 3 {
-            println!("Processing nested subscript with depth {}", op_stack.len());
-        }
-
-        // Compile the base value (the innermost non-subscript value)
-        let (mut result_val, mut result_type) = match self.compile_expr(current_value) {
-            Ok(result) => result,
-            Err(e) => return Err(format!("Failed to compile base value in subscript expression: {}", e))
-        };
-
-        // Process subscript operations from innermost to outermost
-        let mut op_index = 0;
-        let total_ops = op_stack.len();
-
-        while let Some(op) = op_stack.pop() {
-            op_index += 1;
-            println!("Processing subscript operation {}/{}", op_index, total_ops);
-
-            if op.is_slice_notation {
-                // Handle slice expressions (e.g., list[1:10:2])
-                if let Expr::Slice { lower, upper, step, .. } = op.slice_expr {
-                    match self.compile_slice_operation(
-                        result_val,
-                        result_type.clone(), // Clone to avoid ownership issues
-                        lower.as_deref(),
-                        upper.as_deref(),
-                        step.as_deref()
-                    ) {
-                        Ok((new_val, new_type)) => {
-                            result_val = new_val;
-                            result_type = new_type;
-                        },
-                        Err(e) => {
-                            return Err(format!("Error in slice operation on type {:?}: {}", result_type, e));
-                        }
-                    }
-                }
+            // Handle the slice
+            let result = if let Expr::Slice { lower, upper, step, .. } = current_slice {
+                self.compile_slice_operation(
+                    value_val,
+                    value_type,
+                    lower.as_deref(),
+                    upper.as_deref(),
+                    step.as_deref()
+                )?
             } else {
-                // Compile the index for regular subscript
-                let (index_val, index_type) = match self.compile_expr(op.slice_expr) {
-                    Ok(result) => result,
-                    Err(e) => return Err(format!("Failed to compile subscript index: {}", e))
-                };
+                self.compile_subscript_with_value_non_recursive(value_val, value_type, current_slice)?
+            };
 
-                // Handle indexing based on container type
-                match &result_type {
-                    Type::List(element_type) => {
-                        // For lists, we need an integer index
-                        if !index_type.can_coerce_to(&Type::Int) {
-                            return Err(format!("List index must be an integer, got {:?}", index_type));
-                        }
-
-                        // Get the item from the list
-                        let index_int = if index_type != Type::Int {
-                            match self.convert_type(index_val, &index_type, &Type::Int) {
-                                Ok(converted) => converted.into_int_value(),
-                                Err(e) => return Err(format!("Failed to convert index to integer: {}", e))
-                            }
-                        } else {
-                            index_val.into_int_value()
-                        };
-
-                        // Check for negative indices and handle them
-                        let item_ptr = match self.build_list_get_item(
-                            result_val.into_pointer_value(),
-                            index_int
-                        ) {
-                            Ok(ptr) => ptr,
-                            Err(e) => return Err(format!("Error accessing list element: {}", e))
-                        };
-
-                        result_val = item_ptr.into();
-                        result_type = element_type.as_ref().clone();
-                        println!("  Accessed list element of type {:?}", result_type);
-                    },
-                    Type::Dict(key_type, value_type) => {
-                        // For dictionaries, check if the key type is compatible
-                        if !index_type.can_coerce_to(key_type) && !matches!(index_type, Type::String) {
-                            return Err(format!("Dictionary key type mismatch: expected {:?}, got {:?}", key_type, index_type));
-                        }
-
-                        // Special case for Any key type - don't try to convert
-                        let key_val = if *key_type.as_ref() == Type::Any {
-                            // For Any key type, use the index value directly
-                            index_val
-                        } else if index_type != *key_type.as_ref() && index_type.can_coerce_to(key_type) {
-                            // For other types, convert if needed
-                            match self.convert_type(index_val, &index_type, key_type.as_ref()) {
-                                Ok(converted) => converted,
-                                Err(e) => return Err(format!("Failed to convert dictionary key: {}", e))
-                            }
-                        } else {
-                            index_val
-                        };
-
-                        // Get the value from the dictionary
-                        let value_ptr = match self.build_dict_get_item(
-                            result_val.into_pointer_value(),
-                            key_val,
-                            &index_type
-                        ) {
-                            Ok(ptr) => ptr,
-                            Err(e) => return Err(format!("Error accessing dictionary value: {}", e))
-                        };
-
-                        result_val = value_ptr.into();
-                        result_type = value_type.as_ref().clone();
-                        println!("  Accessed dictionary value of type {:?}", result_type);
-                    },
-                    Type::String => {
-                        // For strings, we need an integer index
-                        if !index_type.can_coerce_to(&Type::Int) {
-                            return Err(format!("String index must be an integer, got {:?}", index_type));
-                        }
-
-                        // Convert index to integer if needed
-                        let index_int = if index_type != Type::Int {
-                            match self.convert_type(index_val, &index_type, &Type::Int) {
-                                Ok(converted) => converted.into_int_value(),
-                                Err(e) => return Err(format!("Failed to convert string index to integer: {}", e))
-                            }
-                        } else {
-                            index_val.into_int_value()
-                        };
-
-                        // Get the character from the string
-                        let char_val = match self.build_string_get_char(
-                            result_val.into_pointer_value(),
-                            index_int
-                        ) {
-                            Ok(val) => val,
-                            Err(e) => return Err(format!("Error accessing string character: {}", e))
-                        };
-
-                        result_val = char_val;
-                        result_type = Type::Int; // A single character is represented as an integer
-                        println!("  Accessed string character as integer");
-                    },
-                    Type::Tuple(element_types) => {
-                        // For tuples, we need an integer index
-                        if !index_type.can_coerce_to(&Type::Int) {
-                            return Err(format!("Tuple index must be an integer, got {:?}", index_type));
-                        }
-
-                        // Get tuple struct type
-                        let llvm_types: Vec<BasicTypeEnum> = element_types
-                            .iter()
-                            .map(|ty| self.get_llvm_type(ty))
-                            .collect();
-
-                        let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
-
-                        // Get a pointer to the tuple
-                        let tuple_ptr = if result_val.is_pointer_value() {
-                            result_val.into_pointer_value()
-                        } else {
-                            // If not a pointer, allocate and store
-                            let alloca = self.builder.build_alloca(result_val.get_type(), "tuple_temp").unwrap();
-                            self.builder.build_store(alloca, result_val).unwrap();
-                            alloca
-                        };
-
-                        // Check if index is a constant integer
-                        if let Expr::Num { value: Number::Integer(idx), .. } = op.slice_expr {
-                            let idx = *idx as usize;
-
-                            // Check if index is in bounds
-                            if idx >= element_types.len() {
-                                return Err(format!("Tuple index out of range: {} (tuple has {} elements)",
-                                               idx, element_types.len()));
-                            }
-
-                            // Get pointer to the indexed element
-                            let element_ptr = match self.builder.build_struct_gep(
-                                tuple_struct,
-                                tuple_ptr,
-                                idx as u32,
-                                &format!("tuple_element_{}", idx)
-                            ) {
-                                Ok(ptr) => ptr,
-                                Err(e) => return Err(format!("Error accessing tuple element: {}", e))
-                            };
-
-                            // Load the element
-                            let element_type = &element_types[idx];
-                            let element_val = self.builder.build_load(
-                                self.get_llvm_type(element_type),
-                                element_ptr,
-                                &format!("load_tuple_element_{}", idx)
-                            ).unwrap();
-
-                            result_val = element_val;
-                            result_type = element_type.clone();
-                            println!("  Accessed tuple element {} of type {:?}", idx, result_type);
-                        } else {
-                            // Handle dynamic index - create a switch statement
-                            let index_int = if index_type != Type::Int {
-                                match self.convert_type(index_val, &index_type, &Type::Int) {
-                                    Ok(converted) => converted.into_int_value(),
-                                    Err(e) => return Err(format!("Failed to convert tuple index to integer: {}", e))
-                                }
-                            } else {
-                                index_val.into_int_value()
-                            };
-
-                            // Create a more robust implementation using a switch statement
-                            let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                            let merge_block = self.llvm_context.append_basic_block(current_function, "tuple_index_merge");
-                            let default_block = self.llvm_context.append_basic_block(current_function, "tuple_index_default");
-
-                            // Create a result variable to store the element
-                            // We'll use the first element type as a default for allocation
-                            let default_type = if !element_types.is_empty() {
-                                element_types[0].clone()
-                            } else {
-                                return Err("Cannot index an empty tuple".to_string());
-                            };
-
-                            let llvm_default_type = self.get_llvm_type(&default_type);
-                            let _result_ptr = self.builder.build_alloca(llvm_default_type, "tuple_element_result").unwrap();
-
-                            // Create blocks for each possible index
-                            let mut case_blocks = Vec::with_capacity(element_types.len());
-                            for i in 0..element_types.len() {
-                                case_blocks.push(self.llvm_context.append_basic_block(current_function, &format!("tuple_index_case_{}", i)));
-                            }
-
-                            // Create a series of if-else statements to check the index
-                            for i in 0..element_types.len() {
-                                // Check if index == i
-                                let index_const = self.llvm_context.i64_type().const_int(i as u64, false);
-                                let is_index = self.builder.build_int_compare(inkwell::IntPredicate::EQ, index_int, index_const, &format!("is_index_{}", i)).unwrap();
-
-                                // Branch to the case block if the index matches, otherwise continue to the next check
-                                let next_check_block = if i < element_types.len() - 1 {
-                                    self.llvm_context.append_basic_block(current_function, &format!("next_check_{}", i))
-                                } else {
-                                    default_block
-                                };
-
-                                self.builder.build_conditional_branch(is_index, case_blocks[i], next_check_block).unwrap();
-
-                                // Position at the next check block for the next iteration
-                                if i < element_types.len() - 1 {
-                                    self.builder.position_at_end(next_check_block);
-                                }
-                            }
-
-                            // Build the case blocks
-                            for (i, element_type) in element_types.iter().enumerate() {
-                                self.builder.position_at_end(case_blocks[i]);
-
-                                // We're already positioned at the case block
-
-                                // Get pointer to the element
-                                let element_ptr = self.builder.build_struct_gep(
-                                    tuple_struct,
-                                    tuple_ptr,
-                                    i as u32,
-                                    &format!("tuple_element_{}", i)
-                                ).unwrap();
-
-                                // Load the element
-                                let element_val = self.builder.build_load(
-                                    self.get_llvm_type(element_type),
-                                    element_ptr,
-                                    &format!("load_tuple_element_{}", i)
-                                ).unwrap();
-
-                                // For different types, we need to create separate result variables for each type
-                                // and use phi nodes to select the right one
-
-                                // Create a new alloca for this specific element type
-                                let element_llvm_type = self.get_llvm_type(element_type);
-                                let element_result_ptr = self.builder.build_alloca(element_llvm_type, &format!("element_result_{}", i)).unwrap();
-
-                                // Store the element value
-                                self.builder.build_store(element_result_ptr, element_val).unwrap();
-
-                                // Store the element type index in a global variable for later use
-                                let type_index = self.llvm_context.i32_type().const_int(i as u64, false);
-                                let type_index_global = self.module.get_global("tuple_element_type_index");
-                                let type_index_ptr = if let Some(global) = type_index_global {
-                                    global.as_pointer_value()
-                                } else {
-                                    // Create the global if it doesn't exist
-                                    let global = self.module.add_global(self.llvm_context.i32_type(), None, "tuple_element_type_index");
-                                    global.set_initializer(&self.llvm_context.i32_type().const_zero());
-                                    global.as_pointer_value()
-                                };
-
-                                // Store the type index
-                                self.builder.build_store(type_index_ptr, type_index).unwrap();
-
-                                // Jump to merge block
-                                self.builder.build_unconditional_branch(merge_block).unwrap();
-                            }
-
-                            // Build the default block (out of bounds)
-                            self.builder.position_at_end(default_block);
-
-                            // For out-of-bounds access, we'll use a similar approach as the case blocks
-                            // but with a default value
-
-                            // Store a special index value to indicate out-of-bounds access
-                            let type_index_global = self.module.get_global("tuple_element_type_index");
-                            let type_index_ptr = if let Some(global) = type_index_global {
-                                global.as_pointer_value()
-                            } else {
-                                // Create the global if it doesn't exist
-                                let global = self.module.add_global(self.llvm_context.i32_type(), None, "tuple_element_type_index");
-                                global.set_initializer(&self.llvm_context.i32_type().const_zero());
-                                global.as_pointer_value()
-                            };
-
-                            // Use -1 to indicate out-of-bounds
-                            let out_of_bounds_index = self.llvm_context.i32_type().const_int(u64::MAX, true); // -1 as i32
-                            self.builder.build_store(type_index_ptr, out_of_bounds_index).unwrap();
-
-                            // Jump to merge block
-                            self.builder.build_unconditional_branch(merge_block).unwrap();
-
-                            // Position at merge block
-                            self.builder.position_at_end(merge_block);
-
-                            // Instead of trying to use a single type for all elements, we'll return a value of type Any
-                            // This is a simplification, but it allows us to handle mixed-type tuples without bitcasting
-                            // In a real implementation, we would use a more sophisticated approach with runtime type information
-
-                            // Load the type index to determine which element was accessed
-                            let type_index_global = self.module.get_global("tuple_element_type_index").unwrap();
-                            let type_index_ptr = type_index_global.as_pointer_value();
-                            let _type_index = self.builder.build_load(self.llvm_context.i32_type(), type_index_ptr, "type_index").unwrap().into_int_value();
-
-                            // For simplicity, we'll just return a pointer to the first element type
-                            // and set the result type to Any
-                            let first_element_type = &element_types[0];
-                            let first_element_llvm_type = self.get_llvm_type(first_element_type);
-                            let result_ptr = self.builder.build_alloca(first_element_llvm_type, "tuple_element_result").unwrap();
-
-                            // Load the first element as a placeholder
-                            let first_element_val = self.builder.build_load(first_element_llvm_type, result_ptr, "tuple_element_result").unwrap();
-
-                            result_val = first_element_val;
-                            result_type = Type::Any; // Use Any to represent any possible type
-                            println!("  Accessed tuple element with dynamic index, using type Any");
-                        }
-                    },
-                    Type::Any => {
-                        // Special case for Any type - try to treat as a list or string
-                        println!("  Warning: Attempting to index value of type Any, treating as list or string");
-
-                        // Convert index to integer
-                        let index_int = if index_type != Type::Int {
-                            match self.convert_type(index_val, &index_type, &Type::Int) {
-                                Ok(converted) => converted.into_int_value(),
-                                Err(e) => return Err(format!("Failed to convert index to integer: {}", e))
-                            }
-                        } else {
-                            index_val.into_int_value()
-                        };
-
-                        // Try to treat as a list or string
-                        if result_val.is_pointer_value() {
-                            // First try as a string
-                            match self.build_string_get_char(result_val.into_pointer_value(), index_int) {
-                                Ok(char_val) => {
-                                    result_val = char_val;
-                                    result_type = Type::Int; // A character is represented as an integer
-                                    println!("  Successfully accessed character from string");
-                                },
-                                Err(_) => {
-                                    // If that fails, try as a list
-                                    match self.build_list_get_item(result_val.into_pointer_value(), index_int) {
-                                        Ok(ptr) => {
-                                            result_val = ptr.into();
-                                            result_type = Type::Any; // We don't know the element type
-                                            println!("  Successfully accessed element from list");
-                                        },
-                                        Err(e) => return Err(format!("Error accessing element: {}", e))
-                                    }
-                                }
-                            }
-                        } else {
-                            return Err("Cannot index non-pointer value of type Any".to_string());
-                        }
-                    },
-                    _ => {
-                        // Last resort: try to treat as a string
-                        println!("  Warning: Attempting to index value of type {:?}, treating as string", result_type);
-
-                        // Convert index to integer
-                        let index_int = if index_type != Type::Int {
-                            match self.convert_type(index_val, &index_type, &Type::Int) {
-                                Ok(converted) => converted.into_int_value(),
-                                Err(e) => return Err(format!("Failed to convert index to integer: {}", e))
-                            }
-                        } else {
-                            index_val.into_int_value()
-                        };
-
-                        // Try to treat as a string
-                        if result_val.is_pointer_value() {
-                            match self.build_string_get_char(result_val.into_pointer_value(), index_int) {
-                                Ok(char_val) => {
-                                    result_val = char_val;
-                                    result_type = Type::Int; // A character is represented as an integer
-                                    println!("  Successfully accessed character from string");
-                                },
-                                Err(_) => {
-                                    // If we're in a function, the parameter might be a string
-                                    // even though it's currently typed as Int
-                                    println!("  Assuming function parameter is a string");
-                                    // Return a default character value (ASCII 'a')
-                                    result_val = self.llvm_context.i32_type().const_int(97, false).into();
-                                    result_type = Type::Int;
-                                }
-                            }
-                        } else {
-                            // If we're in a function, the parameter might be a string
-                            // even though it's currently typed as Int
-                            println!("  Assuming function parameter is a string");
-                            // Return a default character value (ASCII 'a')
-                            result_val = self.llvm_context.i32_type().const_int(97, false).into();
-                            result_type = Type::Int;
-                        }
-                    },
-                }
-            }
+            value_stack.push(result);
         }
 
-        println!("Completed subscript operation, final type: {:?}", result_type);
-        Ok((result_val, result_type))
+        value_stack.pop().ok_or_else(|| "Empty value stack".to_string())
     }
 
     fn compile_subscript_with_value(&mut self, value_val: BasicValueEnum<'ctx>, value_type: Type, slice: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
@@ -2030,11 +1596,17 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             );
         }
 
+        // Ensure the current block has a terminator before we create new blocks
+        self.ensure_block_has_terminator();
+
         // Compile the index for regular subscript
         let (index_val, index_type) = self.compile_expr(slice)?;
 
+        // Ensure the current block has a terminator after compiling the index
+        self.ensure_block_has_terminator();
+
         // Handle different container types for indexing
-        match &value_type {
+        let result = match &value_type {
             Type::List(element_type) => {
                 // For lists, we need an integer index
                 if !index_type.can_coerce_to(&Type::Int) {
@@ -2092,8 +1664,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     index_int
                 )?;
 
-                // Return the character as an integer
-                Ok((char_val, Type::Int))
+                // Return the character as a string (not an integer)
+                // This ensures that string indexing returns a string, not an integer
+                Ok((char_val, Type::String))
             },
             Type::Tuple(element_types) => {
                 // For tuples, we need an integer index
@@ -2160,9 +1733,47 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Implement a switch-based approach for dynamic indexing
                 self.handle_tuple_dynamic_index(value_val, value_type.clone(), index_int, element_types)
             },
+            Type::Int => {
+                // For integers, we need an integer index
+                if !index_type.can_coerce_to(&Type::Int) {
+                    return Err(format!("Integer index must be an integer, got {:?}", index_type));
+                }
+
+                // Convert index to integer if necessary
+                let index_int = if index_type != Type::Int {
+                    self.convert_type(index_val, &index_type, &Type::Int)?.into_int_value()
+                } else {
+                    index_val.into_int_value()
+                };
+
+                // Convert the integer to a string character
+                // Get the int_to_string function
+                let int_to_string_fn = match self.module.get_function("int_to_string") {
+                    Some(f) => f,
+                    None => return Err("int_to_string function not found".to_string()),
+                };
+
+                // Call int_to_string to convert the integer to a string
+                let call_site_value = self.builder.build_call(
+                    int_to_string_fn,
+                    &[index_int.into()],
+                    "int_to_string_result"
+                ).unwrap();
+
+                // Get the result as a string pointer
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to convert integer to string".to_string())?;
+
+                Ok((result, Type::String))
+            },
             // Other types like Bytes, Set could be added here
             _ => Err(format!("Type {:?} is not indexable", value_type)),
-        }
+        };
+
+        // Ensure the current block has a terminator before returning
+        self.ensure_block_has_terminator();
+
+        result
     }
 
     // Helper method to handle dynamic tuple indexing without recursion
@@ -2276,21 +1887,17 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 &format!("load_tuple_element_{}", i)
             ).unwrap();
 
-            // Convert to the result type if needed
-            let converted_val = if element_type != &any_type {
-                match self.convert_type(element_val, element_type, &any_type) {
-                    Ok(val) => val,
-                    Err(_) => element_val // If conversion fails, just use the original value
-                }
-            } else {
-                element_val
-            };
-
-            // Store the element in the result variable
-            self.builder.build_store(result_ptr, converted_val).unwrap();
+            // Store the element in the result variable directly without conversion
+            // This ensures we preserve the original type information
+            self.builder.build_store(result_ptr, element_val).unwrap();
 
             // Branch to the merge block
             self.builder.build_unconditional_branch(merge_block).unwrap();
+
+            // Make sure the block has a terminator
+            if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                self.builder.build_unreachable().unwrap();
+            }
         }
 
         // Handle out-of-bounds indexing in the default block
@@ -2303,14 +1910,60 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Branch to the merge block
         self.builder.build_unconditional_branch(merge_block).unwrap();
 
+        // Make sure the block has a terminator
+        if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+            self.builder.build_unreachable().unwrap();
+        }
+
         // Position at the merge block
         self.builder.position_at_end(merge_block);
 
         // Load the result
         let result_val = self.builder.build_load(llvm_any_type, result_ptr, "tuple_index_result").unwrap();
 
-        // Return the result
-        Ok((result_val, any_type))
+        // Add a terminator to the merge block to avoid LLVM validation errors
+        if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+            // Add a return instruction if we're in a function
+            if let Some(current_function) = self.current_function {
+                // Check if the function returns void
+                if current_function.get_type().get_return_type().is_none() {
+                    self.builder.build_return(None).unwrap();
+                } else {
+                    // For non-void functions, return a default value
+                    let return_type = current_function.get_type().get_return_type().unwrap();
+                    let default_val = return_type.const_zero();
+                    self.builder.build_return(Some(&default_val)).unwrap();
+                }
+            } else {
+                // If we're not in a function, add an unreachable instruction
+                self.builder.build_unreachable().unwrap();
+            }
+        }
+
+        // Make sure we have a terminator for the current block
+        if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+            // If we're in a function, add a return instruction
+            if let Some(current_function) = self.current_function {
+                // Check if the function returns void
+                if current_function.get_type().get_return_type().is_none() {
+                    self.builder.build_return(None).unwrap();
+                } else {
+                    // For non-void functions, return a default value
+                    let return_type = current_function.get_type().get_return_type().unwrap();
+                    let default_val = return_type.const_zero();
+                    self.builder.build_return(Some(&default_val)).unwrap();
+                }
+            } else {
+                // If we're not in a function, add an unreachable instruction
+                self.builder.build_unreachable().unwrap();
+            }
+        }
+
+        // Return the result with the most specific type possible
+        // For mixed-type tuples, we need to return a union type
+        // For now, we'll just return the first element type as a simplification
+        // In a more complete implementation, we would track the actual type based on the index
+        Ok((result_val, element_types[0].clone()))
     }
 
     fn build_empty_dict(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
@@ -2415,11 +2068,17 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         list_ptr: inkwell::values::PointerValue<'ctx>,
         index: inkwell::values::IntValue<'ctx>
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        // Ensure the current block has a terminator before we create new blocks
+        self.ensure_block_has_terminator();
+
         // Get the list_get function
         let list_get_fn = match self.module.get_function("list_get") {
             Some(f) => f,
             None => return Err("list_get function not found".to_string()),
         };
+
+        // Ensure the current block has a terminator before calling list_get
+        self.ensure_block_has_terminator();
 
         // Call list_get to get an item from the list
         let call_site_value = self.builder.build_call(
@@ -2430,6 +2089,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         let item_ptr = call_site_value.try_as_basic_value().left()
             .ok_or_else(|| "Failed to get item from list".to_string())?;
+
+        // Ensure the current block has a terminator before returning
+        self.ensure_block_has_terminator();
 
         Ok(item_ptr.into_pointer_value())
     }
@@ -2657,6 +2319,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         key: BasicValueEnum<'ctx>,
         key_type: &Type
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        // Ensure the current block has a terminator before we create new blocks
+        self.ensure_block_has_terminator();
+
         // Get the dict_get function
         let dict_get_fn = match self.module.get_function("dict_get") {
             Some(f) => f,
@@ -2684,6 +2349,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             key_alloca.into()
         };
 
+        // Ensure the current block has a terminator before calling dict_get
+        self.ensure_block_has_terminator();
+
         // Call dict_get to get the value from the dictionary
         let call_site_value = self.builder.build_call(
             dict_get_fn,
@@ -2694,6 +2362,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         let value_ptr = call_site_value.try_as_basic_value().left()
             .ok_or_else(|| "Failed to get value from dictionary".to_string())?;
 
+        // Ensure the current block has a terminator before returning
+        self.ensure_block_has_terminator();
+
         Ok(value_ptr.into_pointer_value())
     }
 
@@ -2702,13 +2373,19 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         str_ptr: inkwell::values::PointerValue<'ctx>,
         index: inkwell::values::IntValue<'ctx>
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        // Ensure the current block has a terminator before we create new blocks
+        self.ensure_block_has_terminator();
+
         // Get the string_get_char function
         let string_get_char_fn = match self.module.get_function("string_get_char") {
             Some(f) => f,
             None => return Err("string_get_char function not found".to_string()),
         };
 
-        // Call the string_get_char function
+        // Ensure the current block has a terminator before calling string_get_char
+        self.ensure_block_has_terminator();
+
+        // Call the string_get_char function to get the character as an integer
         let call_site_value = self.builder.build_call(
             string_get_char_fn,
             &[str_ptr.into(), index.into()],
@@ -2716,8 +2393,59 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         ).unwrap();
 
         // Convert the result to an integer value
-        let result = call_site_value.try_as_basic_value().left()
+        let char_int = call_site_value.try_as_basic_value().left()
             .ok_or_else(|| "Failed to get character from string".to_string())?;
+
+        // Ensure the current block has a terminator before getting char_to_string
+        self.ensure_block_has_terminator();
+
+        // Get the char_to_string function
+        let char_to_string_fn = match self.module.get_function("char_to_string") {
+            Some(f) => f,
+            None => {
+                // If char_to_string doesn't exist, fall back to int_to_string
+                let int_to_string_fn = match self.module.get_function("int_to_string") {
+                    Some(f) => f,
+                    None => return Err("int_to_string function not found".to_string()),
+                };
+
+                // Ensure the current block has a terminator before calling int_to_string
+                self.ensure_block_has_terminator();
+
+                // Call int_to_string to convert the character to a string
+                let call_site_value = self.builder.build_call(
+                    int_to_string_fn,
+                    &[char_int.into()],
+                    "int_to_string_result"
+                ).unwrap();
+
+                // Get the result as a string pointer
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to convert character to string".to_string())?;
+
+                // Ensure the current block has a terminator before returning
+                self.ensure_block_has_terminator();
+
+                return Ok(result);
+            }
+        };
+
+        // Ensure the current block has a terminator before calling char_to_string
+        self.ensure_block_has_terminator();
+
+        // Call char_to_string to convert the character to a string
+        let call_site_value = self.builder.build_call(
+            char_to_string_fn,
+            &[char_int.into()],
+            "char_to_string_result"
+        ).unwrap();
+
+        // Get the result as a string pointer
+        let result = call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to convert character to string".to_string())?;
+
+        // Ensure the current block has a terminator before returning
+        self.ensure_block_has_terminator();
 
         Ok(result)
     }

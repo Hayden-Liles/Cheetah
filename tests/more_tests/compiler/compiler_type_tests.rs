@@ -158,7 +158,8 @@ fn test_type_indexability_and_callability() {
     assert!(Type::List(Box::new(Type::Int)).is_indexable());
     assert!(Type::String.is_indexable());
     assert!(Type::Dict(Box::new(Type::String), Box::new(Type::Int)).is_indexable());
-    assert!(!Type::Int.is_indexable());
+    // We now allow Int to be indexable for string character access
+    assert!(Type::Int.is_indexable());
     assert!(!Type::Bool.is_indexable());
 
     // Test type callability
@@ -172,8 +173,14 @@ fn test_type_indexability_and_callability() {
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), Type::String));
 
-    // Test error case
+    // Test Int indexing now returns String (for character access)
     let int_type = Type::Int;
     let result = int_type.get_indexed_type(&Type::Int);
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), Type::String));
+
+    // Test error case with Bool
+    let bool_type = Type::Bool;
+    let result = bool_type.get_indexed_type(&Type::Int);
     assert!(result.is_err());
 }

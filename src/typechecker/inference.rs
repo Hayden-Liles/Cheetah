@@ -540,6 +540,13 @@ impl TypeInference {
                     }
                 }
 
+                // Special case for string indexing - returns a string character
+                if let Type::String = &value_type {
+                    if matches!(slice_type, Type::Int) {
+                        return Ok(Type::String);
+                    }
+                }
+
                 // Check if the value is indexable
                 if !value_type.is_indexable() {
                     return Err(TypeError::NotIndexable(value_type));

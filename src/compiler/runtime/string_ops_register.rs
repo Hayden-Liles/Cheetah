@@ -16,6 +16,15 @@ pub fn register_string_functions<'ctx>(context: &'ctx Context, module: &mut Modu
     );
     module.add_function("string_get_char", string_get_char_type, None);
 
+    // Create char_to_string function (converts a character code to a string)
+    let char_to_string_type = context.ptr_type(AddressSpace::default()).fn_type(
+        &[
+            context.i64_type().into(),                        // character code
+        ],
+        false,
+    );
+    module.add_function("char_to_string", char_to_string_type, None);
+
     // Create string_slice function (gets a slice from a string)
     let string_slice_type = context.ptr_type(AddressSpace::default()).fn_type(
         &[

@@ -25,7 +25,7 @@ use std::collections::HashMap;
 
 /// Compiler for Cheetah language
 pub struct Compiler<'ctx> {
-    context: CompilationContext<'ctx>,
+    pub context: CompilationContext<'ctx>,
 }
 
 impl<'ctx> Compiler<'ctx> {
@@ -54,8 +54,21 @@ impl<'ctx> Compiler<'ctx> {
         // Position builder at the end of the entry block
         self.context.builder.position_at_end(basic_block);
 
+        // Use the non-recursive implementation to avoid stack overflow
+        self.context.use_non_recursive_expr = true;
+
         // Compile the module
-        self.compile_module_body(module)
+        let result = self.compile_module_body(module);
+
+        // Make sure the current block has a terminator
+        if let Ok(_) = &result {
+            let current_block = self.context.builder.get_insert_block().unwrap();
+            if current_block.get_terminator().is_none() {
+                self.context.builder.build_return(None).unwrap();
+            }
+        }
+
+        result
     }
 
     /// Compile an AST module to LLVM IR without type checking
@@ -72,8 +85,68 @@ impl<'ctx> Compiler<'ctx> {
         // Position builder at the end of the entry block
         self.context.builder.position_at_end(basic_block);
 
-        // Compile the module
-        self.compile_module_body(module)
+        // Use the non-recursive implementation to avoid stack overflow
+        self.context.use_non_recursive_expr = true;
+
+        // Embed runtime support functions
+        self.embed_runtime_functions();
+
+        // First pass: register all function declarations
+        let mut function_defs = Vec::new();
+
+        for stmt in &module.body {
+            match stmt.as_ref() {
+                ast::Stmt::FunctionDef { name, params, .. } => {
+                    // Register the function declaration
+                    self.declare_function(name, params)?;
+                    function_defs.push(stmt);
+                },
+                _ => {}
+            }
+        }
+
+        // Second pass: compile function bodies
+        for stmt in &function_defs {
+            match stmt.as_ref() {
+                ast::Stmt::FunctionDef { name, params, body, .. } => {
+                    // Compile the function body
+                    self.compile_function_body(name, params, body)?;
+                },
+                _ => unreachable!("Only function definitions should be in function_defs")
+            }
+        }
+
+        // Third pass: compile all other statements
+        for stmt in &module.body {
+            match stmt.as_ref() {
+                ast::Stmt::FunctionDef { .. } => {
+                    // Already handled in previous passes
+                },
+                ast::Stmt::ClassDef { name, bases, body, .. } => {
+                    // Class definitions are handled separately
+                    self.compile_class(name, bases, body)?;
+                },
+                _ => {
+                    // All other statements are compiled in the main function
+                    self.context.compile_stmt(stmt.as_ref())?;
+                }
+            }
+        }
+
+        // Check if the current block already has a terminator
+        // (this could happen if the last statement was a return or an unconditional branch)
+        let current_block = self.context.builder.get_insert_block().unwrap();
+        if current_block.get_terminator().is_none() {
+            // Add a return void instruction only if there's no terminator
+            self.context.builder.build_return(None).unwrap();
+        }
+
+        // Verify the module
+        if let Err(err) = self.context.module.verify() {
+            return Err(format!("Module verification failed: {}", err));
+        }
+
+        Ok(())
     }
 
     /// Compile the body of an AST module

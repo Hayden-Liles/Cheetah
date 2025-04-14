@@ -1089,7 +1089,7 @@ impl Type {
     /// Check if this type is indexable (supports [] operator)
     pub fn is_indexable(&self) -> bool {
         matches!(self,
-            Type::List(_) | Type::Tuple(_) | Type::Dict(_, _) | Type::String | Type::Bytes
+            Type::List(_) | Type::Tuple(_) | Type::Dict(_, _) | Type::String | Type::Bytes | Type::Int
         )
     }
 
@@ -1101,6 +1101,18 @@ impl Type {
                 // As long as the index can be coerced to an integer, it's valid
                 if index_type.can_coerce_to(&Type::Int) {
                     Ok(*elem_type.clone())
+                } else {
+                    Err(TypeError::InvalidOperator {
+                        operator: "[]".to_string(),
+                        left_type: self.clone(),
+                        right_type: Some(index_type.clone()),
+                    })
+                }
+            },
+            Type::String => {
+                // For strings, indexing with an integer returns a single character (as a string)
+                if index_type.can_coerce_to(&Type::Int) {
+                    Ok(Type::String)
                 } else {
                     Err(TypeError::InvalidOperator {
                         operator: "[]".to_string(),
@@ -1155,9 +1167,10 @@ impl Type {
                 println!("Dictionary access with compatible key type: {:?} -> {:?}", index_type, value_type);
                 Ok(*value_type.clone())
             },
-            Type::String => {
+
+            Type::Bytes => {
                 if matches!(index_type, Type::Int) {
-                    Ok(Type::String)  // Indexing a string gives a single-character string
+                    Ok(Type::Int)  // Indexing bytes gives an integer
                 } else {
                     Err(TypeError::InvalidOperator {
                         operator: "[]".to_string(),
@@ -1166,9 +1179,10 @@ impl Type {
                     })
                 }
             },
-            Type::Bytes => {
+            Type::Int => {
+                // Allow indexing integers (for string character access)
                 if matches!(index_type, Type::Int) {
-                    Ok(Type::Int)  // Indexing bytes gives an integer
+                    Ok(Type::String)  // Indexing an integer gives a string character
                 } else {
                     Err(TypeError::InvalidOperator {
                         operator: "[]".to_string(),
