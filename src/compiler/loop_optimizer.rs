@@ -1,4 +1,4 @@
-// loop_optimizer.rs - Optimizations for loops to improve performance
+// optimized_loop_optimizer.rs - High-performance loop optimizations
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::values::{BasicValueEnum, IntValue, FunctionValue};
@@ -10,22 +10,22 @@ use inkwell::context::Context;
 use crate::compiler::runtime::memory_profiler;
 
 // Constants for loop optimization
-const MIN_CHUNK_SIZE: u64 = 1000; // Minimum chunk size for better performance
-const MAX_CHUNK_SIZE: u64 = 100000; // Maximum chunk size to prevent stack overflow
-const DEFAULT_CHUNK_SIZE: u64 = 10000; // Default chunk size for most loops
+const MIN_CHUNK_SIZE: u64 = 5000; // Minimum chunk size (increased from 1000)
+const MAX_CHUNK_SIZE: u64 = 200000; // Maximum chunk size (increased from 100000)
+const DEFAULT_CHUNK_SIZE: u64 = 50000; // Default chunk size (increased from 10000)
 
 // Threshold for large ranges that need special handling
-const LARGE_RANGE_THRESHOLD: u64 = 1000000; // 1 million iterations is considered large
-const VERY_LARGE_RANGE_THRESHOLD: u64 = 10000000; // 10 million iterations is very large
+const LARGE_RANGE_THRESHOLD: u64 = 1000000; // 1 million iterations
+const VERY_LARGE_RANGE_THRESHOLD: u64 = 10000000; // 10 million iterations
 
 // Constants for adaptive chunk sizing
-const ADAPTIVE_CHUNK_FACTOR: f64 = 0.75; // Factor to adjust chunk size based on complexity
-const MEMORY_SCALING_FACTOR: f64 = 0.5; // Factor to scale chunk size based on available memory
-const SYSTEM_MEMORY_THRESHOLD: f64 = 0.8; // Memory usage threshold (80%) to reduce chunk size
+const ADAPTIVE_CHUNK_FACTOR: f64 = 0.8; // Factor to adjust chunk size (increased from 0.75)
+const MEMORY_SCALING_FACTOR: f64 = 0.6; // Factor to scale chunk size (increased from 0.5)
+const SYSTEM_MEMORY_THRESHOLD: f64 = 0.8; // Memory usage threshold (80%)
 
 // Constants for loop unrolling
-const UNROLL_THRESHOLD: u64 = 0; // Maximum number of iterations to fully unroll
-const PARTIAL_UNROLL_FACTOR: u64 = 1; // Unroll factor for partial unrolling
+const UNROLL_THRESHOLD: u64 = 16; // Maximum number of iterations to fully unroll (increased from 0)
+const PARTIAL_UNROLL_FACTOR: u64 = 4; // Unroll factor for partial unrolling (increased from 1)
 
 /// Loop optimization helper functions
 pub struct LoopOptimizer<'ctx> {
@@ -40,20 +40,21 @@ impl<'ctx> LoopOptimizer<'ctx> {
     }
 
     /// Check if a loop should be chunked based on its range
-    pub fn should_chunk_loop(&self, _start_val: IntValue<'ctx>, _end_val: IntValue<'ctx>) -> bool {
-        // Always chunk loops to prevent stack overflow
-        // This is the most reliable way to prevent stack overflows in large loops
-        true
+    pub fn should_chunk_loop(&self, start_val: IntValue<'ctx>, end_val: IntValue<'ctx>) -> bool {
+        // Get the range size if possible
+        if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
+            if end_const > start_const {
+                let range_size = (end_const - start_const) as u64;
+                // Only chunk loops larger than MIN_CHUNK_SIZE
+                return range_size > MIN_CHUNK_SIZE;
+            }
+        }
+        
+        // By default, don't chunk small loops for better performance
+        false
     }
 
     /// Calculate an appropriate chunk size based on the range size and system conditions
-    ///
-    /// This function dynamically determines the optimal chunk size for loop processing
-    /// based on multiple factors:
-    /// 1. The size of the range being processed
-    /// 2. Current memory usage of the system
-    /// 3. Complexity of the loop (estimated)
-    /// 4. Available system resources
     pub fn calculate_chunk_size(&self, start_val: IntValue<'ctx>, end_val: IntValue<'ctx>) -> u64 {
         // Try to get constant values if available
         let range_size = if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
@@ -64,7 +65,6 @@ impl<'ctx> LoopOptimizer<'ctx> {
             }
         } else {
             // If we can't determine the range size statically, use a default size
-            // but adjust it based on memory usage
             return self.adjust_chunk_size_for_memory(DEFAULT_CHUNK_SIZE);
         };
 
@@ -90,27 +90,27 @@ impl<'ctx> LoopOptimizer<'ctx> {
     fn get_base_chunk_size(&self, range_size: u64) -> u64 {
         // For extremely large ranges, use a fixed large chunk size
         if range_size > VERY_LARGE_RANGE_THRESHOLD {
-            // For extremely large ranges, use a fixed large chunk size
-            // This is more efficient and prevents excessive chunking
             MAX_CHUNK_SIZE
         }
-        // For very large ranges, use a dynamic chunk size
+        // For large ranges, use a dynamic chunk size
         else if range_size > LARGE_RANGE_THRESHOLD {
-            // Use a square root scale for very large ranges
-            // This provides a better balance between performance and stack usage
-            let sqrt_factor = (range_size as f64).sqrt() as u64 / 100;
-            let adjusted_size = DEFAULT_CHUNK_SIZE * sqrt_factor;
+            // Use a square root scale for large ranges
+            // Increased multiplier for better performance
+            let sqrt_factor = (range_size as f64).sqrt() as u64 / 50;
+            let adjusted_size = DEFAULT_CHUNK_SIZE * sqrt_factor.max(1);
             adjusted_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
         }
-        // For medium-large ranges, use the maximum chunk size
+        // For medium-large ranges, use optimal chunk size
         else if range_size > MAX_CHUNK_SIZE {
-            MAX_CHUNK_SIZE
+            // Use a chunk size that's a power of 2 for better performance
+            let power_of_two = (range_size as f64).log2().floor();
+            (2.0f64.powf(power_of_two) as u64).clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
         }
-        // For medium ranges, use the range size itself (process in one chunk)
+        // For medium ranges, use the range size itself
         else if range_size > MIN_CHUNK_SIZE {
             range_size
         }
-        // For small ranges, use the minimum chunk size
+        // For small ranges, use minimum chunk size
         else {
             MIN_CHUNK_SIZE
         }
@@ -119,7 +119,6 @@ impl<'ctx> LoopOptimizer<'ctx> {
     /// Adjust chunk size based on current memory usage
     fn adjust_chunk_size_for_memory(&self, chunk_size: u64) -> u64 {
         // Get current memory usage from the memory profiler
-        // If memory profiler is not available, return the original chunk size
         let current_memory = memory_profiler::get_current_memory_usage() as f64;
         let peak_memory = memory_profiler::get_peak_memory_usage() as f64;
 
@@ -147,28 +146,22 @@ impl<'ctx> LoopOptimizer<'ctx> {
 
     /// Adjust chunk size based on estimated loop complexity
     fn adjust_for_complexity(&self, chunk_size: u64) -> u64 {
-        // In a more sophisticated implementation, we could analyze the loop body
-        // to estimate its complexity and adjust the chunk size accordingly.
-        // For now, we'll use a simple heuristic based on the ADAPTIVE_CHUNK_FACTOR.
-
-        // This is a placeholder for future improvements where we could analyze
-        // the loop body instructions to determine complexity.
-
-        // Apply a simple adjustment using the adaptive chunk factor
-        // This slightly reduces the chunk size to be more conservative
-        // which is generally safer for complex loops
+        // Apply a conservative adjustment using the adaptive chunk factor
         let adjusted_size = (chunk_size as f64 * ADAPTIVE_CHUNK_FACTOR) as u64;
 
         // Ensure we don't go below the minimum chunk size
-        adjusted_size.max(MIN_CHUNK_SIZE)
+        // And make sure the chunk size is a multiple of PARTIAL_UNROLL_FACTOR for better performance
+        let remainder = adjusted_size % PARTIAL_UNROLL_FACTOR;
+        let size = if remainder == 0 {
+            adjusted_size
+        } else {
+            adjusted_size + (PARTIAL_UNROLL_FACTOR - remainder)
+        };
+        
+        size.max(MIN_CHUNK_SIZE)
     }
 
     /// Optimize a range-based for loop
-    ///
-    /// This function applies several optimizations to range-based for loops:
-    /// 1. Loop unrolling for small constant ranges
-    /// 2. Strength reduction for loop variables
-    /// 3. Loop chunking for large ranges to prevent stack overflow
     pub fn optimize_range_loop(
         &self,
         function: FunctionValue<'ctx>,
@@ -209,8 +202,7 @@ impl<'ctx> LoopOptimizer<'ctx> {
             );
         }
 
-        // For smaller loops, apply basic optimizations
-        // Create an increment block for the optimized loop
+        // For smaller loops, apply basic optimizations like strength reduction
         let inc_block = self.context.append_basic_block(function, "opt_inc_block");
 
         self.optimize_loop_condition(
@@ -322,28 +314,6 @@ impl<'ctx> LoopOptimizer<'ctx> {
             }
         }
 
-        // For very large ranges, we'll add a debug message
-        // This helps with debugging and prevents excessive memory usage
-        if cfg!(debug_assertions) {
-            if let (Some(start_const), Some(end_const)) = (start_val.get_sign_extended_constant(), end_val.get_sign_extended_constant()) {
-                let range_size = if end_const > start_const {
-                    (end_const - start_const) as u64
-                } else {
-                    0 // Invalid range
-                };
-
-                if range_size > VERY_LARGE_RANGE_THRESHOLD {
-                    println!("[LOOP CHUNK] Processing chunk {} to {} (size {})",
-                             current_chunk.get_sign_extended_constant().unwrap_or(0),
-                             chunk_end.get_sign_extended_constant().unwrap_or(0),
-                             dynamic_chunk_size);
-                }
-            }
-        }
-
-        // We'll use a simpler approach for debugging - just add a comment
-        // This helps prevent stack overflow by using smaller chunks
-
         // Make sure we don't go past the actual end
         let use_chunk_end = self.builder.build_int_compare(
             IntPredicate::SLT,
@@ -395,7 +365,7 @@ impl<'ctx> LoopOptimizer<'ctx> {
         // Set up the inner increment block
         self.builder.position_at_end(inner_inc_block);
 
-        // Increment the loop variable
+        // Increment the loop variable - use step size
         let next_val = self.builder.build_int_add(current_val, step_val, "next").unwrap();
         self.builder.build_store(loop_var_ptr.into_pointer_value(), next_val).unwrap();
 
@@ -453,10 +423,8 @@ impl<'ctx> LoopOptimizer<'ctx> {
 
             // Convert to u64 for comparison with threshold
             let num_iterations_u64 = num_iterations as u64;
-            eprintln!("[LOOP UNROLL] Loop has {} iterations (threshold for full unrolling: {})",
-                     num_iterations_u64, UNROLL_THRESHOLD);
-
-            // Only fully unroll small loops
+            
+            // Only fully unroll very small loops - this prevents code bloat
             if num_iterations_u64 <= UNROLL_THRESHOLD && num_iterations_u64 > 0 {
                 eprintln!("[LOOP UNROLL] Fully unrolling loop with {} iterations", num_iterations_u64);
                 return Some(self.fully_unroll_loop(
@@ -470,8 +438,8 @@ impl<'ctx> LoopOptimizer<'ctx> {
                 ));
             }
 
-            // For larger loops, consider partial unrolling
-            if num_iterations_u64 > UNROLL_THRESHOLD && num_iterations_u64 % PARTIAL_UNROLL_FACTOR == 0 {
+            // For medium-sized loops that are multiples of the unroll factor, use partial unrolling
+            if num_iterations_u64 > UNROLL_THRESHOLD && num_iterations_u64 <= 500 && num_iterations_u64 % PARTIAL_UNROLL_FACTOR == 0 {
                 eprintln!("[LOOP UNROLL] Partially unrolling loop with {} iterations (factor: {})",
                          num_iterations_u64, PARTIAL_UNROLL_FACTOR);
                 return Some(self.partially_unroll_loop(
@@ -504,15 +472,13 @@ impl<'ctx> LoopOptimizer<'ctx> {
         exit_block: BasicBlock<'ctx>,
         num_iterations: u64,
     ) -> BasicBlock<'ctx> {
-        // We don't need i64_type for fully unrolled loops
         let entry_block = self.builder.get_insert_block().unwrap();
 
         // Create a sequence of blocks for each iteration
         let mut current_val = start_val;
         let mut current_block = entry_block;
 
-        eprintln!("[LOOP UNROLL] Fully unrolling loop with {} iterations", num_iterations);
-
+        // Loop through each iteration and create the unrolled IR
         for i in 0..num_iterations {
             // Create a new block for this iteration
             let iter_block = self.context.append_basic_block(function, &format!("unrolled_iter_{}", i));
@@ -537,20 +503,15 @@ impl<'ctx> LoopOptimizer<'ctx> {
             // We need to save the current terminator if it exists
             let body_terminator = body_block.get_terminator();
 
-            // If the body block already has a terminator, we need to create a new block
+            // If the body block already has a terminator, we need to handle it specially
             if body_terminator.is_some() {
                 // Create a new body block for this iteration
                 let new_body_block = self.context.append_basic_block(function, &format!("unrolled_body_{}", i));
 
-                // Copy the instructions from the original body block to the new one
-                // This is a simplified approach - in a real implementation, you'd need to
-                // properly clone all instructions and update references
-
-                // For now, we'll just branch to the original body and then to our continuation
-                self.builder.position_at_end(iter_block);
-                self.builder.build_unconditional_branch(new_body_block).unwrap();
-
+                // Position at the start of the new body block
                 self.builder.position_at_end(new_body_block);
+                
+                // Branch to the continuation block
                 self.builder.build_unconditional_branch(cont_block).unwrap();
             } else {
                 // Position at the end of the body block
@@ -593,9 +554,7 @@ impl<'ctx> LoopOptimizer<'ctx> {
         let i64_type = self.context.i64_type();
         let entry_block = self.builder.get_insert_block().unwrap();
 
-        eprintln!("[LOOP UNROLL] Partially unrolling loop with factor {}", unroll_factor);
-
-        // Create blocks for the unrolled loop
+        // Create blocks for the main loop
         let header_block = self.context.append_basic_block(function, "unroll_header");
         let body_start_block = self.context.append_basic_block(function, "unroll_body_start");
         let inc_block = self.context.append_basic_block(function, "unroll_inc");
@@ -646,157 +605,61 @@ impl<'ctx> LoopOptimizer<'ctx> {
         // Body start block
         self.builder.position_at_end(body_start_block);
 
-        // Create blocks for each unrolled iteration
-        let mut current_block = body_start_block;
-
-        // Create unrolled iterations
-        for i in 0..unroll_factor {
-            // Branch to the body block
-            self.builder.position_at_end(current_block);
-
-            // Check if we should execute this iteration
-            if i > 0 {
-                // For iterations after the first, we need to check if we're still in bounds
-                let iter_val = self.builder.build_load(i64_type, loop_var_ptr.into_pointer_value(), &format!("iter_val_{}", i)).unwrap().into_int_value();
-
-                let iter_cond_pos = self.builder.build_int_compare(
-                    IntPredicate::SLT,
-                    iter_val,
-                    end_val,
-                    &format!("iter_cond_pos_{}", i)
-                ).unwrap();
-
-                let iter_cond_neg = self.builder.build_int_compare(
-                    IntPredicate::SGT,
-                    iter_val,
-                    end_val,
-                    &format!("iter_cond_neg_{}", i)
-                ).unwrap();
-
-                let iter_condition = self.builder.build_select(
-                    step_positive,
-                    iter_cond_pos,
-                    iter_cond_neg,
-                    &format!("iter_condition_{}", i)
-                ).unwrap().into_int_value();
-
-                // Create a block for this iteration's body
-                let iter_body_block = self.context.append_basic_block(function, &format!("unroll_iter_body_{}", i));
-                let iter_skip_block = self.context.append_basic_block(function, &format!("unroll_iter_skip_{}", i));
-
-                // Branch to the body or skip based on the condition
-                self.builder.build_conditional_branch(iter_condition, iter_body_block, iter_skip_block).unwrap();
-
-                // Body block for this iteration
-                self.builder.position_at_end(iter_body_block);
-
-                // Branch to the original body block
-                self.builder.build_unconditional_branch(body_block).unwrap();
-
-                // Create a continuation block for after the body
-                let iter_cont_block = self.context.append_basic_block(function, &format!("unroll_iter_cont_{}", i));
-
-                // Position at the end of the body block
-                // We need to save the current terminator if it exists
-                let body_terminator = body_block.get_terminator();
-
-                if body_terminator.is_some() {
-                    // Create a new body block for this iteration
-                    let new_body_block = self.context.append_basic_block(function, &format!("unroll_iter_new_body_{}", i));
-
-                    // Branch to the new body block
-                    self.builder.position_at_end(iter_body_block);
-                    self.builder.build_unconditional_branch(new_body_block).unwrap();
-
-                    // Position at the new body block
-                    self.builder.position_at_end(new_body_block);
-
-                    // Branch to the continuation block
-                    self.builder.build_unconditional_branch(iter_cont_block).unwrap();
-                } else {
-                    // Position at the end of the body block
-                    self.builder.position_at_end(body_block);
-
-                    // Branch to the continuation block
-                    self.builder.build_unconditional_branch(iter_cont_block).unwrap();
-                }
-
-                // Position at the continuation block
-                self.builder.position_at_end(iter_cont_block);
-
-                // Increment the loop variable
-                let iter_current_val = self.builder.build_load(i64_type, loop_var_ptr.into_pointer_value(), &format!("iter_current_{}", i)).unwrap().into_int_value();
-                let iter_next_val = self.builder.build_int_add(iter_current_val, step_val, &format!("iter_next_{}", i)).unwrap();
-                self.builder.build_store(loop_var_ptr.into_pointer_value(), iter_next_val).unwrap();
-
-                // Branch to the skip block
-                self.builder.build_unconditional_branch(iter_skip_block).unwrap();
-
-                // Skip block for this iteration
-                self.builder.position_at_end(iter_skip_block);
-
-                // Update the current block for the next iteration
-                current_block = iter_skip_block;
-            } else {
-                // For the first iteration, we already know we're in bounds
-                // Branch to the original body block
-                self.builder.build_unconditional_branch(body_block).unwrap();
-
-                // Create a continuation block for after the body
-                let iter_cont_block = self.context.append_basic_block(function, "unroll_iter_cont_0");
-
-                // Position at the end of the body block
-                // We need to save the current terminator if it exists
-                let body_terminator = body_block.get_terminator();
-
-                if body_terminator.is_some() {
-                    // Create a new body block for this iteration
-                    let new_body_block = self.context.append_basic_block(function, "unroll_iter_new_body_0");
-
-                    // Branch to the new body block
-                    self.builder.position_at_end(current_block);
-                    self.builder.build_unconditional_branch(new_body_block).unwrap();
-
-                    // Position at the new body block
-                    self.builder.position_at_end(new_body_block);
-
-                    // Branch to the continuation block
-                    self.builder.build_unconditional_branch(iter_cont_block).unwrap();
-                } else {
-                    // Position at the end of the body block
-                    self.builder.position_at_end(body_block);
-
-                    // Branch to the continuation block
-                    self.builder.build_unconditional_branch(iter_cont_block).unwrap();
-                }
-
-                // Position at the continuation block
-                self.builder.position_at_end(iter_cont_block);
-
-                // Increment the loop variable
-                let iter_current_val = self.builder.build_load(i64_type, loop_var_ptr.into_pointer_value(), "iter_current_0").unwrap().into_int_value();
-                let iter_next_val = self.builder.build_int_add(iter_current_val, step_val, "iter_next_0").unwrap();
-                self.builder.build_store(loop_var_ptr.into_pointer_value(), iter_next_val).unwrap();
-
-                // Update the current block for the next iteration
-                current_block = iter_cont_block;
-            }
-        }
-
-        // After all unrolled iterations, branch to the increment block
-        self.builder.position_at_end(current_block);
-        self.builder.build_unconditional_branch(inc_block).unwrap();
-
-        // Increment block - increment by (unroll_factor * step) and branch back to header
-        self.builder.position_at_end(inc_block);
-
-        // Calculate the step for the unrolled loop and update the loop variable
-        let current_val = self.builder.build_load(i64_type, loop_var_ptr.into_pointer_value(), "current_unrolled").unwrap().into_int_value();
+        // Compute the step size for the unrolled iterations
         let unrolled_step = self.builder.build_int_mul(
             step_val,
             i64_type.const_int(unroll_factor, false),
             "unrolled_step"
         ).unwrap();
+
+        // Create unrolled iterations - this is the key to performance
+        let mut current_block = body_start_block;
+        
+        for i in 0..unroll_factor {
+            // For each unrolled iteration, compute the current value
+            let current_index = if i == 0 {
+                current_val
+            } else {
+                let offset = self.builder.build_int_mul(
+                    step_val, 
+                    i64_type.const_int(i, false),
+                    &format!("offset_{}", i)
+                ).unwrap();
+                
+                self.builder.build_int_add(
+                    current_val,
+                    offset,
+                    &format!("unrolled_val_{}", i)
+                ).unwrap()
+            };
+            
+            // Store the current iteration's value
+            self.builder.build_store(loop_var_ptr.into_pointer_value(), current_index).unwrap();
+            
+            // Branch to the body block
+            let body_cont_block = self.context.append_basic_block(function, &format!("body_cont_{}", i));
+            
+            self.builder.build_unconditional_branch(body_block).unwrap();
+            
+            // Setup for continuation after the body
+            self.builder.position_at_end(body_cont_block);
+            
+            // If this is the last iteration, branch to increment block
+            if i == unroll_factor - 1 {
+                self.builder.build_unconditional_branch(inc_block).unwrap();
+            }
+            
+            // Update the current block for the next iteration
+            current_block = body_cont_block;
+        }
+
+        // Increment block - increment by (unroll_factor * step) and branch back to header
+        self.builder.position_at_end(inc_block);
+
+        // Load the current value of the loop variable
+        let current_val = self.builder.build_load(i64_type, loop_var_ptr.into_pointer_value(), "current_at_end").unwrap().into_int_value();
+        
+        // Add the unrolled step to the loop variable
         let next_val = self.builder.build_int_add(current_val, unrolled_step, "next_unrolled").unwrap();
         self.builder.build_store(loop_var_ptr.into_pointer_value(), next_val).unwrap();
 

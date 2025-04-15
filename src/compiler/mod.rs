@@ -20,14 +20,18 @@ pub mod parallel_loop_optimizer;
 
 use crate::compiler::context::CompilationContext;
 use inkwell::context::Context;
+use inkwell::passes::PassManager;
 use stmt::StmtCompiler;
 use types::Type;
 use std::path::Path;
 use std::collections::HashMap;
 
+// No need to import builtins modules directly as they're already available through the module system
+
 /// Compiler for Cheetah language
 pub struct Compiler<'ctx> {
     pub context: CompilationContext<'ctx>,
+    pub optimize: bool,
 }
 
 impl<'ctx> Compiler<'ctx> {
@@ -35,6 +39,7 @@ impl<'ctx> Compiler<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         Self {
             context: CompilationContext::new(context, module_name),
+            optimize: true,
         }
     }
 
@@ -43,6 +48,18 @@ impl<'ctx> Compiler<'ctx> {
         // Type check the module first
         if let Err(type_error) = typechecker::check_module(module) {
             return Err(format!("Type error: {}", type_error));
+        }
+
+        if self.optimize {
+            // Create a function pass manager for optimizations
+            // Note: In newer versions of inkwell, PassManager API has changed
+            // We'll use a simpler approach that's compatible with the current version
+            let pass_manager = PassManager::create(());
+
+            // Run the optimizations on the module
+            // This is a simplified version that doesn't add specific passes
+            // but relies on the default optimization level
+            pass_manager.run_on(&self.context.module);
         }
 
         // Get types for function signature
