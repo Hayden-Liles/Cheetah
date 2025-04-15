@@ -7,15 +7,16 @@ use inkwell::module::Module;
 
 /// Tail call optimization helper functions
 pub struct TailCallOptimizer<'ctx> {
-    builder: &'ctx Builder<'ctx>,
-    context: &'ctx Context,
-    module: &'ctx Module<'ctx>,
+    // These fields are currently unused but will be needed for future implementation
+    _builder: &'ctx Builder<'ctx>,
+    _context: &'ctx Context,
+    _module: &'ctx Module<'ctx>,
 }
 
 impl<'ctx> TailCallOptimizer<'ctx> {
     /// Create a new tail call optimizer
     pub fn new(builder: &'ctx Builder<'ctx>, context: &'ctx Context, module: &'ctx Module<'ctx>) -> Self {
-        Self { builder, context, module }
+        Self { _builder: builder, _context: context, _module: module }
     }
 
     /// Apply tail call optimization to a function

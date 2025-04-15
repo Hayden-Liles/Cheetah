@@ -11,7 +11,7 @@ use ryu;
 // Constants for buffer management
 const BUFFER_CAPACITY: usize = 32768; // 32KB buffer - increased from 1KB
 const FLUSH_THRESHOLD: usize = 24576; // Flush at 24KB - 75% of capacity
-const MAX_INT_LENGTH: usize = 20; // Maximum length of an integer as string
+// Removed unused constant MAX_INT_LENGTH
 
 // Global counters for buffer operations
 static BUFFER_OPERATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -22,7 +22,7 @@ static mut NUMBER_BUFFER: [u8; 32] = [0; 32];
 
 // Static buffers for common characters to avoid allocations
 static NEWLINE: [u8; 1] = [b'\n'];
-static SPACE: [u8; 1] = [b' '];
+// Removed unused static SPACE
 
 // Thread-local buffer
 thread_local! {

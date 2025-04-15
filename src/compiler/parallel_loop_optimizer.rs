@@ -9,7 +9,7 @@ use inkwell::context::Context;
 
 // Constants for parallel loop optimization
 const MIN_PARALLEL_SIZE: u64 = 1000; // Minimum size for parallel processing
-const LARGE_PARALLEL_THRESHOLD: u64 = 10000; // Threshold for large parallel loops
+// Removed unused constant LARGE_PARALLEL_THRESHOLD
 
 /// Parallel loop optimization helper functions
 pub struct ParallelLoopOptimizer<'ctx> {
@@ -49,7 +49,7 @@ impl<'ctx> ParallelLoopOptimizer<'ctx> {
         start_val: IntValue<'ctx>,
         end_val: IntValue<'ctx>,
         step_val: IntValue<'ctx>,
-        loop_var_ptr: BasicValueEnum<'ctx>,
+        _loop_var_ptr: BasicValueEnum<'ctx>, // Not used in parallel implementation
         body_block: BasicBlock<'ctx>,
         exit_block: BasicBlock<'ctx>,
     ) -> BasicBlock<'ctx> {

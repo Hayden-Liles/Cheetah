@@ -49,7 +49,7 @@ impl<'ctx> LoopOptimizer<'ctx> {
                 return range_size > MIN_CHUNK_SIZE;
             }
         }
-        
+
         // By default, don't chunk small loops for better performance
         false
     }
@@ -157,7 +157,7 @@ impl<'ctx> LoopOptimizer<'ctx> {
         } else {
             adjusted_size + (PARTIAL_UNROLL_FACTOR - remainder)
         };
-        
+
         size.max(MIN_CHUNK_SIZE)
     }
 
@@ -423,7 +423,7 @@ impl<'ctx> LoopOptimizer<'ctx> {
 
             // Convert to u64 for comparison with threshold
             let num_iterations_u64 = num_iterations as u64;
-            
+
             // Only fully unroll very small loops - this prevents code bloat
             if num_iterations_u64 <= UNROLL_THRESHOLD && num_iterations_u64 > 0 {
                 eprintln!("[LOOP UNROLL] Fully unrolling loop with {} iterations", num_iterations_u64);
@@ -510,7 +510,7 @@ impl<'ctx> LoopOptimizer<'ctx> {
 
                 // Position at the start of the new body block
                 self.builder.position_at_end(new_body_block);
-                
+
                 // Branch to the continuation block
                 self.builder.build_unconditional_branch(cont_block).unwrap();
             } else {
@@ -613,44 +613,44 @@ impl<'ctx> LoopOptimizer<'ctx> {
         ).unwrap();
 
         // Create unrolled iterations - this is the key to performance
-        let mut current_block = body_start_block;
-        
+        // No need to track current_block as we position the builder directly
+
         for i in 0..unroll_factor {
             // For each unrolled iteration, compute the current value
             let current_index = if i == 0 {
                 current_val
             } else {
                 let offset = self.builder.build_int_mul(
-                    step_val, 
+                    step_val,
                     i64_type.const_int(i, false),
                     &format!("offset_{}", i)
                 ).unwrap();
-                
+
                 self.builder.build_int_add(
                     current_val,
                     offset,
                     &format!("unrolled_val_{}", i)
                 ).unwrap()
             };
-            
+
             // Store the current iteration's value
             self.builder.build_store(loop_var_ptr.into_pointer_value(), current_index).unwrap();
-            
+
             // Branch to the body block
             let body_cont_block = self.context.append_basic_block(function, &format!("body_cont_{}", i));
-            
+
             self.builder.build_unconditional_branch(body_block).unwrap();
-            
+
             // Setup for continuation after the body
             self.builder.position_at_end(body_cont_block);
-            
+
             // If this is the last iteration, branch to increment block
             if i == unroll_factor - 1 {
                 self.builder.build_unconditional_branch(inc_block).unwrap();
             }
-            
-            // Update the current block for the next iteration
-            current_block = body_cont_block;
+
+            // Position at the continuation block for the next iteration
+            // No need to track current_block as we position the builder directly
         }
 
         // Increment block - increment by (unroll_factor * step) and branch back to header
@@ -658,7 +658,7 @@ impl<'ctx> LoopOptimizer<'ctx> {
 
         // Load the current value of the loop variable
         let current_val = self.builder.build_load(i64_type, loop_var_ptr.into_pointer_value(), "current_at_end").unwrap().into_int_value();
-        
+
         // Add the unrolled step to the loop variable
         let next_val = self.builder.build_int_add(current_val, unrolled_step, "next_unrolled").unwrap();
         self.builder.build_store(loop_var_ptr.into_pointer_value(), next_val).unwrap();

@@ -48,15 +48,8 @@ enum StmtTask<'a, 'ctx> {
         orelse: &'a [Box<Stmt>],
     },
 
-    // Continue a loop after executing the body
-    ContinueLoop {
-        index_ptr: inkwell::values::PointerValue<'ctx>,
-        cond_block: inkwell::basic_block::BasicBlock<'ctx>,
-        increment_block: inkwell::basic_block::BasicBlock<'ctx>,
-        else_block: inkwell::basic_block::BasicBlock<'ctx>,
-        end_block: inkwell::basic_block::BasicBlock<'ctx>,
-        orelse: &'a [Box<Stmt>],
-    },
+    // Removed unused variant ContinueLoop
+    // This was previously used for loop optimization but is no longer needed
 
     // Process a try statement
     ProcessTry {
@@ -1238,15 +1231,10 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
                     }
                 },
-                StmtTask::ContinueLoop { .. } => {
-                    // This should never happen because we're not using ContinueLoop anymore
-                    return Err("ContinueLoop task encountered but not implemented".to_string());
-                },
+                // Removed ContinueLoop variant case
 
-                // Handle any other task types that might be added in the future
-                _ => {
-                    return Err("Unhandled task type encountered".to_string());
-                },
+                // All task types are now handled above
+                // No need for a catch-all pattern
             }
         }
 

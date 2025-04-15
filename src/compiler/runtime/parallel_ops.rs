@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Constants for parallel processing
 const MIN_PARALLEL_SIZE: usize = 1000; // Minimum size for parallel processing
-const PARALLEL_CHUNK_SIZE: usize = 250; // Chunk size for parallel processing
+// Removed unused constant PARALLEL_CHUNK_SIZE
 
 // Global counters for parallel processing statistics
 static PARALLEL_OPERATIONS: AtomicUsize = AtomicUsize::new(0);
