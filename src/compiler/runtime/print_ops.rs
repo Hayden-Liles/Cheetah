@@ -146,10 +146,9 @@ pub extern "C" fn println_string(value: *const c_char) {
 pub extern "C" fn print_int(value: i64) {
     // CRITICAL: Use direct output to prevent stack overflow
     // This is the most reliable way to prevent stack overflows in large loops
-    print!("{}", value);
-    // Explicitly flush stdout to ensure output is visible
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
+    // Use println! instead of print! to add a newline after each integer
+    println!("{}", value);
+    // No need to explicitly flush as println! already flushes
 }
 
 /// Print a float to stdout (C-compatible wrapper)
