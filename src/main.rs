@@ -16,7 +16,7 @@ use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
-use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, memory_profiler, parallel_ops};
+use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, parallel_ops};
 use cheetah::parse;
 
 use inkwell::context;

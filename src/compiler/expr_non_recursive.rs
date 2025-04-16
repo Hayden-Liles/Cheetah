@@ -1072,16 +1072,53 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
     }
 
     fn compile_expr_fallback(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String> {
-        // Temporarily disable non-recursive mode to avoid infinite recursion
-        let old_flag = self.use_non_recursive_expr;
-        self.use_non_recursive_expr = false;
+        // Always use the original implementation directly
+        match expr {
+            Expr::ListComp { elt, generators, .. } => {
+                // Handle list comprehensions directly
+                self.compile_list_comprehension(elt, generators)
+            },
+            Expr::Call { func, args, .. } => {
+                // Special handling for range function with len() argument
+                if let Expr::Name { id, .. } = func.as_ref() {
+                    if id == "range" && args.len() == 1 {
+                        // Check if the argument is a call to len()
+                        if let Expr::Call { func: len_func, args: len_args, .. } = args[0].as_ref() {
+                            if let Expr::Name { id: len_id, .. } = len_func.as_ref() {
+                                if len_id == "len" && len_args.len() == 1 {
+                                    // This is range(len(list))
+                                    // First, compile the len() call
+                                    let args_slice: Vec<Expr> = len_args.iter().map(|arg| (**arg).clone()).collect();
+                                    let (len_val, _) = self.compile_len_call(&args_slice)?;
 
-        // Call the original implementation
-        let result = <Self as ExprCompiler>::compile_expr(self, expr);
+                                    // Then, use the len value as the argument to range_1
+                                    let range_1_fn = match self.module.get_function("range_1") {
+                                        Some(f) => f,
+                                        None => return Err("range_1 function not found".to_string()),
+                                    };
 
-        // Restore the flag
-        self.use_non_recursive_expr = old_flag;
+                                    // Call range_1 with the len value
+                                    let call_site_value = self.builder.build_call(
+                                        range_1_fn,
+                                        &[len_val.into()],
+                                        "range_1_result"
+                                    ).unwrap();
 
-        result
+                                    // Get the result
+                                    let range_val = call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to get range value".to_string())?;
+
+                                    return Ok((range_val, Type::Int));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // For other call expressions, use the original implementation
+                <Self as ExprCompiler>::compile_expr_original(self, expr)
+            },
+            _ => <Self as ExprCompiler>::compile_expr_original(self, expr)
+        }
     }
 }

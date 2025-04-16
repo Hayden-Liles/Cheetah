@@ -78,10 +78,8 @@ fn test_dict_comprehension_with_list_iteration() {
 # Create a list of numbers
 numbers = [1, 2, 3, 4, 5]
 
-# Create a dictionary manually
-data = {}
-for x in numbers:
-    data[x] = x*x
+# Create a dictionary using a comprehension
+data = {x: x*x for x in numbers}
 
 # Access some values
 value_1 = data[1]

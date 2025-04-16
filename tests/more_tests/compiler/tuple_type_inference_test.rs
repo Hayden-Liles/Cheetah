@@ -15,8 +15,7 @@ pub fn compile_source(source: &str) -> Result<String, String> {
     let context = Context::create();
     let mut compiler = Compiler::new(&context, "tuple_type_inference_test");
 
-    // Enable non-recursive expression compilation to avoid stack overflow
-    compiler.context.use_non_recursive_expr = true;
+    // Non-recursive implementations are always used
 
     // Register string operations
     compiler.context.module.add_function(

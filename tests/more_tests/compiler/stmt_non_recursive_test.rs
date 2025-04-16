@@ -15,9 +15,7 @@ pub fn compile_source(source: &str) -> Result<String, String> {
     let context = Context::create();
     let mut compiler = Compiler::new(&context, "test_module");
 
-    // Explicitly set the non-recursive flags to true
-    compiler.context.use_non_recursive_expr = true;
-    compiler.context.use_non_recursive_stmt = true;
+    // Non-recursive implementations are always used
 
     // Compile the AST
     match compiler.compile_module(&ast) {

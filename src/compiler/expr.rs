@@ -113,13 +113,9 @@ pub trait ComparisonCompiler<'ctx> {
 
 impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     fn compile_expr(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        // Use the non-recursive implementation to avoid stack overflow if the flag is set
-        if self.use_non_recursive_expr {
-            use crate::compiler::expr_non_recursive::ExprNonRecursive;
-            self.compile_expr_non_recursive(expr)
-        } else {
-            self.compile_expr_original(expr)
-        }
+        // Always use the non-recursive implementation to avoid stack overflow
+        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+        self.compile_expr_non_recursive(expr)
     }
 
     // Original recursive implementation - kept for reference
@@ -1343,25 +1339,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     }
                 };
 
-                // Special handling for tuple types
-                let final_element_type = match &element_type {
-                    Type::Tuple(elements) => {
-                        // For tuples, extract the element type if all elements are the same
-                        if !elements.is_empty() && elements.iter().all(|t| t == &elements[0]) {
-                            println!("All tuple elements have the same type: {:?}", elements[0]);
-                            elements[0].clone()
-                        } else {
-                            // If tuple elements have different types, use the tuple type
-                            element_type.clone()
-                        }
-                    },
-                    _ => element_type.clone()
-                };
+                // Use the element type directly without any special handling for tuples
+                let final_element_type = element_type.clone();
 
                 println!("Final list element type: {:?}", final_element_type);
 
-                // Build the list
-                let list_ptr = self.build_list(element_values, &element_type)?;
+                // Build the list - use the final_element_type instead of element_type
+                let list_ptr = self.build_list(element_values, &final_element_type)?;
 
                 Ok((list_ptr.into(), Type::List(Box::new(final_element_type))))
             },
@@ -1527,7 +1511,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         };
 
         for (i, element) in elements.iter().enumerate() {
-            // Convert the element to a pointer if needed
+            // Handle the element based on its type
             let element_ptr = if crate::compiler::types::is_reference_type(element_type) {
                 *element
             } else {
@@ -1679,11 +1663,26 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                 // Load the value from the pointer
                 let element_type_ref = element_type.as_ref();
-                let llvm_type = self.get_llvm_type(element_type_ref);
+
+                // If the element type is a tuple, extract the element type if all elements are the same
+                let actual_element_type = match element_type_ref {
+                    Type::Tuple(tuple_element_types) => {
+                        if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
+                            // All tuple elements have the same type, use that type
+                            tuple_element_types[0].clone()
+                        } else {
+                            // Keep the original type
+                            element_type_ref.clone()
+                        }
+                    },
+                    _ => element_type_ref.clone()
+                };
+
+                let llvm_type = self.get_llvm_type(&actual_element_type);
                 let item_val = self.builder.build_load(llvm_type, item_ptr, "list_item_load").unwrap();
 
                 // Return the item and its type
-                Ok((item_val, element_type_ref.clone()))
+                Ok((item_val, actual_element_type))
             },
             Type::Dict(key_type, value_type) => {
                 // Special case for Unknown key type - allow any index type
@@ -2636,675 +2635,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
     /// Compile a list comprehension expression
     fn compile_list_comprehension(&mut self, elt: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        // Use the non-recursive implementation to avoid stack overflow if the flag is set
-        if self.use_non_recursive_expr {
-            return self.compile_list_comprehension_non_recursive(elt, generators);
-        }
-        if generators.is_empty() {
-            return Err("List comprehension must have at least one generator".to_string());
-        }
-
-        // Create an empty list to store the results
-        let result_list = self.build_empty_list("list_comp_result")?;
-
-        // Get the list_append function
-        let list_append_fn = match self.module.get_function("list_append") {
-            Some(f) => f,
-            None => return Err("list_append function not found".to_string()),
-        };
-
-        // Create a new scope for the list comprehension
-        self.scope_stack.push_scope(false, false, false);
-
-        // Compile the first generator
-        let generator = &generators[0];
-
-        // Compile the iterable expression
-        let (iter_val, iter_type) = self.compile_expr(&generator.iter)?;
-
-        // Special case for range function
-        if let Expr::Call { func, .. } = &*generator.iter {
-            if let Expr::Name { id, .. } = func.as_ref() {
-                if id == "range" {
-                    // For range, we need to create a loop from 0 to the range value
-                    let range_val = iter_val.into_int_value();
-
-                    // Create basic blocks for the loop
-                    let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                    let loop_entry_block = self.llvm_context.append_basic_block(current_function, "range_comp_entry");
-                    let loop_body_block = self.llvm_context.append_basic_block(current_function, "range_comp_body");
-                    let loop_exit_block = self.llvm_context.append_basic_block(current_function, "range_comp_exit");
-
-                    // Create an index variable
-                    let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "range_comp_index").unwrap();
-                    self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
-
-                    // Branch to the loop entry
-                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                    // Loop entry block - check if we've reached the end of the range
-                    self.builder.position_at_end(loop_entry_block);
-                    let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
-                    let condition = self.builder.build_int_compare(
-                        inkwell::IntPredicate::SLT,
-                        current_index,
-                        range_val,
-                        "loop_condition"
-                    ).unwrap();
-
-                    self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
-
-                    // Loop body block - process the current index
-                    self.builder.position_at_end(loop_body_block);
-
-                    // Bind the target variable to the current index
-                    match generator.target.as_ref() {
-                        Expr::Name { id, .. } => {
-                            // Declare the target variable in the current scope
-                            let index_alloca = self.builder.build_alloca(self.llvm_context.i64_type(), "range_index_alloca").unwrap();
-                            self.builder.build_store(index_alloca, current_index).unwrap();
-                            self.scope_stack.add_variable(id.to_string(), index_alloca, Type::Int);
-                        },
-                        _ => return Err("Only simple variable targets are supported in list comprehensions".to_string()),
-                    }
-
-                    // Check if there are any conditions (if clauses)
-                    let mut should_append = self.llvm_context.bool_type().const_int(1, false);
-
-                    for if_expr in &generator.ifs {
-                        // Compile the condition
-                        let (cond_val, cond_type) = self.compile_expr(if_expr)?;
-
-                        // Convert to boolean if needed
-                        let cond_bool = if cond_type != Type::Bool {
-                            self.convert_type(cond_val, &cond_type, &Type::Bool)?.into_int_value()
-                        } else {
-                            cond_val.into_int_value()
-                        };
-
-                        // AND with the current condition
-                        should_append = self.builder.build_and(should_append, cond_bool, "if_condition").unwrap();
-                    }
-
-                    // Create a conditional branch based on the conditions
-                    let then_block = self.llvm_context.append_basic_block(current_function, "range_comp_then");
-                    let continue_block = self.llvm_context.append_basic_block(current_function, "range_comp_continue");
-
-                    self.builder.build_conditional_branch(should_append, then_block, continue_block).unwrap();
-
-                    // Then block - compile the element expression and append to the result list
-                    self.builder.position_at_end(then_block);
-
-                    // Compile the element expression
-                    let (element_val, element_type) = self.compile_expr(elt)?;
-
-                    // Convert the element to a pointer if needed
-                    let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
-                        element_val.into_pointer_value()
-                    } else {
-                        // For non-reference types, we need to allocate memory and store the value
-                        let element_alloca = self.builder.build_alloca(
-                            element_val.get_type(),
-                            "range_comp_element"
-                        ).unwrap();
-                        self.builder.build_store(element_alloca, element_val).unwrap();
-                        element_alloca
-                    };
-
-                    // Append the element to the result list
-                    self.builder.build_call(
-                        list_append_fn,
-                        &[result_list.into(), element_ptr.into()],
-                        "list_append_result"
-                    ).unwrap();
-
-                    self.builder.build_unconditional_branch(continue_block).unwrap();
-
-                    // Continue block - increment the index and continue the loop
-                    self.builder.position_at_end(continue_block);
-
-                    // Increment the index
-                    let next_index = self.builder.build_int_add(
-                        current_index,
-                        self.llvm_context.i64_type().const_int(1, false),
-                        "next_index"
-                    ).unwrap();
-
-                    self.builder.build_store(index_ptr, next_index).unwrap();
-
-                    // Branch back to the loop entry
-                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                    // Exit block - return the result list
-                    self.builder.position_at_end(loop_exit_block);
-
-                    // Pop the scope for the list comprehension
-                    self.scope_stack.pop_scope();
-
-                    // Return the result list
-                    return Ok((result_list.into(), Type::List(Box::new(Type::Unknown))));
-                }
-            }
-        }
-
-        // Check if the iterable is a list, string, or range
-        match iter_type {
-            Type::List(_) => {
-                // Get the list length
-                let list_len_fn = match self.module.get_function("list_len") {
-                    Some(f) => f,
-                    None => return Err("list_len function not found".to_string()),
-                };
-
-                let list_ptr = iter_val.into_pointer_value();
-                let call_site_value = self.builder.build_call(
-                    list_len_fn,
-                    &[list_ptr.into()],
-                    "list_len_result"
-                ).unwrap();
-
-                let list_len = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to get list length".to_string())?;
-
-                // Create a loop to iterate over the list
-                let list_get_fn = match self.module.get_function("list_get") {
-                    Some(f) => f,
-                    None => return Err("list_get function not found".to_string()),
-                };
-
-                // Create basic blocks for the loop
-                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                let loop_entry_block = self.llvm_context.append_basic_block(current_function, "list_comp_entry");
-                let loop_body_block = self.llvm_context.append_basic_block(current_function, "list_comp_body");
-                let loop_exit_block = self.llvm_context.append_basic_block(current_function, "list_comp_exit");
-
-                // Create an index variable
-                let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "list_comp_index").unwrap();
-                self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
-
-                // Branch to the loop entry
-                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                // Loop entry block - check if we've reached the end of the list
-                self.builder.position_at_end(loop_entry_block);
-                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
-                let condition = self.builder.build_int_compare(
-                    inkwell::IntPredicate::SLT,
-                    current_index,
-                    list_len.into_int_value(),
-                    "loop_condition"
-                ).unwrap();
-
-                self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
-
-                // Loop body block - get the current element and process it
-                self.builder.position_at_end(loop_body_block);
-
-                // Get the current element from the list
-                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
-                let call_site_value = self.builder.build_call(
-                    list_get_fn,
-                    &[list_ptr.into(), current_index.into()],
-                    "list_get_result"
-                ).unwrap();
-
-                let element_ptr = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to get list element".to_string())?;
-
-                // Bind the target variable to the current element
-                match generator.target.as_ref() {
-                    Expr::Name { id, .. } => {
-                        // Declare the target variable in the current scope
-                        let element_type = match &iter_type {
-                            Type::List(element_type) => {
-                                // If the element type is a tuple, we need to extract the element type
-                                // This is a workaround for the case where a list literal [1, 2, 3, 4, 5]
-                                // is treated as a list of a tuple of integers
-                                match element_type.as_ref() {
-                                    Type::Tuple(tuple_types) if tuple_types.len() > 0 => {
-                                        // All elements in the tuple should be of the same type
-                                        // So we can just use the first one
-                                        println!("List comprehension: Using first element of tuple: {:?}", tuple_types[0]);
-                                        tuple_types[0].clone()
-                                    },
-                                    _ => {
-                                        println!("List comprehension: Using element type: {:?}", element_type.as_ref());
-                                        element_type.as_ref().clone()
-                                    },
-                                }
-                            },
-                            Type::Tuple(tuple_types) if !tuple_types.is_empty() => {
-                                // For a tuple of elements, use the first element type
-                                println!("List comprehension: Using first element of tuple directly: {:?}", tuple_types[0]);
-                                tuple_types[0].clone()
-                            },
-                            _ => {
-                                println!("List comprehension: Unknown iterable type: {:?}, using Int", iter_type);
-                                Type::Int
-                            },
-                        };
-
-                        println!("List comprehension: Setting variable '{}' to type: {:?}", id, element_type);
-                        // Store the element in the target variable
-                        self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), element_type);
-                    },
-                    _ => return Err("Only simple variable targets are supported in list comprehensions".to_string()),
-                }
-
-                // Check if there are any conditions (if clauses)
-                let mut should_append = self.llvm_context.bool_type().const_int(1, false);
-
-                for if_expr in &generator.ifs {
-                    // Compile the condition
-                    let (cond_val, cond_type) = self.compile_expr(if_expr)?;
-
-                    // Convert to boolean if needed
-                    let cond_bool = if cond_type != Type::Bool {
-                        self.convert_type(cond_val, &cond_type, &Type::Bool)?.into_int_value()
-                    } else {
-                        cond_val.into_int_value()
-                    };
-
-                    // AND with the current condition
-                    should_append = self.builder.build_and(should_append, cond_bool, "if_condition").unwrap();
-                }
-
-                // Create a conditional branch based on the conditions
-                let then_block = self.llvm_context.append_basic_block(current_function, "list_comp_then");
-                let continue_block = self.llvm_context.append_basic_block(current_function, "list_comp_continue");
-
-                self.builder.build_conditional_branch(should_append, then_block, continue_block).unwrap();
-
-                // Then block - compile the element expression and append to the result list
-                self.builder.position_at_end(then_block);
-
-                // Compile the element expression
-                let (element_val, element_type) = self.compile_expr(elt)?;
-
-                // Convert the element to a pointer if needed
-                let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
-                    element_val.into_pointer_value()
-                } else {
-                    // For non-reference types, we need to allocate memory and store the value
-                    let element_alloca = self.builder.build_alloca(
-                        element_val.get_type(),
-                        "list_comp_element"
-                    ).unwrap();
-                    self.builder.build_store(element_alloca, element_val).unwrap();
-                    element_alloca
-                };
-
-                // Append the element to the result list
-                self.builder.build_call(
-                    list_append_fn,
-                    &[result_list.into(), element_ptr.into()],
-                    "list_append_result"
-                ).unwrap();
-
-                self.builder.build_unconditional_branch(continue_block).unwrap();
-
-                // Continue block - increment the index and continue the loop
-                self.builder.position_at_end(continue_block);
-
-                // Increment the index
-                let next_index = self.builder.build_int_add(
-                    current_index,
-                    self.llvm_context.i64_type().const_int(1, false),
-                    "next_index"
-                ).unwrap();
-
-                self.builder.build_store(index_ptr, next_index).unwrap();
-
-                // Branch back to the loop entry
-                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                // Exit block - return the result list
-                self.builder.position_at_end(loop_exit_block);
-            },
-            Type::String => {
-                // Get the string length
-                let string_len_fn = match self.module.get_function("string_len") {
-                    Some(f) => f,
-                    None => return Err("string_len function not found".to_string()),
-                };
-
-                let string_ptr = iter_val.into_pointer_value();
-                let call_site_value = self.builder.build_call(
-                    string_len_fn,
-                    &[string_ptr.into()],
-                    "string_len_result"
-                ).unwrap();
-
-                let string_len = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to get string length".to_string())?;
-
-                // Create a loop to iterate over the string
-                let string_get_fn = match self.module.get_function("string_get_char") {
-                    Some(f) => f,
-                    None => return Err("string_get_char function not found".to_string()),
-                };
-
-                // Create basic blocks for the loop
-                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                let loop_entry_block = self.llvm_context.append_basic_block(current_function, "string_comp_entry");
-                let loop_body_block = self.llvm_context.append_basic_block(current_function, "string_comp_body");
-                let loop_exit_block = self.llvm_context.append_basic_block(current_function, "string_comp_exit");
-
-                // Create an index variable
-                let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "string_comp_index").unwrap();
-                self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
-
-                // Branch to the loop entry
-                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                // Loop entry block - check if we've reached the end of the string
-                self.builder.position_at_end(loop_entry_block);
-                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
-                let condition = self.builder.build_int_compare(
-                    inkwell::IntPredicate::SLT,
-                    current_index,
-                    string_len.into_int_value(),
-                    "loop_condition"
-                ).unwrap();
-
-                self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
-
-                // Loop body block - get the current character and process it
-                self.builder.position_at_end(loop_body_block);
-
-                // Get the current character from the string
-                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
-                let call_site_value = self.builder.build_call(
-                    string_get_fn,
-                    &[string_ptr.into(), current_index.into()],
-                    "string_get_result"
-                ).unwrap();
-
-                let char_val = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to get string character".to_string())?;
-
-                // Allocate memory for the character
-                let char_ptr = self.builder.build_alloca(char_val.get_type(), "char_ptr").unwrap();
-                self.builder.build_store(char_ptr, char_val).unwrap();
-
-                // Bind the target variable to the current character
-                match generator.target.as_ref() {
-                    Expr::Name { id, .. } => {
-                        // Declare the target variable in the current scope
-                        self.scope_stack.add_variable(id.to_string(), char_ptr, Type::String);
-                    },
-                    _ => return Err("Only simple variable targets are supported in list comprehensions".to_string()),
-                }
-
-                // Check if there are any conditions (if clauses)
-                let mut should_append = self.llvm_context.bool_type().const_int(1, false);
-
-                for if_expr in &generator.ifs {
-                    // Compile the condition
-                    let (cond_val, cond_type) = self.compile_expr(if_expr)?;
-
-                    // Convert to boolean if needed
-                    let cond_bool = if cond_type != Type::Bool {
-                        self.convert_type(cond_val, &cond_type, &Type::Bool)?.into_int_value()
-                    } else {
-                        cond_val.into_int_value()
-                    };
-
-                    // AND with the current condition
-                    should_append = self.builder.build_and(should_append, cond_bool, "if_condition").unwrap();
-                }
-
-                // Create a conditional branch based on the conditions
-                let then_block = self.llvm_context.append_basic_block(current_function, "string_comp_then");
-                let continue_block = self.llvm_context.append_basic_block(current_function, "string_comp_continue");
-
-                self.builder.build_conditional_branch(should_append, then_block, continue_block).unwrap();
-
-                // Then block - compile the element expression and append to the result list
-                self.builder.position_at_end(then_block);
-
-                // Compile the element expression
-                let (element_val, element_type) = self.compile_expr(elt)?;
-
-                // Convert the element to a pointer if needed
-                let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
-                    element_val.into_pointer_value()
-                } else {
-                    // For non-reference types, we need to allocate memory and store the value
-                    let element_alloca = self.builder.build_alloca(
-                        element_val.get_type(),
-                        "string_comp_element"
-                    ).unwrap();
-                    self.builder.build_store(element_alloca, element_val).unwrap();
-                    element_alloca
-                };
-
-                // Append the element to the result list
-                self.builder.build_call(
-                    list_append_fn,
-                    &[result_list.into(), element_ptr.into()],
-                    "list_append_result"
-                ).unwrap();
-
-                self.builder.build_unconditional_branch(continue_block).unwrap();
-
-                // Continue block - increment the index and continue the loop
-                self.builder.position_at_end(continue_block);
-
-                // Increment the index
-                let next_index = self.builder.build_int_add(
-                    current_index,
-                    self.llvm_context.i64_type().const_int(1, false),
-                    "next_index"
-                ).unwrap();
-
-                self.builder.build_store(index_ptr, next_index).unwrap();
-
-                // Branch back to the loop entry
-                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                // Exit block - return the result list
-                self.builder.position_at_end(loop_exit_block);
-            },
-            // For now, we'll only support lists and strings
-            // Type::Range would be implemented here if we had a Range type
-            Type::Int | Type::Float | Type::Bool | Type::Tuple(_) | Type::Dict(_, _) | Type::None | Type::Unknown | Type::Any => {
-                // For range objects, we need to get the start, stop, and step values
-                // This is a simplified implementation that assumes the range is already created
-                // and we're just iterating over it
-
-                // Create basic blocks for the loop
-                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                let loop_entry_block = self.llvm_context.append_basic_block(current_function, "range_comp_entry");
-                let loop_body_block = self.llvm_context.append_basic_block(current_function, "range_comp_body");
-                let loop_exit_block = self.llvm_context.append_basic_block(current_function, "range_comp_exit");
-
-                // Get the range parameters (start, stop, step)
-                let range_ptr = iter_val.into_pointer_value();
-
-                // Load the start value (first field of the range struct)
-                let range_struct_type = self.llvm_context.struct_type(&[
-                    self.llvm_context.i64_type().into(),
-                    self.llvm_context.i64_type().into(),
-                    self.llvm_context.i64_type().into(),
-                ], false);
-
-                let start_ptr = self.builder.build_struct_gep(
-                    range_struct_type,
-                    range_ptr,
-                    0,
-                    "range_start_ptr"
-                ).unwrap();
-
-                let start_val = self.builder.build_load(
-                    self.llvm_context.i64_type(),
-                    start_ptr,
-                    "range_start"
-                ).unwrap().into_int_value();
-
-                // Load the stop value (second field of the range struct)
-                let stop_ptr = self.builder.build_struct_gep(
-                    range_struct_type,
-                    range_ptr,
-                    1,
-                    "range_stop_ptr"
-                ).unwrap();
-
-                let stop_val = self.builder.build_load(
-                    self.llvm_context.i64_type(),
-                    stop_ptr,
-                    "range_stop"
-                ).unwrap().into_int_value();
-
-                // Load the step value (third field of the range struct)
-                let step_ptr = self.builder.build_struct_gep(
-                    range_struct_type,
-                    range_ptr,
-                    2,
-                    "range_step_ptr"
-                ).unwrap();
-
-                let step_val = self.builder.build_load(
-                    self.llvm_context.i64_type(),
-                    step_ptr,
-                    "range_step"
-                ).unwrap().into_int_value();
-
-                // Create an index variable
-                let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "range_comp_index").unwrap();
-                self.builder.build_store(index_ptr, start_val).unwrap();
-
-                // Branch to the loop entry
-                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                // Loop entry block - check if we've reached the end of the range
-                self.builder.position_at_end(loop_entry_block);
-                let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
-
-                // Check if step is positive or negative to determine the comparison
-                let step_positive = self.builder.build_int_compare(
-                    inkwell::IntPredicate::SGT,
-                    step_val,
-                    self.llvm_context.i64_type().const_int(0, true),
-                    "step_positive"
-                ).unwrap();
-
-                // If step is positive, check if current < stop, otherwise check if current > stop
-                let positive_condition = self.builder.build_int_compare(
-                    inkwell::IntPredicate::SLT,
-                    current_index,
-                    stop_val,
-                    "positive_condition"
-                ).unwrap();
-
-                let negative_condition = self.builder.build_int_compare(
-                    inkwell::IntPredicate::SGT,
-                    current_index,
-                    stop_val,
-                    "negative_condition"
-                ).unwrap();
-
-                let condition = self.builder.build_select(
-                    step_positive,
-                    positive_condition,
-                    negative_condition,
-                    "loop_condition"
-                ).unwrap().into_int_value();
-
-                self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
-
-                // Loop body block - process the current index
-                self.builder.position_at_end(loop_body_block);
-
-                // Bind the target variable to the current index
-                match generator.target.as_ref() {
-                    Expr::Name { id, .. } => {
-                        // Declare the target variable in the current scope
-                        let index_alloca = self.builder.build_alloca(self.llvm_context.i64_type(), "range_index_alloca").unwrap();
-                        self.builder.build_store(index_alloca, current_index).unwrap();
-                        self.scope_stack.add_variable(id.to_string(), index_alloca, Type::Int);
-                    },
-                    _ => return Err("Only simple variable targets are supported in list comprehensions".to_string()),
-                }
-
-                // Check if there are any conditions (if clauses)
-                let mut should_append = self.llvm_context.bool_type().const_int(1, false);
-
-                for if_expr in &generator.ifs {
-                    // Compile the condition
-                    let (cond_val, cond_type) = self.compile_expr(if_expr)?;
-
-                    // Convert to boolean if needed
-                    let cond_bool = if cond_type != Type::Bool {
-                        self.convert_type(cond_val, &cond_type, &Type::Bool)?.into_int_value()
-                    } else {
-                        cond_val.into_int_value()
-                    };
-
-                    // AND with the current condition
-                    should_append = self.builder.build_and(should_append, cond_bool, "if_condition").unwrap();
-                }
-
-                // Create a conditional branch based on the conditions
-                let then_block = self.llvm_context.append_basic_block(current_function, "range_comp_then");
-                let continue_block = self.llvm_context.append_basic_block(current_function, "range_comp_continue");
-
-                self.builder.build_conditional_branch(should_append, then_block, continue_block).unwrap();
-
-                // Then block - compile the element expression and append to the result list
-                self.builder.position_at_end(then_block);
-
-                // Compile the element expression
-                let (element_val, element_type) = self.compile_expr(elt)?;
-
-                // Convert the element to a pointer if needed
-                let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
-                    element_val.into_pointer_value()
-                } else {
-                    // For non-reference types, we need to allocate memory and store the value
-                    let element_alloca = self.builder.build_alloca(
-                        element_val.get_type(),
-                        "range_comp_element"
-                    ).unwrap();
-                    self.builder.build_store(element_alloca, element_val).unwrap();
-                    element_alloca
-                };
-
-                // Append the element to the result list
-                self.builder.build_call(
-                    list_append_fn,
-                    &[result_list.into(), element_ptr.into()],
-                    "list_append_result"
-                ).unwrap();
-
-                self.builder.build_unconditional_branch(continue_block).unwrap();
-
-                // Continue block - increment the index and continue the loop
-                self.builder.position_at_end(continue_block);
-
-                // Increment the index by the step value
-                let next_index = self.builder.build_int_add(
-                    current_index,
-                    step_val,
-                    "next_index"
-                ).unwrap();
-
-                self.builder.build_store(index_ptr, next_index).unwrap();
-
-                // Branch back to the loop entry
-                self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                // Exit block - return the result list
-                self.builder.position_at_end(loop_exit_block);
-            },
-            _ => return Err(format!("Cannot iterate over value of type {:?}", iter_type)),
-        }
-
-        // Pop the scope for the list comprehension
-        self.scope_stack.pop_scope();
-
-        // Return the result list
-        Ok((result_list.into(), Type::List(Box::new(Type::Unknown))))
+        // Always use the non-recursive implementation to avoid stack overflow
+        self.compile_list_comprehension_non_recursive(elt, generators)
     }
 
     fn compile_list_comprehension_non_recursive(
@@ -3418,7 +2750,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                 if all_same {
                     // If all elements are the same type, use that type
-                    println!("All list literal elements have the same type: {:?}", first_type);
+                    println!("All list elements have the same type: {:?}", first_type);
                     first_type.clone()
                 } else {
                     // If elements have different types, find a common type
@@ -3467,21 +2799,135 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         list_append_fn
                     )?;
                 },
-                Type::Tuple(_) => {
-                    // For tuples, convert to a list first
-                    println!("Converting tuple to list for iteration");
+                Type::Tuple(element_types) => {
+                    // For tuples, we need to handle them directly
+                    println!("Handling tuple iteration directly");
 
-                    // Create a temporary list variable
-                    let temp_list = self.build_empty_list("temp_list_from_tuple")?;
+                    // Get the tuple elements
+                    let tuple_ptr = iter_val.into_pointer_value();
 
-                    // Now handle the list iteration
-                    self.handle_list_iteration_for_comprehension(
-                        elt,
-                        generator,
-                        temp_list,
-                        result_list,
-                        list_append_fn
-                    )?;
+                    // Create basic blocks for the loop
+                    let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                    let loop_entry_block = self.llvm_context.append_basic_block(current_function, "tuple_comp_entry");
+                    let loop_body_block = self.llvm_context.append_basic_block(current_function, "tuple_comp_body");
+                    let loop_exit_block = self.llvm_context.append_basic_block(current_function, "tuple_comp_exit");
+
+                    // Create an index variable
+                    let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "tuple_comp_index").unwrap();
+                    self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
+
+                    // Branch to the loop entry
+                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                    // Loop entry block - check if we've reached the end of the tuple
+                    self.builder.position_at_end(loop_entry_block);
+                    let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
+                    let tuple_len = self.llvm_context.i64_type().const_int(element_types.len() as u64, false);
+                    let condition = self.builder.build_int_compare(
+                        inkwell::IntPredicate::SLT,
+                        current_index,
+                        tuple_len,
+                        "loop_condition"
+                    ).unwrap();
+
+                    self.builder.build_conditional_branch(condition, loop_body_block, loop_exit_block).unwrap();
+
+                    // Loop body block - get the current element and process it
+                    self.builder.position_at_end(loop_body_block);
+
+                    // Create a switch to handle different indices
+                    let default_block = self.llvm_context.append_basic_block(current_function, "tuple_default");
+                    let merge_block = self.llvm_context.append_basic_block(current_function, "tuple_merge");
+
+                    // Create blocks for each tuple element
+                    let mut case_blocks = Vec::with_capacity(element_types.len());
+                    for i in 0..element_types.len() {
+                        case_blocks.push(self.llvm_context.append_basic_block(current_function, &format!("tuple_case_{}", i)));
+                    }
+
+                    // Create a switch instruction
+                    let _switch = self.builder.build_switch(
+                        current_index,
+                        default_block,
+                        &case_blocks.iter().enumerate()
+                            .map(|(i, block)| (self.llvm_context.i64_type().const_int(i as u64, false), *block))
+                            .collect::<Vec<_>>()
+                    ).unwrap();
+
+                    // Get the LLVM tuple type
+                    let llvm_types: Vec<BasicTypeEnum> = element_types.iter()
+                        .map(|ty| self.get_llvm_type(ty))
+                        .collect();
+
+                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+
+                    // Handle each case
+                    for (i, &block) in case_blocks.iter().enumerate() {
+                        self.builder.position_at_end(block);
+
+                        // Get the element from the tuple
+                        let element_ptr = self.builder.build_struct_gep(
+                            tuple_struct,
+                            tuple_ptr,
+                            i as u32,
+                            &format!("tuple_element_{}", i)
+                        ).unwrap();
+
+                        // Load the element
+                        let element_type = &element_types[i];
+                        let element_val = self.builder.build_load(
+                            self.get_llvm_type(element_type),
+                            element_ptr,
+                            &format!("load_tuple_element_{}", i)
+                        ).unwrap();
+
+                        // Allocate memory for the element
+                        let element_alloca = self.builder.build_alloca(
+                            element_val.get_type(),
+                            &format!("tuple_element_alloca_{}", i)
+                        ).unwrap();
+                        self.builder.build_store(element_alloca, element_val).unwrap();
+
+                        // Bind the target variable to the current element
+                        if let Expr::Name { id, .. } = generator.target.as_ref() {
+                            // Add the variable to the scope
+                            self.scope_stack.add_variable(id.to_string(), element_alloca, element_type.clone());
+
+                            // Check if all conditions are met
+                            let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
+
+                            // Process the element
+                            self.process_list_comprehension_element(
+                                elt,
+                                should_append,
+                                result_list,
+                                list_append_fn,
+                                current_function
+                            )?;
+                        } else {
+                            return Err("Only simple variable targets are supported in list comprehensions".to_string());
+                        }
+
+                        // Branch to the merge block
+                        self.builder.build_unconditional_branch(merge_block).unwrap();
+                    }
+
+                    // Default block - just branch to merge
+                    self.builder.position_at_end(default_block);
+                    self.builder.build_unconditional_branch(merge_block).unwrap();
+
+                    // Merge block - increment index and continue
+                    self.builder.position_at_end(merge_block);
+                    let next_index = self.builder.build_int_add(
+                        current_index,
+                        self.llvm_context.i64_type().const_int(1, false),
+                        "next_index"
+                    ).unwrap();
+                    self.builder.build_store(index_ptr, next_index).unwrap();
+                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+                    // Exit block
+                    self.builder.position_at_end(loop_exit_block);
                 },
                 Type::String => {
                     self.handle_string_iteration_for_comprehension(
@@ -3518,10 +2964,24 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Bind the target variable to a dummy value for type inference
         if let Expr::Name { id, .. } = generator.target.as_ref() {
             // Create a dummy variable of the appropriate type
-            let dummy_type = match &iter_type_original {
+            let mut dummy_type = match &iter_type_original {
                 Type::List(elem_type) => *elem_type.clone(),
                 Type::String => Type::String,
                 _ => Type::Int, // Default to Int for range and other types
+            };
+
+            // If the dummy type is a tuple, extract the element type if all elements are the same
+            dummy_type = match &dummy_type {
+                Type::Tuple(tuple_element_types) => {
+                    if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
+                        // All tuple elements have the same type, use that type
+                        tuple_element_types[0].clone()
+                    } else {
+                        // If tuple elements have different types, use Int as a fallback
+                        Type::Int
+                    }
+                },
+                _ => dummy_type
             };
 
             // Allocate space for the dummy variable
@@ -3687,49 +3147,123 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         let element_ptr = call_site_value.try_as_basic_value().left()
             .ok_or_else(|| "Failed to get list element".to_string())?;
 
-        // Bind the target variable to the current element
-        if let Expr::Name { id, .. } = generator.target.as_ref() {
-            // Determine the element type based on the list type
-            let element_type = match self.lookup_variable_type(&generator.iter.to_string()) {
-                Some(Type::List(element_type)) => *element_type.clone(),
-                Some(Type::Tuple(elements)) => {
-                    // For tuples, we need to extract the element type
-                    // If all elements have the same type, use that type
-                    if !elements.is_empty() && elements.iter().all(|t| t == &elements[0]) {
-                        elements[0].clone()
-                    } else {
-                        // Default to Int if we can't determine a common type
-                        Type::Int
-                    }
-                },
-                _ => {
-                    // If we can't determine the type from the variable, try to infer it
-                    // Check if the iterator is a list literal
-                    if let Expr::List { elts, .. } = &*generator.iter {
-                        if !elts.is_empty() {
-                            // Compile the first element to determine its type
-                            if let Ok((_, element_type)) = self.compile_expr(&elts[0]) {
-                                element_type
-                            } else {
-                                // Default to Int if we can't determine the element type
-                                Type::Int
+        // Determine the element type based on the list type
+        let element_type = match self.lookup_variable_type(&generator.iter.to_string()) {
+            Some(Type::List(element_type)) => {
+                // For list types, use the element type directly
+                *element_type.clone()
+            },
+            _ => {
+                // If we can't determine the type from the variable, try to infer it
+                // Check if the iterator is a list literal
+                if let Expr::List { elts, .. } = &*generator.iter {
+                    if !elts.is_empty() {
+                        // Compile the first element to determine its type
+                        if let Ok((_, element_type)) = self.compile_expr(&elts[0]) {
+                            // If the element type is a tuple, extract the element type if all elements are the same
+                            match &element_type {
+                                Type::Tuple(tuple_element_types) => {
+                                    if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
+                                        // All tuple elements have the same type, use that type
+                                        tuple_element_types[0].clone()
+                                    } else {
+                                        // If tuple elements have different types, use Int as a fallback
+                                        Type::Int
+                                    }
+                                },
+                                _ => element_type
                             }
                         } else {
-                            // Empty list, default to Int
+                            // Default to Int if we can't determine the element type
                             Type::Int
                         }
                     } else {
-                        // For now, default to Int which is common
+                        // Empty list, default to Int
                         Type::Int
                     }
+                } else {
+                    // For now, default to Int which is common
+                    Type::Int
                 }
-            };
+            }
+        };
 
-            // Store the element in the target variable with the correct type
-            println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
-            self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), element_type.clone());
-        } else {
-            return Err("Only simple variable targets are supported in list comprehensions".to_string());
+        // If the element type is a tuple, extract the element type if all elements are the same
+        let element_type = match &element_type {
+            Type::Tuple(tuple_element_types) => {
+                if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
+                    // All tuple elements have the same type, use that type
+                    tuple_element_types[0].clone()
+                } else {
+                    // If tuple elements have different types, use Int as a fallback
+                    Type::Int
+                }
+            },
+            _ => element_type
+        };
+
+        // Handle the target variable based on its type
+        match generator.target.as_ref() {
+            Expr::Name { id, .. } => {
+                // Simple variable target - just bind the element directly
+                println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
+                self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), element_type.clone());
+            },
+            Expr::Tuple { elts, .. } => {
+                // Tuple unpacking - only supported for tuple elements
+                if let Type::Tuple(tuple_element_types) = &element_type {
+                    // Check if the number of elements match
+                    if elts.len() != tuple_element_types.len() {
+                        return Err(format!("Tuple unpacking mismatch: expected {} elements, got {}",
+                                          elts.len(), tuple_element_types.len()));
+                    }
+
+                    // Get the LLVM tuple type
+                    let llvm_types: Vec<BasicTypeEnum> = tuple_element_types.iter()
+                        .map(|ty| self.get_llvm_type(ty))
+                        .collect();
+
+                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+                    let tuple_ptr = element_ptr.into_pointer_value();
+
+                    // Unpack each element and bind it to the corresponding target
+                    for (i, target_elt) in elts.iter().enumerate() {
+                        if let Expr::Name { id, .. } = &**target_elt {
+                            // Get the element from the tuple
+                            let element_ptr = self.builder.build_struct_gep(
+                                tuple_struct,
+                                tuple_ptr,
+                                i as u32,
+                                &format!("tuple_element_{}", i)
+                            ).unwrap();
+
+                            // Load the element
+                            let element_type = &tuple_element_types[i];
+                            let element_val = self.builder.build_load(
+                                self.get_llvm_type(element_type),
+                                element_ptr,
+                                &format!("load_tuple_element_{}", i)
+                            ).unwrap();
+
+                            // Allocate memory for the element
+                            let element_alloca = self.builder.build_alloca(
+                                element_val.get_type(),
+                                &format!("tuple_element_alloca_{}", i)
+                            ).unwrap();
+                            self.builder.build_store(element_alloca, element_val).unwrap();
+
+                            // Add the variable to the scope
+                            println!("Setting unpacked tuple element '{}' to type: {:?}", id, element_type);
+                            self.scope_stack.add_variable(id.to_string(), element_alloca, element_type.clone());
+                        } else {
+                            return Err("Only simple variable names are supported in tuple unpacking".to_string());
+                        }
+                    }
+                } else {
+                    return Err(format!("Cannot unpack non-tuple type {:?} in list comprehension", element_type));
+                }
+            },
+            _ => return Err("Only simple variable targets or tuple unpacking are supported in list comprehensions".to_string()),
         }
 
         // Check if all conditions (if clauses) are met
@@ -3870,41 +3404,137 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         &mut self,
         elt: &Expr,
         generator: &crate::ast::Comprehension,
-        _iter_val: BasicValueEnum<'ctx>,
-        _iter_type: Type,
+        iter_val: BasicValueEnum<'ctx>,
+        iter_type: Type,
         result_list: inkwell::values::PointerValue<'ctx>,
         list_append_fn: inkwell::values::FunctionValue<'ctx>
     ) -> Result<(), String> {
-        // This is a simplified approach that treats the iterable as a list
-        // A more complete implementation would handle different iterable types differently
+        // Handle different types of iterables
+        match &iter_type {
+            Type::Tuple(element_types) => {
+                // For tuples, we need to handle them directly
+                println!("Handling tuple iteration directly in general handler");
 
-        // For simplicity, we'll just delegate to the list handling method
-        // In a real implementation, we'd need to handle different iterable types
-        if let Expr::Name { id, .. } = generator.target.as_ref() {
-            // Create a dummy variable for the target
-            let dummy_val = self.llvm_context.i64_type().const_int(0, false);
-            let dummy_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), id).unwrap();
-            self.builder.build_store(dummy_ptr, dummy_val).unwrap();
+                // Get the tuple elements
+                let tuple_ptr = iter_val.into_pointer_value();
 
-            // Add the variable to the scope
-            self.scope_stack.add_variable(id.to_string(), dummy_ptr, Type::Int);
+                // Create basic blocks for the loop
+                let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
 
-            // Create basic blocks for a simple loop
-            let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                // For tuples, we'll treat the entire tuple as a single element
+                // This is simpler and more reliable than trying to iterate through tuple elements
+                if let Expr::Name { id, .. } = generator.target.as_ref() {
+                    // Add the variable to the scope with the tuple type
+                    println!("Setting tuple variable '{}' to type: {:?}", id, iter_type);
+                    self.scope_stack.add_variable(id.to_string(), tuple_ptr, iter_type.clone());
 
-            // Check if all conditions (if clauses) are met
-            let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
+                    // Check if all conditions are met
+                    let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
 
-            // Process the element once (as if the iterable had just one element)
-            self.process_list_comprehension_element(
-                elt,
-                should_append,
-                result_list,
-                list_append_fn,
-                current_function
-            )?;
-        } else {
-            return Err("Only simple variable targets are supported in list comprehensions".to_string());
+                    // Process the element
+                    self.process_list_comprehension_element(
+                        elt,
+                        should_append,
+                        result_list,
+                        list_append_fn,
+                        current_function
+                    )?;
+                } else {
+                    // Handle tuple unpacking if the target is a tuple pattern
+                    if let Expr::Tuple { elts, .. } = generator.target.as_ref() {
+                        // Check if the number of elements match
+                        if elts.len() != element_types.len() {
+                            return Err(format!("Tuple unpacking mismatch: expected {} elements, got {}",
+                                              elts.len(), element_types.len()));
+                        }
+
+                        // Get the LLVM tuple type
+                        let llvm_types: Vec<BasicTypeEnum> = element_types.iter()
+                            .map(|ty| self.get_llvm_type(ty))
+                            .collect();
+
+                        let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+
+                        // Unpack each element and bind it to the corresponding target
+                        for (i, target_elt) in elts.iter().enumerate() {
+                            if let Expr::Name { id, .. } = &**target_elt {
+                                // Get the element from the tuple
+                                let element_ptr = self.builder.build_struct_gep(
+                                    tuple_struct,
+                                    tuple_ptr,
+                                    i as u32,
+                                    &format!("tuple_element_{}", i)
+                                ).unwrap();
+
+                                // Load the element
+                                let element_type = &element_types[i];
+                                let element_val = self.builder.build_load(
+                                    self.get_llvm_type(element_type),
+                                    element_ptr,
+                                    &format!("load_tuple_element_{}", i)
+                                ).unwrap();
+
+                                // Allocate memory for the element
+                                let element_alloca = self.builder.build_alloca(
+                                    element_val.get_type(),
+                                    &format!("tuple_element_alloca_{}", i)
+                                ).unwrap();
+                                self.builder.build_store(element_alloca, element_val).unwrap();
+
+                                // Add the variable to the scope
+                                println!("Setting unpacked tuple element '{}' to type: {:?}", id, element_type);
+                                self.scope_stack.add_variable(id.to_string(), element_alloca, element_type.clone());
+                            } else {
+                                return Err("Only simple variable names are supported in tuple unpacking".to_string());
+                            }
+                        }
+
+                        // Check if all conditions are met
+                        let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
+
+                        // Process the element
+                        self.process_list_comprehension_element(
+                            elt,
+                            should_append,
+                            result_list,
+                            list_append_fn,
+                            current_function
+                        )?;
+                    } else {
+                        return Err("Only simple variable targets or tuple unpacking are supported in list comprehensions".to_string());
+                    }
+                }
+            },
+            _ => {
+                // For simplicity, we'll just delegate to the list handling method
+                // In a real implementation, we'd need to handle different iterable types
+                if let Expr::Name { id, .. } = generator.target.as_ref() {
+                    // Create a dummy variable for the target
+                    let dummy_val = self.llvm_context.i64_type().const_int(0, false);
+                    let dummy_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), id).unwrap();
+                    self.builder.build_store(dummy_ptr, dummy_val).unwrap();
+
+                    // Add the variable to the scope
+                    self.scope_stack.add_variable(id.to_string(), dummy_ptr, Type::Int);
+
+                    // Create basic blocks for a simple loop
+                    let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+
+                    // Check if all conditions (if clauses) are met
+                    let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
+
+                    // Process the element once (as if the iterable had just one element)
+                    self.process_list_comprehension_element(
+                        elt,
+                        should_append,
+                        result_list,
+                        list_append_fn,
+                        current_function
+                    )?;
+                } else {
+                    return Err("Only simple variable targets are supported in list comprehensions".to_string());
+                }
+            }
         }
 
         Ok(())
@@ -3931,31 +3561,48 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
             // Convert to boolean if needed
             let cond_bool = if cond_type != Type::Bool {
-                match self.convert_type(cond_val, &cond_type, &Type::Bool) {
-                    Ok(bool_val) => bool_val.into_int_value(),
-                    Err(_) => {
-                        // If conversion fails, just use the original value
-                        // For safety, we'll treat non-zero as true
-                        match cond_val {
-                            BasicValueEnum::IntValue(i) => {
-                                let zero = self.llvm_context.i64_type().const_zero();
-                                self.builder.build_int_compare(
-                                    inkwell::IntPredicate::NE,
-                                    i,
-                                    zero,
-                                    "is_nonzero"
-                                ).unwrap()
-                            },
-                            BasicValueEnum::FloatValue(f) => {
-                                let zero = self.llvm_context.f64_type().const_float(0.0);
-                                self.builder.build_float_compare(
-                                    inkwell::FloatPredicate::ONE,
-                                    f,
-                                    zero,
-                                    "is_nonzero"
-                                ).unwrap()
-                            },
-                            _ => self.llvm_context.bool_type().const_int(0, false),
+                match &cond_type {
+                    // Special handling for tuples - always treat them as truthy
+                    Type::Tuple(_) => {
+                        println!("Treating tuple as truthy in comprehension condition");
+                        self.llvm_context.bool_type().const_int(1, false)
+                    },
+                    // For other types, try to convert to bool
+                    _ => match self.convert_type(cond_val, &cond_type, &Type::Bool) {
+                        Ok(bool_val) => bool_val.into_int_value(),
+                        Err(_) => {
+                            // If conversion fails, just use the original value
+                            // For safety, we'll treat non-zero as true
+                            match cond_val {
+                                BasicValueEnum::IntValue(i) => {
+                                    let zero = self.llvm_context.i64_type().const_zero();
+                                    self.builder.build_int_compare(
+                                        inkwell::IntPredicate::NE,
+                                        i,
+                                        zero,
+                                        "is_nonzero"
+                                    ).unwrap()
+                                },
+                                BasicValueEnum::FloatValue(f) => {
+                                    let zero = self.llvm_context.f64_type().const_float(0.0);
+                                    self.builder.build_float_compare(
+                                        inkwell::FloatPredicate::ONE,
+                                        f,
+                                        zero,
+                                        "is_nonzero"
+                                    ).unwrap()
+                                },
+                                BasicValueEnum::PointerValue(_) => {
+                                    // For pointers (including tuples), we'll consider them truthy
+                                    // Non-empty tuples are always truthy in Python
+                                    println!("Treating pointer value as truthy in comprehension condition");
+                                    self.llvm_context.bool_type().const_int(1, false)
+                                },
+                                _ => {
+                                    println!("WARNING: Unknown value type in condition, treating as falsy");
+                                    self.llvm_context.bool_type().const_int(0, false)
+                                },
+                            }
                         }
                     }
                 }
@@ -3989,29 +3636,64 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         self.builder.position_at_end(then_block);
 
         // Compile the element expression non-recursively
-        let (element_val, element_type) = self.compile_expr(elt)?;
+        let (element_val, mut element_type) = self.compile_expr(elt)?;
 
-        // Convert the element to a pointer if needed
-        let element_ptr = if crate::compiler::types::is_reference_type(&element_type) {
-            if element_val.is_pointer_value() {
-                element_val.into_pointer_value()
-            } else {
-                // If not a pointer, allocate memory
-                let element_alloca = self.builder.build_alloca(
-                    element_val.get_type(),
-                    "comp_element"
-                ).unwrap();
-                self.builder.build_store(element_alloca, element_val).unwrap();
-                element_alloca
+        // If the element type is a tuple, extract the element type if all elements are the same
+        element_type = match &element_type {
+            Type::Tuple(tuple_element_types) => {
+                if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
+                    // All tuple elements have the same type, use that type
+                    tuple_element_types[0].clone()
+                } else {
+                    // Keep the original type
+                    element_type
+                }
+            },
+            _ => element_type
+        };
+
+        // Handle the element based on its type
+        let element_ptr = match &element_type {
+            // For tuple types, we need to handle them as-is without trying to extract elements
+            Type::Tuple(_) => {
+                // For tuples, we'll just allocate memory and store the value directly
+                // without trying to extract elements
+                if element_val.is_pointer_value() {
+                    element_val.into_pointer_value()
+                } else {
+                    // If not a pointer, allocate memory
+                    let element_alloca = self.builder.build_alloca(
+                        element_val.get_type(),
+                        "comp_element"
+                    ).unwrap();
+                    self.builder.build_store(element_alloca, element_val).unwrap();
+                    element_alloca
+                }
+            },
+            // For other types, use the normal handling
+            _ => {
+                if crate::compiler::types::is_reference_type(&element_type) {
+                    if element_val.is_pointer_value() {
+                        element_val.into_pointer_value()
+                    } else {
+                        // If not a pointer, allocate memory
+                        let element_alloca = self.builder.build_alloca(
+                            element_val.get_type(),
+                            "comp_element"
+                        ).unwrap();
+                        self.builder.build_store(element_alloca, element_val).unwrap();
+                        element_alloca
+                    }
+                } else {
+                    // For non-reference types, we need to allocate memory and store the value
+                    let element_alloca = self.builder.build_alloca(
+                        element_val.get_type(),
+                        "comp_element"
+                    ).unwrap();
+                    self.builder.build_store(element_alloca, element_val).unwrap();
+                    element_alloca
+                }
             }
-        } else {
-            // For non-reference types, we need to allocate memory and store the value
-            let element_alloca = self.builder.build_alloca(
-                element_val.get_type(),
-                "comp_element"
-            ).unwrap();
-            self.builder.build_store(element_alloca, element_val).unwrap();
-            element_alloca
         };
 
         // Append the element to the result list
@@ -4352,10 +4034,24 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 match &*generator.target {
                     Expr::Name { id, .. } => {
                         // Determine the element type based on the list type
-                        let element_type = if let Type::List(elem_type) = &iter_type {
+                        let mut element_type = if let Type::List(elem_type) = &iter_type {
                             *elem_type.clone()
                         } else {
                             Type::Any
+                        };
+
+                        // If the element type is a tuple, extract the element type if all elements are the same
+                        element_type = match &element_type {
+                            Type::Tuple(tuple_element_types) => {
+                                if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
+                                    // All tuple elements have the same type, use that type
+                                    tuple_element_types[0].clone()
+                                } else {
+                                    // Keep the original type
+                                    element_type
+                                }
+                            },
+                            _ => element_type
                         };
 
                         // Allocate space for the target variable

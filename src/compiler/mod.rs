@@ -73,9 +73,7 @@ impl<'ctx> Compiler<'ctx> {
         // Position builder at the end of the entry block
         self.context.builder.position_at_end(basic_block);
 
-        // Use the non-recursive implementation to avoid stack overflow
-        self.context.use_non_recursive_expr = true;
-        self.context.use_non_recursive_stmt = true;
+        // Non-recursive implementations are always used
 
         // Compile the module
         let result = self.compile_module_body(module);
@@ -105,9 +103,7 @@ impl<'ctx> Compiler<'ctx> {
         // Position builder at the end of the entry block
         self.context.builder.position_at_end(basic_block);
 
-        // Use the non-recursive implementation to avoid stack overflow
-        self.context.use_non_recursive_expr = true;
-        self.context.use_non_recursive_stmt = true;
+        // Non-recursive implementations are always used
 
         // Embed runtime support functions
         self.embed_runtime_functions();

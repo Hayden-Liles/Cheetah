@@ -62,11 +62,7 @@ pub struct CompilationContext<'ctx> {
     /// Currently active closure environment (if any)
     pub current_environment: Option<String>,
 
-    /// Flag to use non-recursive expression compilation to avoid stack overflow
-    pub use_non_recursive_expr: bool,
-
-    /// Flag to use non-recursive statement compilation to avoid stack overflow
-    pub use_non_recursive_stmt: bool,
+    // We always use non-recursive implementations to avoid stack overflow
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -90,8 +86,7 @@ impl<'ctx> CompilationContext<'ctx> {
             scope_stack: ScopeStack::new(),
             closure_environments: HashMap::new(),
             current_environment: None,
-            use_non_recursive_expr: false,
-            use_non_recursive_stmt: false,
+            // Non-recursive implementations are always used
         }
     }
 
@@ -289,10 +284,18 @@ impl<'ctx> CompilationContext<'ctx> {
             return Ok(value);
         }
 
-        // Special case for list repetition
+        // Special cases for collection types
         if let (Type::Int, Type::List(_)) = (from_type, to_type) {
             // This is a special case for list repetition (int * list)
             // We don't actually need to convert the int value, as it will be used directly
+            return Ok(value);
+        }
+
+        // Special case for tuples - don't try to convert tuples to other types
+        if let Type::Tuple(_) = from_type {
+            // If we're trying to convert a tuple to another type, just return the original value
+            // This prevents errors when trying to convert tuples to integers in list comprehensions
+            println!("WARNING: Attempted to convert tuple to {:?}, returning original value", to_type);
             return Ok(value);
         }
 
@@ -433,6 +436,14 @@ impl<'ctx> CompilationContext<'ctx> {
             return Ok(type1.clone());
         }
 
+        // Special case for tuples - don't try to coerce tuples to other types
+        if let Type::Tuple(_) = type1 {
+            return Ok(type1.clone());
+        }
+        if let Type::Tuple(_) = type2 {
+            return Ok(type2.clone());
+        }
+
         if type1.can_coerce_to(type2) {
             return Ok(type2.clone());
         }
@@ -450,6 +461,16 @@ impl<'ctx> CompilationContext<'ctx> {
             // Special cases for list operations
             (Type::List(_), Type::Int) => Ok(type1.clone()), // For list repetition (list * int)
             (Type::Int, Type::List(_)) => Ok(type2.clone()), // For list repetition (int * list)
+
+            // Special cases for tuple operations
+            (Type::Tuple(_), Type::Int) => {
+                // Always use the tuple type to prevent conversion errors
+                Ok(type1.clone())
+            },
+            (Type::Int, Type::Tuple(_)) => {
+                // Always use the tuple type to prevent conversion errors
+                Ok(type2.clone())
+            },
 
             // Add more special cases if needed
             _ => Err(format!("No common type for {:?} and {:?}", type1, type2)),

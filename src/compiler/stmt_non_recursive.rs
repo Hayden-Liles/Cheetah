@@ -203,15 +203,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                                 }
 
                                 // Execute the statement directly
-                                let old_flag = self.use_non_recursive_expr;
-                                self.use_non_recursive_expr = false;
+                                // Non-recursive implementations are always used
+
 
                                 if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
                                     return Err(e);
                                 }
 
-                                // Restore the flag
-                                self.use_non_recursive_expr = old_flag;
+                                // Non-recursive implementations are always used
                             }
 
                             // Check if the block already has a terminator (from break, continue, return)
@@ -231,15 +230,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                                 }
 
                                 // Execute the statement directly
-                                let old_flag = self.use_non_recursive_expr;
-                                self.use_non_recursive_expr = false;
+                                // Non-recursive implementations are always used
+
 
                                 if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
                                     return Err(e);
                                 }
 
-                                // Restore the flag
-                                self.use_non_recursive_expr = old_flag;
+                                // Non-recursive implementations are always used
                             }
 
                             // Check if the block already has a terminator (from break, continue, return)
@@ -604,8 +602,21 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             call_site_value.try_as_basic_value().left()
                                 .ok_or_else(|| "Failed to get list length".to_string())?
                         },
+                        Type::Int => {
+                            // For integers (like range), use the value directly
+                            // If it's a pointer, load it first
+                            if iter_val.is_pointer_value() {
+                                self.builder.build_load(
+                                    self.llvm_context.i64_type(),
+                                    iter_val.into_pointer_value(),
+                                    "range_len"
+                                ).unwrap()
+                            } else {
+                                iter_val
+                            }
+                        },
                         _ => {
-                            // For other types (like range), use the value directly
+                            // For other types, use the value directly
                             iter_val
                         }
                     };
@@ -647,8 +658,22 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                                 // Store the index value in the variable
                                 self.builder.build_store(var_ptr, index_val).unwrap();
 
+                                // If the element type is a tuple, extract the element type if all elements are the same
+                                let element_type = match &*elem_type {
+                                    Type::Tuple(tuple_element_types) => {
+                                        if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
+                                            // All tuple elements have the same type, use that type
+                                            tuple_element_types[0].clone()
+                                        } else {
+                                            // Keep the original type
+                                            *elem_type.clone()
+                                        }
+                                    },
+                                    _ => *elem_type.clone()
+                                };
+
                                 // Add the variable to the current scope
-                                self.add_variable_to_scope(id.clone(), var_ptr, *elem_type.clone());
+                                self.add_variable_to_scope(id.clone(), var_ptr, element_type);
                             },
                             _ => {
                                 // For other types, just use the index directly
@@ -666,15 +691,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             }
 
                             // Execute the statement directly
-                            let old_flag = self.use_non_recursive_expr;
-                            self.use_non_recursive_expr = false;
-
                             if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
                                 return Err(e);
                             }
-
-                            // Restore the flag
-                            self.use_non_recursive_expr = old_flag;
                         }
 
                         // Check if the block already has a terminator (from break, continue, return)
@@ -684,8 +703,8 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
                     } else {
                         // For complex targets, use the fallback implementation
-                        let old_flag = self.use_non_recursive_expr;
-                        self.use_non_recursive_expr = false;
+                        // Non-recursive implementations are always used
+
 
                         // Create a temporary For statement to pass to the fallback
                         let for_stmt = Stmt::For {
@@ -701,8 +720,7 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         // Call the fallback implementation
                         let result = self.compile_stmt_fallback(&for_stmt);
 
-                        // Restore the flag
-                        self.use_non_recursive_expr = old_flag;
+                        // Non-recursive implementations are always used
 
                         if let Err(e) = result {
                             return Err(e);
@@ -736,15 +754,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             }
 
                             // Execute the statement directly
-                            let old_flag = self.use_non_recursive_expr;
-                            self.use_non_recursive_expr = false;
+                            // Non-recursive implementations are always used
+
 
                             if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
                                 return Err(e);
                             }
 
-                            // Restore the flag
-                            self.use_non_recursive_expr = old_flag;
+                            // Non-recursive implementations are always used
                         }
                     }
 
@@ -772,13 +789,19 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                     let context = self.llvm_context;
 
                     // Get the current function
-                    let function = match self.current_function {
-                        Some(f) => f,
+                    let function = match self.builder.get_insert_block() {
+                        Some(block) => block.get_parent().unwrap(),
                         None => {
-                            // We're in the main module, get the main function
-                            match self.module.get_function("main") {
+                            // Fallback to current_function if no current block
+                            match self.current_function {
                                 Some(f) => f,
-                                None => return Err("No main function found".to_string()),
+                                None => {
+                                    // We're in the main module, get the main function
+                                    match self.module.get_function("main") {
+                                        Some(f) => f,
+                                        None => return Err("No main function found".to_string()),
+                                    }
+                                },
                             }
                         },
                     };
@@ -807,6 +830,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                     // Position at the body block
                     self.builder.position_at_end(body_block);
 
+                    // Create a new scope for the loop body
+                    self.push_scope(false, true, false); // Create a new scope for the loop body (is_loop=true)
+
                     // Save the current loop context
                     let _old_break_block = self.current_break_block();
                     let _old_continue_block = self.current_continue_block();
@@ -822,15 +848,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
 
                         // Execute the statement directly
-                        let old_flag = self.use_non_recursive_expr;
-                        self.use_non_recursive_expr = false;
+                        // Non-recursive implementations are always used
+
 
                         if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
                             return Err(e);
                         }
 
-                        // Restore the flag
-                        self.use_non_recursive_expr = old_flag;
+                        // Non-recursive implementations are always used
                     }
 
                     // Check if the block already has a terminator (from break, continue, return)
@@ -841,6 +866,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
 
                     // Restore the loop context
                     self.pop_loop();
+
+                    // Pop the scope for the loop body
+                    self.pop_scope();
 
                     // Position at the else block
                     self.builder.position_at_end(else_block);
@@ -854,15 +882,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             }
 
                             // Execute the statement directly
-                            let old_flag = self.use_non_recursive_expr;
-                            self.use_non_recursive_expr = false;
+                            // Non-recursive implementations are always used
+
 
                             if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
                                 return Err(e);
                             }
 
-                            // Restore the flag
-                            self.use_non_recursive_expr = old_flag;
+                            // Non-recursive implementations are always used
                         }
                     }
 
@@ -927,15 +954,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
 
                         // Execute the statement directly
-                        let old_flag = self.use_non_recursive_expr;
-                        self.use_non_recursive_expr = false;
+                        // Non-recursive implementations are always used
+
 
                         if let Err(e) = self.compile_stmt(stmt) {
                             return Err(e);
                         }
 
-                        // Restore the flag
-                        self.use_non_recursive_expr = old_flag;
+                        // Non-recursive implementations are always used
                     }
 
                     // Only add a branch if we don't already have a terminator
@@ -1009,15 +1035,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             }
 
                             // Execute the statement directly
-                            let old_flag = self.use_non_recursive_expr;
-                            self.use_non_recursive_expr = false;
+                            // Non-recursive implementations are always used
+
 
                             if let Err(e) = self.compile_stmt(stmt) {
                                 return Err(e);
                             }
 
-                            // Restore the flag
-                            self.use_non_recursive_expr = old_flag;
+                            // Non-recursive implementations are always used
                         }
 
                         // Reset the exception state
@@ -1054,15 +1079,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
 
                         // Execute the statement directly
-                        let old_flag = self.use_non_recursive_expr;
-                        self.use_non_recursive_expr = false;
+                        // Non-recursive implementations are always used
+
 
                         if let Err(e) = self.compile_stmt(stmt) {
                             return Err(e);
                         }
 
-                        // Restore the flag
-                        self.use_non_recursive_expr = old_flag;
+                        // Non-recursive implementations are always used
                     }
 
                     // Branch to the finally block
@@ -1086,15 +1110,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
 
                         // Execute the statement directly
-                        let old_flag = self.use_non_recursive_expr;
-                        self.use_non_recursive_expr = false;
-
                         if let Err(e) = self.compile_stmt(stmt) {
                             return Err(e);
                         }
-
-                        // Restore the flag
-                        self.use_non_recursive_expr = old_flag;
                     }
 
                     // Branch to the exit block
@@ -1189,20 +1207,8 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                     // Compile the function body
                     if is_nested {
                         // Use a non-recursive approach for nested function bodies
-                        // Save the current state
-                        let old_use_non_recursive_stmt = self.use_non_recursive_stmt;
-                        let old_use_non_recursive_expr = self.use_non_recursive_expr;
-
-                        // Enable non-recursive mode for the function body
-                        self.use_non_recursive_stmt = true;
-                        self.use_non_recursive_expr = true;
-
                         // Compile the nested function body
                         let result = self.compile_nested_function_body(&name, params, body);
-
-                        // Restore the state
-                        self.use_non_recursive_stmt = old_use_non_recursive_stmt;
-                        self.use_non_recursive_expr = old_use_non_recursive_expr;
 
                         // Return any error
                         if let Err(e) = result {
@@ -1210,20 +1216,8 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
                     } else {
                         // For top-level functions, we can use the nested function body compilation
-                        // Save the current state
-                        let old_use_non_recursive_stmt = self.use_non_recursive_stmt;
-                        let old_use_non_recursive_expr = self.use_non_recursive_expr;
-
-                        // Enable non-recursive mode for the function body
-                        self.use_non_recursive_stmt = true;
-                        self.use_non_recursive_expr = true;
-
                         // Compile the function body using the nested function body compilation
                         let result = self.compile_nested_function_body(&name, params, body);
-
-                        // Restore the state
-                        self.use_non_recursive_stmt = old_use_non_recursive_stmt;
-                        self.use_non_recursive_expr = old_use_non_recursive_expr;
 
                         // Return any error
                         if let Err(e) = result {
@@ -1242,16 +1236,139 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
     }
 
     fn compile_stmt_fallback(&mut self, stmt: &Stmt) -> Result<(), String> {
-        // Temporarily disable non-recursive mode to avoid infinite recursion
-        let old_flag = self.use_non_recursive_expr;
-        self.use_non_recursive_expr = false;
+        // This is a fallback for complex statements that aren't fully implemented in the non-recursive version
+        // We'll implement a simplified version here to avoid circular references
+        match stmt {
+            Stmt::While { test, body, orelse, .. } => {
+                // Get the LLVM context
+                let context = self.llvm_context;
 
-        // Call the original implementation
-        let result = <Self as crate::compiler::stmt::StmtCompiler>::compile_stmt(self, stmt);
+                // Get the current function
+                let function = match self.builder.get_insert_block() {
+                    Some(block) => block.get_parent().unwrap(),
+                    None => {
+                        // Fallback to current_function if no current block
+                        match self.current_function {
+                            Some(f) => f,
+                            None => {
+                                // We're in the main module, get the main function
+                                match self.module.get_function("main") {
+                                    Some(f) => f,
+                                    None => return Err("No main function found".to_string()),
+                                }
+                            },
+                        }
+                    },
+                };
 
-        // Restore the flag
-        self.use_non_recursive_expr = old_flag;
+                // Create basic blocks for the loop
+                let cond_block = context.append_basic_block(function, "while.cond");
+                let body_block = context.append_basic_block(function, "while.body");
+                let else_block = context.append_basic_block(function, "while.else");
+                let end_block = context.append_basic_block(function, "while.end");
 
-        result
+                // Branch to the condition block
+                self.builder.build_unconditional_branch(cond_block).unwrap();
+
+                // Position at the condition block
+                self.builder.position_at_end(cond_block);
+
+                // Compile the test expression
+                let (test_val, _) = self.compile_expr(test)?;
+
+                // Convert to boolean
+                let cond_val = match test_val {
+                    BasicValueEnum::IntValue(int_val) => {
+                        // If it's already a boolean (i1), use it directly
+                        if int_val.get_type().get_bit_width() == 1 {
+                            int_val
+                        } else {
+                            // Otherwise, compare with zero
+                            let zero = int_val.get_type().const_zero();
+                            self.builder.build_int_compare(inkwell::IntPredicate::NE, int_val, zero, "bool_conv").unwrap()
+                        }
+                    },
+                    BasicValueEnum::FloatValue(float_val) => {
+                        // Compare with zero
+                        let zero = float_val.get_type().const_float(0.0);
+                        self.builder.build_float_compare(inkwell::FloatPredicate::ONE, float_val, zero, "float_bool").unwrap()
+                    },
+                    _ => {
+                        // Default to true for other types
+                        self.llvm_context.bool_type().const_int(1, false)
+                    }
+                };
+
+                // Branch based on the condition
+                self.builder.build_conditional_branch(cond_val, body_block, else_block).unwrap();
+
+                // Position at the body block
+                self.builder.position_at_end(body_block);
+
+                // Create a new scope for the loop body
+                self.push_scope(false, true, false); // Create a new scope for the loop body (is_loop=true)
+
+                // Set the current loop context
+                self.push_loop(cond_block, end_block);
+
+                // Execute the loop body
+                for stmt in body {
+                    // Check if the current block already has a terminator
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                        break;
+                    }
+
+                    // Execute the statement directly
+                    if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
+                        return Err(e);
+                    }
+                }
+
+                // Check if the block already has a terminator (from break, continue, return)
+                if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                    // If not, add a branch back to the condition block
+                    self.builder.build_unconditional_branch(cond_block).unwrap();
+                }
+
+                // Restore the loop context
+                self.pop_loop();
+
+                // Pop the scope for the loop body
+                self.pop_scope();
+
+                // Position at the else block
+                self.builder.position_at_end(else_block);
+
+                // Execute the else block if it exists
+                if !orelse.is_empty() {
+                    for stmt in orelse {
+                        // Check if the current block already has a terminator
+                        if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                            break;
+                        }
+
+                        // Execute the statement directly
+                        if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
+                            return Err(e);
+                        }
+                    }
+                }
+
+                // Check if the block already has a terminator (from break, continue, return)
+                if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                    // If not, add a branch to the end block
+                    self.builder.build_unconditional_branch(end_block).unwrap();
+                }
+
+                // Position at the end block for further code
+                self.builder.position_at_end(end_block);
+
+                Ok(())
+            },
+            _ => {
+                // For other statements, we'll just return an error
+                Err(format!("Statement type not supported in fallback implementation: {:?}", stmt))
+            }
+        }
     }
 }
