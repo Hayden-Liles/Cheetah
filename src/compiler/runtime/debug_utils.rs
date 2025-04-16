@@ -101,34 +101,6 @@ impl Drop for PerformanceTracker {
     }
 }
 
-// Helper to track memory usage
-pub fn log_memory_usage() {
-    // Always log memory usage regardless of debug flag
-    // This is critical for diagnosing stack overflow issues
-
-    // This is a simple approximation - in a real implementation you might
-    // want to use a crate like psutil to get more accurate memory usage
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-            if let Some(line) = status.lines().find(|l| l.starts_with("VmRSS:")) {
-                eprintln!("[MEMORY] {}", line.trim());
-            }
-
-            // Also log stack usage if available
-            if let Some(line) = status.lines().find(|l| l.starts_with("VmStk:")) {
-                eprintln!("[STACK] {}", line.trim());
-            }
-        }
-    }
-
-    // For other platforms, just log that we can't get memory info
-    #[cfg(not(target_os = "linux"))]
-    {
-        eprintln!("[MEMORY] Memory usage information not available on this platform");
-    }
-}
-
 // Helper to check if we're approaching stack overflow
 pub fn check_stack_depth(function_name: &str) -> bool {
     if !DEBUG_ENABLED.load(Ordering::Relaxed) {

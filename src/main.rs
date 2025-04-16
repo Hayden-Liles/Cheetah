@@ -301,7 +301,7 @@ fn run_file(filename: &str) -> Result<()> {
 
 fn run_file_jit(filename: &str) -> Result<()> {
     // Initialize debug utilities first
-    cheetah::compiler::runtime::debug_utils::init();
+    // cheetah::compiler::runtime::debug_utils::init();
 
     // Then initialize the buffered output system
     buffered_output::init();
@@ -316,7 +316,7 @@ fn run_file_jit(filename: &str) -> Result<()> {
     circular_buffer::init();
 
     // Initialize memory profiler
-    memory_profiler::init();
+    // memory_profiler::init();
 
     // Initialize parallel processing
     parallel_ops::init();
@@ -367,16 +367,10 @@ fn run_file_jit(filename: &str) -> Result<()> {
                                 // Log that we're about to execute the main function
                                 cheetah::compiler::runtime::debug_utils::debug_log("Starting main function execution");
 
-                                // Log memory usage before execution
-                                cheetah::compiler::runtime::debug_utils::log_memory_usage();
-
                                 // Execute with timing
                                 let start_time = std::time::Instant::now();
                                 main_fn.call();
                                 let elapsed = start_time.elapsed();
-
-                                // Log memory usage after execution
-                                cheetah::compiler::runtime::debug_utils::log_memory_usage();
 
                                 // Flush any remaining output
                                 cheetah::compiler::runtime::buffered_output::flush_output_buffer();
