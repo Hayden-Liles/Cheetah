@@ -252,6 +252,132 @@ impl<'ctx> CompilationContext<'ctx> {
         None
     }
 
+    /// Create a shadow variable in the entry block of the current function
+    /// This ensures proper dominance for all uses of the variable
+    fn create_shadow_variable(&self, _original_ptr: inkwell::values::PointerValue<'ctx>, var_type: inkwell::types::BasicTypeEnum<'ctx>, name: &str) -> inkwell::values::PointerValue<'ctx> {
+        // Get the current function
+        let current_block = self.builder.get_insert_block().unwrap();
+        let current_function = current_block.get_parent().unwrap();
+
+        // Save current position
+        let current_position = current_block;
+
+        // Move to the entry block of the function to ensure dominance
+        let entry_block = current_function.get_first_basic_block().unwrap();
+
+        // Position at the beginning of the entry block
+        if let Some(first_instr) = entry_block.get_first_instruction() {
+            self.builder.position_before(&first_instr);
+        } else {
+            self.builder.position_at_end(entry_block);
+        }
+
+        // Create a shadow variable in the entry block
+        let shadow_ptr = self.builder.build_alloca(var_type, &format!("shadow_{}", name)).unwrap();
+
+        // Initialize with zero/null to ensure it's always defined
+        match var_type {
+            inkwell::types::BasicTypeEnum::IntType(int_type) => {
+                self.builder.build_store(shadow_ptr, int_type.const_zero()).unwrap();
+            },
+            inkwell::types::BasicTypeEnum::FloatType(float_type) => {
+                self.builder.build_store(shadow_ptr, float_type.const_zero()).unwrap();
+            },
+            inkwell::types::BasicTypeEnum::PointerType(ptr_type) => {
+                self.builder.build_store(shadow_ptr, ptr_type.const_null()).unwrap();
+            },
+            _ => {
+                // For other types, we don't initialize
+            }
+        }
+
+        // Restore position to where we were
+        self.builder.position_at_end(current_position);
+
+        shadow_ptr
+    }
+
+    /// Load a nonlocal variable safely, ensuring proper dominance
+    pub fn load_nonlocal_variable(&mut self, ptr: inkwell::values::PointerValue<'ctx>, var_type: &Type, name: &str) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
+        // Get the LLVM type for the variable
+        let llvm_type = self.get_llvm_type(var_type);
+
+        // Get the current function
+        let current_block = self.builder.get_insert_block().unwrap();
+        let current_function = current_block.get_parent().unwrap();
+
+        // Create a unique name for the shadow variable based on the function and variable name
+        let function_name = current_function.get_name().to_str().unwrap_or("unknown");
+        let shadow_name = format!("shadow_{}_{}", function_name, name);
+
+        // Check if we already have a shadow variable for this nonlocal variable
+        let shadow_ptr = if let Some(shadow) = self.variables.get(&shadow_name) {
+            *shadow
+        } else {
+            // Create a new shadow variable in the entry block
+            let shadow = self.create_shadow_variable(ptr, llvm_type, name);
+
+            // Store the original value in the shadow variable at the beginning of the function
+            let current_position = self.builder.get_insert_block().unwrap();
+            let entry_block = current_function.get_first_basic_block().unwrap();
+
+            if let Some(first_instr) = entry_block.get_first_instruction() {
+                self.builder.position_before(&first_instr);
+            } else {
+                self.builder.position_at_end(entry_block);
+            }
+
+            // Load the initial value from the original pointer
+            let initial_value = self.builder.build_load(llvm_type, ptr, &format!("initial_{}", name)).unwrap();
+
+            // Store it in the shadow variable
+            self.builder.build_store(shadow, initial_value).unwrap();
+
+            // Restore position
+            self.builder.position_at_end(current_position);
+
+            // Add the shadow variable to our variables map
+            self.variables.insert(shadow_name.clone(), shadow);
+
+            shadow
+        };
+
+        // Load the value from the shadow variable
+        let value = self.builder.build_load(llvm_type, shadow_ptr, &format!("load_{}", name)).unwrap();
+
+        Ok(value)
+    }
+
+    /// Store a value to a nonlocal variable safely, ensuring proper dominance
+    pub fn store_nonlocal_variable(&mut self, ptr: inkwell::values::PointerValue<'ctx>, value: inkwell::values::BasicValueEnum<'ctx>, name: &str) -> Result<(), String> {
+        // Get the current function
+        let current_block = self.builder.get_insert_block().unwrap();
+        let current_function = current_block.get_parent().unwrap();
+
+        // Create a unique name for the shadow variable based on the function and variable name
+        let function_name = current_function.get_name().to_str().unwrap_or("unknown");
+        let shadow_name = format!("shadow_{}_{}", function_name, name);
+
+        // Check if we already have a shadow variable for this nonlocal variable
+        let shadow_ptr = if let Some(shadow) = self.variables.get(&shadow_name) {
+            *shadow
+        } else {
+            // Create a new shadow variable in the entry block
+            let shadow = self.create_shadow_variable(ptr, value.get_type(), name);
+
+            // Add the shadow variable to our variables map
+            self.variables.insert(shadow_name.clone(), shadow);
+
+            shadow
+        };
+
+        // Store the value in both the shadow variable and the original pointer
+        self.builder.build_store(shadow_ptr, value).unwrap();
+        self.builder.build_store(ptr, value).unwrap();
+
+        Ok(())
+    }
+
     /// Push a new loop context onto the stack
     pub fn push_loop(&mut self, continue_block: BasicBlock<'ctx>, break_block: BasicBlock<'ctx>) {
         self.loop_stack.push(LoopContext {

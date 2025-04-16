@@ -446,11 +446,26 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                                             self.add_to_current_environment(name.clone(), ptr, var_type.clone());
                                             println!("Added nonlocal variable '{}' to current closure environment", name);
 
-                                            // Create a local variable for the nonlocal variable
+                                            // Create a local variable for the nonlocal variable at the beginning of the function
+                                            // Save current position
+                                            let current_position = self.builder.get_insert_block().unwrap();
+
+                                            // Move to the beginning of the entry block
+                                            let entry_block = current_function.get_first_basic_block().unwrap();
+                                            if let Some(first_instr) = entry_block.get_first_instruction() {
+                                                self.builder.position_before(&first_instr);
+                                            } else {
+                                                self.builder.position_at_end(entry_block);
+                                            }
+
+                                            // Create the alloca at the beginning of the function
                                             let local_ptr = self.builder.build_alloca(
                                                 self.get_llvm_type(&var_type).into_int_type(),
                                                 &unique_name
                                             ).unwrap();
+
+                                            // Restore position
+                                            self.builder.position_at_end(current_position);
 
                                             // Add the variable to the current scope with the unique name
                                             if let Some(current_scope) = self.scope_stack.current_scope_mut() {
@@ -848,14 +863,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
 
                         // Execute the statement directly
-                        // Non-recursive implementations are always used
-
-
                         if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
                             return Err(e);
                         }
-
-                        // Non-recursive implementations are always used
                     }
 
                     // Check if the block already has a terminator (from break, continue, return)

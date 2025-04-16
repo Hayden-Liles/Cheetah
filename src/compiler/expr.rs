@@ -5139,9 +5139,10 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                     if let Some(current_scope) = self.scope_stack.current_scope() {
                         if let Some(unique_name) = current_scope.get_nonlocal_mapping(id) {
                             // Use the unique name instead of the original name
-                            if let Some(ptr) = current_scope.get_variable(unique_name) {
-                                // Store the value in the local variable
-                                self.builder.build_store(*ptr, value).unwrap();
+                            if let Some(ptr) = current_scope.get_variable(unique_name).cloned() {
+                                // First, store the value directly without using the helper method
+                                // This avoids the mutable borrow issue
+                                self.builder.build_store(ptr, value).unwrap();
                                 println!("Assigned to nonlocal variable '{}' using unique name '{}'", id, unique_name);
                                 return Ok(());
                             }
@@ -5235,8 +5236,8 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                             let llvm_type = self.get_llvm_type(&var_type);
                             let ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
 
-                            // Store the value in the local variable
-                            self.builder.build_store(ptr, value).unwrap();
+                            // Store the value in the local variable using our safe helper method
+                            self.store_nonlocal_variable(ptr, value, &unique_name)?;
 
                             // Add the variable to the current scope with the unique name
                             if let Some(current_scope) = self.scope_stack.current_scope_mut() {
@@ -5253,7 +5254,8 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                                 &format!("env_{}_ptr", id)
                             ).unwrap();
 
-                            // Store the value in the environment
+                            // Store the value directly in the environment
+                            // This avoids the mutable borrow issue
                             self.builder.build_store(field_ptr, value).unwrap();
                             println!("Updated nonlocal variable '{}' in closure environment", id);
 

@@ -277,19 +277,40 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                             // We don't need to check if the variable is global or nonlocal here
                             // because get_variable_respecting_declarations handles that for us
 
+                            // Ensure the current block has a terminator before accessing variables
+                            // This is especially important for nonlocal variables in loops
+                            self.ensure_block_has_terminator();
+
                             // Get the variable respecting global and nonlocal declarations
                             if let Some(var_ptr) = self.scope_stack.get_variable_respecting_declarations(id) {
                                 // Get the variable type
                                 if let Some(var_type) = self.scope_stack.get_type_respecting_declarations(id) {
-                                    // Get the LLVM type for the variable
-                                    let llvm_type = self.get_llvm_type(&var_type);
+                                    // Check if this is a nonlocal variable
+                                    let is_nonlocal = if let Some(current_scope) = self.scope_stack.current_scope() {
+                                        current_scope.is_nonlocal(id)
+                                    } else {
+                                        false
+                                    };
 
                                     // Load the variable value
-                                    let var_val = self.builder.build_load(
-                                        llvm_type,
-                                        *var_ptr,
-                                        &format!("load_{}", id)
-                                    ).unwrap();
+                                    let var_val = if is_nonlocal {
+                                        // For nonlocal variables, we'll use a direct load instead of the helper method
+                                        // This avoids the mutable borrow issue
+                                        let llvm_type = self.get_llvm_type(&var_type);
+                                        self.builder.build_load(
+                                            llvm_type,
+                                            *var_ptr,
+                                            &format!("load_{}", id)
+                                        ).unwrap()
+                                    } else {
+                                        // For regular variables, use the normal load
+                                        let llvm_type = self.get_llvm_type(&var_type);
+                                        self.builder.build_load(
+                                            llvm_type,
+                                            *var_ptr,
+                                            &format!("load_{}", id)
+                                        ).unwrap()
+                                    };
 
                                     result_stack.push(ExprResult { value: var_val, ty: var_type });
                                 } else {
@@ -309,6 +330,9 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                             *var_ptr,
                                             &format!("load_{}", id)
                                         ).unwrap();
+
+                                        // Ensure the block has a terminator after loading
+                                        self.ensure_block_has_terminator();
 
                                         result_stack.push(ExprResult { value: var_val, ty: var_type.clone() });
                                     } else {
