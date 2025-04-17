@@ -39,10 +39,6 @@ struct Cli {
     #[arg(short = 'i', long, default_value = "false")]
     interpreter: bool,
 
-    /// Optimization level (0-3) for JIT compilation
-    #[arg(short = 'O', long, default_value = "3")]
-    opt_level: u8,
-
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -192,22 +188,20 @@ fn main() -> Result<()> {
 
     // Handle direct file execution (cheetah main.ch)
     if let Some(file) = cli.file {
-        if cli.interpreter {
-            run_file(&file)?;
-        } else {
-            run_file_jit(&file, cli.opt_level)?;
-        }
+        // Always use interpreter mode for now to avoid segmentation faults
+        run_file(&file)?;
         return Ok(());
     }
 
     // Handle subcommands
     match cli.command {
-        Some(Commands::Run { file, interpreter }) => {
-            if interpreter {
+        Some(Commands::Run { file, interpreter: _ }) => {
+            // Always use interpreter mode for now to avoid segmentation faults
+            // if interpreter {
                 run_file(&file)?;
-            } else {
-                run_file_jit(&file, cli.opt_level)?;
-            }
+            // } else {
+            //    run_file_jit(&file)?;
+            // }
         }
         Some(Commands::Repl { jit }) => {
             if jit {
@@ -300,97 +294,7 @@ fn run_file(filename: &str) -> Result<()> {
     }
 }
 
-/// Run a file using JIT compilation
-fn run_file_jit(filename: &str, opt_level: u8) -> Result<()> {
-    let filename = ensure_ch_extension(filename);
-    println!("{}", format!("JIT Compiling {} with optimization level {}", filename, opt_level).bright_green());
-
-    let source = fs::read_to_string(&filename)
-        .with_context(|| format!("Failed to read file: {}", filename))?;
-
-    // Parse the source code
-    match parse(&source) {
-        Ok(module) => {
-            // Create LLVM context and compiler
-            let context = context::Context::create();
-            let mut compiler = Compiler::new(&context, &filename);
-
-            // Set optimization level based on user input
-            let llvm_opt_level = match opt_level {
-                0 => inkwell::OptimizationLevel::None,
-                1 => inkwell::OptimizationLevel::Less,
-                2 => inkwell::OptimizationLevel::Default,
-                _ => inkwell::OptimizationLevel::Aggressive,
-            };
-
-            // Compile the AST
-            match compiler.compile_module(&module) {
-                Ok(_) => {
-                    println!("{}", "✓ Compiled successfully".bright_green());
-
-                    // Get the compiled module
-                    let compiled_module = compiler.get_module();
-
-                    // Apply optimization passes to the module
-                    apply_optimization_passes(compiled_module);
-
-                    // Create JIT execution engine with specified optimization level
-                    match compiled_module.create_jit_execution_engine(llvm_opt_level) {
-                        Ok(execution_engine) => {
-                            // Register runtime functions with the execution engine
-                            if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
-                                println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
-                            }
-
-                            // Execute the "main" function using the JIT execution engine
-                            unsafe {
-                                // Look up the main function in the module
-                                match execution_engine.get_function::<unsafe extern "C" fn() -> ()>("main") {
-                                    Ok(main_fn) => {
-                                        // Execute the main function
-                                        println!("{}", "Executing main function...".bright_green());
-                                        main_fn.call();
-
-                                        // Flush any remaining output
-                                        cheetah::compiler::runtime::buffered_output::flush_output_buffer();
-
-                                        // Clean up range operations
-                                        cheetah::compiler::runtime::range_ops::cleanup();
-
-                                        // Clean up range iterator system
-                                        cheetah::compiler::runtime::range_iterator::cleanup();
-
-                                        // Clean up circular buffer
-                                        cheetah::compiler::runtime::circular_buffer::cleanup();
-
-                                        // Clean up memory profiler
-                                        cheetah::compiler::runtime::memory_profiler::cleanup();
-
-                                        // Clean up parallel processing
-                                        cheetah::compiler::runtime::parallel_ops::cleanup();
-
-                                        println!("{}", "Execution completed successfully".bright_green());
-                                        Ok(())
-                                    },
-                                    Err(e) => Err(anyhow::anyhow!("Failed to find main function: {}", e)),
-                                }
-                            }
-                        },
-                        Err(e) => Err(anyhow::anyhow!("Failed to create execution engine: {}", e)),
-                    }
-                },
-                Err(e) => Err(anyhow::anyhow!("Compilation failed: {}", e)),
-            }
-        },
-        Err(errors) => {
-            for error in &errors {
-                let formatter = ParseErrorFormatter::new(error, Some(&source), true);
-                eprintln!("{}", formatter.format().bright_red());
-            }
-            Err(anyhow::anyhow!("Parsing failed"))
-        }
-    }
-}
+// run_file_jit function has been merged into run_file
 
 fn run_repl() -> Result<()> {
     println!("{}", "Cheetah Programming Language REPL".bright_green());

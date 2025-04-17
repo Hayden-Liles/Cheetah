@@ -17,6 +17,7 @@ static mut RANGE_SIZE: i64 = 0;
 /// Create a new empty list
 #[unsafe(no_mangle)]
 pub extern "C" fn list_new() -> *mut List {
+    println!("list_new called");
 
     // Allocate memory for the list
     let list = Box::new(List {
@@ -32,6 +33,7 @@ pub extern "C" fn list_new() -> *mut List {
 /// Create a new list with the given capacity
 #[unsafe(no_mangle)]
 pub extern "C" fn list_with_capacity(capacity: i64) -> *mut List {
+    println!("list_with_capacity called with capacity: {}", capacity);
 
     // Ensure the capacity is at least 1
     let actual_capacity = if capacity < 1 { 1 } else { capacity };
@@ -130,6 +132,7 @@ pub extern "C" fn list_get(list_ptr: *mut List, index: i64) -> *mut c_void {
 /// Set an item in a list
 #[unsafe(no_mangle)]
 pub extern "C" fn list_set(list_ptr: *mut List, index: i64, value: *mut c_void) {
+    println!("list_set called with index: {}", index);
 
     if list_ptr.is_null() {
         eprintln!("Invalid list pointer in list_set");
@@ -181,6 +184,7 @@ pub extern "C" fn list_set(list_ptr: *mut List, index: i64, value: *mut c_void) 
 /// Append an item to a list
 #[unsafe(no_mangle)]
 pub extern "C" fn list_append(list_ptr: *mut List, value: *mut c_void) {
+    println!("list_append called");
 
     if list_ptr.is_null() {
         eprintln!("Invalid list pointer in list_append");
@@ -241,12 +245,14 @@ pub extern "C" fn list_append(list_ptr: *mut List, value: *mut c_void) {
         *(*list_ptr).data.add((*list_ptr).length as usize) = new_ptr as *mut c_void;
         (*list_ptr).length += 1;
 
+        println!("Appended value to list, new length: {}", (*list_ptr).length);
     }
 }
 
 /// Get the length of a list
 #[unsafe(no_mangle)]
 pub extern "C" fn list_len(list_ptr: *mut List) -> i64 {
+    println!("list_len called");
 
     // Check if this is a range object - use a safer approach
     if list_ptr as usize <= 1000000 && list_ptr as usize > 0 && (list_ptr as usize & 0xFFF) == 0 {
@@ -269,6 +275,7 @@ pub extern "C" fn list_len(list_ptr: *mut List) -> i64 {
 /// Free a list's memory
 #[unsafe(no_mangle)]
 pub extern "C" fn list_free(list_ptr: *mut List) {
+    println!("list_free called");
 
     if list_ptr.is_null() {
         return;
@@ -297,6 +304,7 @@ pub extern "C" fn list_free(list_ptr: *mut List) {
 /// Create a slice of a list
 #[unsafe(no_mangle)]
 pub extern "C" fn list_slice(list_ptr: *mut List, start: i64, stop: i64, step: i64) -> *mut List {
+    println!("list_slice called with start: {}, stop: {}, step: {}", start, stop, step);
 
     // Handle invalid step
     if step == 0 {
@@ -462,6 +470,7 @@ fn calculate_slice_size(start: i64, stop: i64, step: i64) -> i64 {
 /// Concatenate two lists
 #[unsafe(no_mangle)]
 pub extern "C" fn list_concat(list1_ptr: *mut List, list2_ptr: *mut List) -> *mut List {
+    println!("list_concat called");
 
     if list1_ptr.is_null() || list2_ptr.is_null() {
         eprintln!("Invalid list pointers in list_concat");
@@ -520,6 +529,7 @@ pub extern "C" fn list_concat(list1_ptr: *mut List, list2_ptr: *mut List) -> *mu
 /// Repeat a list n times
 #[unsafe(no_mangle)]
 pub extern "C" fn list_repeat(list_ptr: *mut List, count: i64) -> *mut List {
+    println!("list_repeat called with count: {}", count);
 
     if list_ptr.is_null() || count <= 0 {
         // Return an empty list for invalid inputs
