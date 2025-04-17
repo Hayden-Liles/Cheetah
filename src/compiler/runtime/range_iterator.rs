@@ -1,8 +1,8 @@
 // range_iterator.rs - Optimized range iterator implementation
 // This file implements a generator-style range iterator that doesn't allocate the entire sequence
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread_local;
 
 // Constants for range optimization
@@ -32,7 +32,6 @@ struct ChunkState {
     current_chunk_end: i64,
     chunk_size: i64,
     overall_end: i64,
-
 }
 
 /// Range iterator that generates values on demand
@@ -71,7 +70,6 @@ impl RangeIterator {
                 current_chunk_end: std::cmp::min(start + chunk_size * step, stop),
                 chunk_size,
                 overall_end: stop,
-
             })
         } else {
             None
@@ -129,7 +127,6 @@ impl RangeIterator {
                 current_chunk_end: std::cmp::min(start + chunk_size * step, stop),
                 chunk_size,
                 overall_end: stop,
-
             })
         } else {
             None
@@ -141,7 +138,10 @@ impl RangeIterator {
 
     /// Get the next value from the iterator
     pub fn next(&mut self) -> Option<i64> {
-        if !self.is_active {
+        if !self.is_active
+            || (self.step > 0 && self.current >= self.stop)
+            || (self.step < 0 && self.current <= self.stop)
+        {
             return None;
         }
 
@@ -161,9 +161,15 @@ impl RangeIterator {
                 // Move to the next chunk
                 chunk.current_chunk_start = chunk.current_chunk_end;
                 chunk.current_chunk_end = if self.step > 0 {
-                    std::cmp::min(chunk.current_chunk_start + chunk.chunk_size * self.step, chunk.overall_end)
+                    std::cmp::min(
+                        chunk.current_chunk_start + chunk.chunk_size * self.step,
+                        chunk.overall_end,
+                    )
                 } else {
-                    std::cmp::max(chunk.current_chunk_start + chunk.chunk_size * self.step, chunk.overall_end)
+                    std::cmp::max(
+                        chunk.current_chunk_start + chunk.chunk_size * self.step,
+                        chunk.overall_end,
+                    )
                 };
 
                 // Check if we've reached the end of all chunks
@@ -251,8 +257,10 @@ pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
 
     // Safety check: limit the maximum range size to prevent segfaults
     if size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            size, RANGE_SIZE_LIMIT
+        );
         size = RANGE_SIZE_LIMIT;
     }
 
@@ -300,12 +308,20 @@ pub fn cleanup() {
     let pool_hits = POOL_HITS.load(Ordering::Relaxed);
 
     if active > 0 {
-        eprintln!("[RANGE WARNING] {} active iterators not properly returned to pool", active);
+        eprintln!(
+            "[RANGE WARNING] {} active iterators not properly returned to pool",
+            active
+        );
     }
 
     if total > 0 {
-        eprintln!("[RANGE INFO] Created {} iterators, {} pool hits ({:.1}%), {} iterations",
-                 total, pool_hits, (pool_hits as f64 / total as f64) * 100.0, iterations);
+        eprintln!(
+            "[RANGE INFO] Created {} iterators, {} pool hits ({:.1}%), {} iterations",
+            total,
+            pool_hits,
+            (pool_hits as f64 / total as f64) * 100.0,
+            iterations
+        );
     }
 }
 
@@ -314,8 +330,10 @@ pub fn cleanup() {
 pub extern "C" fn range_iterator_1(stop: i64) -> *mut RangeIterator {
     // Safety check: ensure stop is reasonable
     let safe_stop = if stop > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
-                 stop, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
+            stop, RANGE_SIZE_LIMIT
+        );
         RANGE_SIZE_LIMIT
     } else {
         stop
@@ -337,8 +355,10 @@ pub extern "C" fn range_iterator_2(start: i64, stop: i64) -> *mut RangeIterator 
     // Safety check: ensure range is reasonable
     let range_size = if start < stop { stop - start } else { 0 };
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 range_size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            range_size, RANGE_SIZE_LIMIT
+        );
         (start, start + RANGE_SIZE_LIMIT)
     } else {
         (start, stop)
@@ -369,8 +389,10 @@ pub extern "C" fn range_iterator_3(start: i64, stop: i64, step: i64) -> *mut Ran
 
     // Apply safety limits
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 range_size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            range_size, RANGE_SIZE_LIMIT
+        );
         if safe_step > 0 {
             (start, start + (RANGE_SIZE_LIMIT * safe_step))
         } else {
@@ -438,7 +460,10 @@ pub extern "C" fn range_iterator_free(iter_ptr: *mut RangeIterator) {
 }
 
 /// Register range iterator functions in the module
-pub fn register_range_iterator_functions<'ctx>(context: &'ctx inkwell::context::Context, module: &mut inkwell::module::Module<'ctx>) {
+pub fn register_range_iterator_functions<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    module: &mut inkwell::module::Module<'ctx>,
+) {
     use inkwell::AddressSpace;
 
     // Create range_iterator_1 function

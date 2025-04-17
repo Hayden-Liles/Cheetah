@@ -16,7 +16,7 @@ use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
-use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, parallel_ops};
+use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, parallel_ops, list_ops_runtime::{list_new, list_with_capacity, list_get, list_set, list_append, list_len, list_free, list_slice, list_concat, list_repeat}};
 use cheetah::parse;
 
 use inkwell::context;
@@ -1205,6 +1205,75 @@ fn register_runtime_functions(
     if let Some(function) = module.get_function("string_length") {
         {
             engine.add_global_mapping(&function, jit_string_length as usize);
+        }
+    }
+
+    // List operations
+    if let Some(function) = module.get_function("list_new") {
+        {
+            engine.add_global_mapping(&function, list_new as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_with_capacity") {
+        {
+            engine.add_global_mapping(&function, list_with_capacity as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_get") {
+        {
+            engine.add_global_mapping(&function, list_get as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_set") {
+        {
+            engine.add_global_mapping(&function, list_set as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_append") {
+        {
+            engine.add_global_mapping(&function, list_append as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_len") {
+        {
+            engine.add_global_mapping(&function, list_len as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_free") {
+        {
+            engine.add_global_mapping(&function, list_free as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_slice") {
+        {
+            engine.add_global_mapping(&function, list_slice as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_concat") {
+        {
+            engine.add_global_mapping(&function, list_concat as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("list_repeat") {
+        {
+            engine.add_global_mapping(&function, list_repeat as usize);
+        }
+    }
+
+    // Map the len function to the appropriate implementation based on the argument type
+    if let Some(function) = module.get_function("len") {
+        {
+            // Use list_len as the implementation for len
+            engine.add_global_mapping(&function, list_len as usize);
         }
     }
 
