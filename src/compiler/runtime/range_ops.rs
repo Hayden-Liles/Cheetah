@@ -3,7 +3,6 @@
 use inkwell::context::Context;
 use inkwell::module::Module;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use rayon::prelude::*;
 
 // Global counter for range operations to detect potential issues
 static RANGE_OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -16,11 +15,6 @@ const VERY_LARGE_RANGE_THRESHOLD: i64 = 10_000_000; // 10 million iterations is 
 const RANGE_SIZE_LIMIT: i64 = 100_000_000; // Absolute maximum range size to prevent segfaults
 const VECTORIZATION_THRESHOLD: i64 = 1_000; // Minimum size for vectorization
 const VECTOR_WIDTH: usize = 4; // Process 4 integers at once for SIMD
-
-// New constants for parallel processing
-const MIN_PARALLEL_RANGE: i64 = 10_000; // Minimum size for parallel processing
-const MAX_THREADS: usize = 12; // Maximum number of threads to use
-const UNROLL_FACTOR: usize = 8; // Loop unrolling factor
 
 /// Register range operation functions in the module
 pub fn register_range_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
@@ -73,27 +67,6 @@ pub fn register_range_functions<'ctx>(context: &'ctx Context, module: &mut Modul
         false,
     );
     module.add_function("vectorized_range_sum", vec_range_sum_type, None);
-
-    // Add parallel range functions
-    let parallel_range_sum_type = context.i64_type().fn_type(
-        &[
-            context.i64_type().into(), // start
-            context.i64_type().into(), // end
-            context.i64_type().into(), // chunk_size
-        ],
-        false,
-    );
-    module.add_function("parallel_range_sum", parallel_range_sum_type, None);
-
-    // Add unrolled range function
-    let unrolled_range_sum_type = context.i64_type().fn_type(
-        &[
-            context.i64_type().into(), // start
-            context.i64_type().into(), // end
-        ],
-        false,
-    );
-    module.add_function("unrolled_range_sum", unrolled_range_sum_type, None);
 }
 
 /// Initialize range operations
@@ -135,7 +108,7 @@ pub fn track_range_operation(start: i64, stop: i64, step: i64) {
 /// Calculate range size with optimized paths
 pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
     eprintln!("[DEBUG] calculate_range_size called with start={}, stop={}, step={}", start, stop, step);
-
+    
     // Fast path for common cases
     let mut size = if step == 0 {
         eprintln!("[DEBUG] step is zero, returning 0");
@@ -173,15 +146,6 @@ pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
 pub fn cleanup() {
     // Reset operation count
     RANGE_OPERATION_COUNT.store(0, Ordering::Relaxed);
-
-    // Print metrics before cleanup if debug is enabled
-    print_performance_metrics();
-
-    // Reset metrics
-    METRICS.total_operations.store(0, Ordering::Relaxed);
-    METRICS.vectorized_ops.store(0, Ordering::Relaxed);
-    METRICS.parallel_ops.store(0, Ordering::Relaxed);
-    METRICS.unrolled_ops.store(0, Ordering::Relaxed);
 }
 
 /// Range function with one argument (stop)
@@ -285,7 +249,7 @@ pub extern "C" fn compute_arithmetic_sum(first: i64, last: i64, count: i64) -> i
 #[unsafe(no_mangle)]
 pub extern "C" fn vectorized_range_sum(start: i64, end: i64) -> i64 {
     let size = end - start;
-
+    
     if size <= VECTORIZATION_THRESHOLD {
         // Use regular sum for small ranges
         return compute_arithmetic_sum(start, end - 1, size);
@@ -298,12 +262,12 @@ pub extern "C" fn vectorized_range_sum(start: i64, end: i64) -> i64 {
     for chunk in 0..vector_chunks {
         let base = start + (chunk * VECTOR_WIDTH) as i64;
         let mut chunk_sum = 0;
-
+        
         // Simulate SIMD operation (actual SIMD would use platform-specific intrinsics)
         for i in 0..VECTOR_WIDTH {
             chunk_sum += base + i as i64;
         }
-
+        
         sum += chunk_sum;
     }
 
@@ -314,145 +278,4 @@ pub extern "C" fn vectorized_range_sum(start: i64, end: i64) -> i64 {
     }
 
     sum
-}
-
-/// Parallel range sum implementation using Rayon
-#[unsafe(no_mangle)]
-pub extern "C" fn parallel_range_sum(start: i64, end: i64, chunk_size: i64) -> i64 {
-    let size = end - start;
-
-    if size <= MIN_PARALLEL_RANGE {
-        return compute_arithmetic_sum(start, end - 1, size);
-    }
-
-    // Calculate chunk size based on number of available cores
-    let num_chunks = (size / chunk_size).max(1) as usize;
-    let actual_chunk_size = (size / num_chunks as i64).max(1);
-
-    // Create chunks and process them in parallel
-    let sum: i64 = (0..num_chunks)
-        .into_par_iter()
-        .map(|chunk_idx| {
-            let chunk_start = start + (chunk_idx as i64 * actual_chunk_size);
-            let chunk_end = if chunk_idx == num_chunks - 1 {
-                end
-            } else {
-                chunk_start + actual_chunk_size
-            };
-            compute_chunk_sum(chunk_start, chunk_end)
-        })
-        .sum();
-
-    sum
-}
-
-/// Helper function to compute sum for a chunk
-fn compute_chunk_sum(start: i64, end: i64) -> i64 {
-    if end - start <= VECTORIZATION_THRESHOLD {
-        compute_arithmetic_sum(start, end - 1, end - start)
-    } else {
-        vectorized_range_sum(start, end)
-    }
-}
-
-/// Unrolled range sum implementation
-#[unsafe(no_mangle)]
-pub extern "C" fn unrolled_range_sum(start: i64, end: i64) -> i64 {
-    let size = end - start;
-
-    if size <= UNROLL_FACTOR as i64 {
-        return compute_arithmetic_sum(start, end - 1, size);
-    }
-
-    let mut sum = 0i64;
-    let mut i = start;
-
-    // Main unrolled loop
-    while i + UNROLL_FACTOR as i64 <= end {
-        sum += i;
-        sum += i + 1;
-        sum += i + 2;
-        sum += i + 3;
-        sum += i + 4;
-        sum += i + 5;
-        sum += i + 6;
-        sum += i + 7;
-        i += UNROLL_FACTOR as i64;
-    }
-
-    // Handle remaining elements
-    while i < end {
-        sum += i;
-        i += 1;
-    }
-
-    sum
-}
-
-/// Optimized range iterator that chooses the best implementation
-#[unsafe(no_mangle)]
-pub extern "C" fn optimized_range_sum(start: i64, end: i64) -> i64 {
-    let size = end - start;
-
-    // Choose the most appropriate implementation based on range size
-    match size {
-        s if s <= VECTORIZATION_THRESHOLD => {
-            // Use direct formula for small ranges
-            compute_arithmetic_sum(start, end - 1, size)
-        }
-        s if s <= MIN_PARALLEL_RANGE => {
-            // Use vectorized implementation for medium ranges
-            vectorized_range_sum(start, end)
-        }
-        s if is_power_of_two(s) => {
-            // Use unrolled implementation for power-of-two sizes
-            unrolled_range_sum(start, end)
-        }
-        _ => {
-            // Use parallel implementation for large ranges
-            let chunk_size = (size / MAX_THREADS as i64).max(MIN_PARALLEL_RANGE);
-            parallel_range_sum(start, end, chunk_size)
-        }
-    }
-}
-
-/// Performance monitoring structure
-#[derive(Default)]
-pub struct RangePerformanceMetrics {
-    pub total_operations: AtomicUsize,
-    pub vectorized_ops: AtomicUsize,
-    pub parallel_ops: AtomicUsize,
-    pub unrolled_ops: AtomicUsize,
-}
-
-// Global performance metrics
-lazy_static::lazy_static! {
-    static ref METRICS: RangePerformanceMetrics = RangePerformanceMetrics::default();
-}
-
-// Update performance metrics
-fn update_metrics(operation_type: &str) {
-    METRICS.total_operations.fetch_add(1, Ordering::Relaxed);
-    match operation_type {
-        "vectorized" => { METRICS.vectorized_ops.fetch_add(1, Ordering::Relaxed); }
-        "parallel" => { METRICS.parallel_ops.fetch_add(1, Ordering::Relaxed); }
-        "unrolled" => { METRICS.unrolled_ops.fetch_add(1, Ordering::Relaxed); }
-        _ => {}
-    }
-}
-
-/// Helper function to check if an i64 is a power of two
-fn is_power_of_two(n: i64) -> bool {
-    n > 0 && (n & (n - 1)) == 0
-}
-
-/// Print performance metrics
-pub fn print_performance_metrics() {
-    if RANGE_DEBUG_ENABLED.load(Ordering::Relaxed) {
-        eprintln!("Range Operation Performance Metrics:");
-        eprintln!("Total operations: {}", METRICS.total_operations.load(Ordering::Relaxed));
-        eprintln!("Vectorized operations: {}", METRICS.vectorized_ops.load(Ordering::Relaxed));
-        eprintln!("Parallel operations: {}", METRICS.parallel_ops.load(Ordering::Relaxed));
-        eprintln!("Unrolled operations: {}", METRICS.unrolled_ops.load(Ordering::Relaxed));
-    }
 }

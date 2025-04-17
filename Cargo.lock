@@ -116,7 +116,6 @@ dependencies = [
  "criterion",
  "inkwell",
  "itoa",
- "lazy_static",
  "libc",
  "nom",
  "quickcheck",
