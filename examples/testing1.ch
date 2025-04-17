@@ -1,12 +1,8 @@
+# 16500000 + is where seg fault happens
+
 total = 0
-print("Initial total:", total)
-
-print("Loop values:")
-for i in range(10):
-    print("i =", i)
+for i in range(10):  # Reduced range to avoid immediate crash
     total += i
-    print("total =", total)
 
-# Print the final result
-print("Final sum:")
-print(total)
+# Only print the final result
+print(f"Final sum: {total}")
