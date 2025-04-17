@@ -26,6 +26,7 @@ inkwell = { version = "0.5.0", features = ["llvm18-0"] }
 libc = "0.2"
 # Parallel processing
 rayon = "1.10.0"
+lazy_static = "1.4.0"
 
 [lib]
 name = "cheetah"
