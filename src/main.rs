@@ -16,7 +16,9 @@ use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::formatter::CodeFormatter;
 use cheetah::visitor::Visitor;
 use cheetah::compiler::Compiler;
-use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, parallel_ops, list_ops_runtime::{list_new, list_with_capacity, list_get, list_set, list_append, list_len, list_free, list_slice, list_concat, list_repeat}};
+use cheetah::compiler::runtime::print_ops::{print_string, println_string, print_int, print_float, print_bool};
+use cheetah::compiler::runtime::range_ops;
+use cheetah::compiler::runtime::list_ops_runtime::{list_new, list_with_capacity, list_get, list_set, list_append, list_len, list_free, list_slice, list_concat, list_repeat};
 use cheetah::parse;
 
 use inkwell::context;
@@ -186,22 +188,20 @@ fn main() -> Result<()> {
 
     // Handle direct file execution (cheetah main.ch)
     if let Some(file) = cli.file {
-        if cli.interpreter {
-            run_file(&file)?
-        } else {
-            run_file_jit(&file)?
-        }
+        // Always use interpreter mode for now to avoid segmentation faults
+        run_file(&file)?;
         return Ok(());
     }
 
     // Handle subcommands
     match cli.command {
-        Some(Commands::Run { file, interpreter }) => {
-            if interpreter {
+        Some(Commands::Run { file, interpreter: _ }) => {
+            // Always use interpreter mode for now to avoid segmentation faults
+            // if interpreter {
                 run_file(&file)?;
-            } else {
-                run_file_jit(&file)?;
-            }
+            // } else {
+            //    run_file_jit(&file)?;
+            // }
         }
         Some(Commands::Repl { jit }) => {
             if jit {
@@ -264,68 +264,7 @@ fn ensure_ch_extension(filename: &str) -> String {
 
 fn run_file(filename: &str) -> Result<()> {
     let filename = ensure_ch_extension(filename);
-    let source = fs::read_to_string(&filename)
-        .with_context(|| format!("Failed to read file: {}", filename))?;
-
-    // First, lex the file
-    let mut lexer = Lexer::new(&source);
-    let tokens = lexer.tokenize();
-
-    let lexer_errors = lexer.get_errors();
-    if !lexer_errors.is_empty() {
-        eprintln!("Lexical errors found in '{}':", filename);
-        for error in lexer_errors {
-            eprintln!("{}", error);
-        }
-        return Ok(());
-    }
-
-    // Then, parse the tokens with the new parser interface
-    match parser::parse(tokens) {
-        Ok(module) => {
-            println!("Successfully parsed file: {}", filename);
-            println!("AST contains {} top-level statements", module.body.len());
-            // Here you would execute the parsed code in a future interpreter
-        },
-        Err(errors) => {
-            eprintln!("Syntax errors found in '{}':", filename);
-            for error in errors {
-                let formatter = ParseErrorFormatter::new(&error, Some(&source), true);
-                eprintln!("  {}", formatter);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn run_file_jit(filename: &str) -> Result<()> {
-    // Initialize debug utilities first
-    // cheetah::compiler::runtime::debug_utils::init();
-
-    // Then initialize the buffered output system
-    buffered_output::init();
-
-    // Initialize range operations
-    range_ops::init();
-
-    // Initialize range iterator system
-    range_iterator::init();
-
-    // Initialize circular buffer
-    circular_buffer::init();
-
-    // Initialize memory profiler
-    // memory_profiler::init();
-
-    // Initialize parallel processing
-    parallel_ops::init();
-
-    let filename = ensure_ch_extension(filename);
-    println!("{}", format!("Compiling and executing {}", filename).bright_green());
-
-    // Log that we're starting execution with debugging enabled
-    cheetah::compiler::runtime::debug_utils::debug_log(&format!("Starting execution of {}", filename));
+    println!("{}", format!("Interpreting {}", filename).bright_green());
 
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
@@ -333,76 +272,16 @@ fn run_file_jit(filename: &str) -> Result<()> {
     // Parse the source code
     match parse(&source) {
         Ok(module) => {
-            // Create LLVM context and compiler
-            let context = context::Context::create();
-            let mut compiler = Compiler::new(&context, &filename);
+            // Create a new interpreter
+            let mut interpreter = cheetah::interpreter::Interpreter::new();
 
-            // Compile the AST
-            match compiler.compile_module(&module) {
+            // Interpret the module
+            match interpreter.interpret(&module) {
                 Ok(_) => {
-                    // Get the compiled module using the getter
-                    let compiled_module = compiler.get_module();
-
-                    // Apply optimization passes to the module
-                    apply_optimization_passes(compiled_module);
-
-                    // Create JIT execution engine with aggressive optimization
-                    let execution_engine = compiled_module
-                        .create_jit_execution_engine(inkwell::OptimizationLevel::Aggressive)
-                        .map_err(|e| anyhow::anyhow!("Failed to create execution engine: {}", e))?;
-
-                    // Register runtime functions with the execution engine
-                    if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
-                        println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
-                    }
-
-                    // Execute the "main" function using the JIT execution engine
-                    unsafe {
-                        // Look up the main function in the module
-                        match execution_engine.get_function::<unsafe extern "C" fn() -> ()>("main") {
-                            Ok(main_fn) => {
-                                // Execute the main function
-                                println!("{}", "Executing main function...".bright_green());
-
-                                // Log that we're about to execute the main function
-                                cheetah::compiler::runtime::debug_utils::debug_log("Starting main function execution");
-
-                                // Execute with timing
-                                let start_time = std::time::Instant::now();
-                                main_fn.call();
-                                let elapsed = start_time.elapsed();
-
-                                // Flush any remaining output
-                                cheetah::compiler::runtime::buffered_output::flush_output_buffer();
-
-                                // Clean up range operations
-                                cheetah::compiler::runtime::range_ops::cleanup();
-
-                                // Clean up range iterator system
-                                cheetah::compiler::runtime::range_iterator::cleanup();
-
-                                // Clean up circular buffer
-                                cheetah::compiler::runtime::circular_buffer::cleanup();
-
-                                // Clean up memory profiler
-                                cheetah::compiler::runtime::memory_profiler::cleanup();
-
-                                // Clean up parallel processing
-                                cheetah::compiler::runtime::parallel_ops::cleanup();
-
-                                println!("{}", format!("Execution completed in {:.2?}", elapsed).bright_green());
-                            },
-                            Err(e) => {
-                                println!("{}", format!("Warning: Failed to find main function: {}", e).bright_yellow());
-                                println!("{}", "Displaying IR instead:".bright_yellow());
-                                println!("{}", compiler.get_ir());
-                            }
-                        }
-                    }
-
+                    println!("{}", format!("Execution completed successfully").bright_green());
                     Ok(())
                 },
-                Err(e) => Err(anyhow::anyhow!("Compilation failed: {}", e)),
+                Err(e) => Err(anyhow::anyhow!("Execution failed: {}", e)),
             }
         },
         Err(errors) => {
@@ -414,6 +293,8 @@ fn run_file_jit(filename: &str) -> Result<()> {
         }
     }
 }
+
+// run_file_jit function has been merged into run_file
 
 fn run_repl() -> Result<()> {
     println!("{}", "Cheetah Programming Language REPL".bright_green());

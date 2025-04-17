@@ -11,253 +11,564 @@ pub struct List {
     data: *mut *mut c_void,
 }
 
-// Simple global array to store list elements for testing
-// This is a hack to avoid memory allocation issues
-static mut TEST_LIST: [i64; 10] = [0; 10];
-static mut TEST_LIST_LENGTH: i64 = 0;
+// Simple global array to store range values
+static mut RANGE_SIZE: i64 = 0;
 
 /// Create a new empty list
 #[unsafe(no_mangle)]
 pub extern "C" fn list_new() -> *mut List {
-    // Reduce debug output for performance
-    // println!("list_new called");
-    unsafe {
-        // Reset the test list
-        TEST_LIST = [0; 10];
-        TEST_LIST_LENGTH = 0;
-    }
-    // Return a dummy pointer that's not null
-    0x12345678 as *mut List
+    println!("list_new called");
+
+    // Allocate memory for the list
+    let list = Box::new(List {
+        length: 0,
+        capacity: 10, // Default initial capacity
+        data: ptr::null_mut(),
+    });
+
+    // Convert to raw pointer
+    Box::into_raw(list)
 }
 
 /// Create a new list with the given capacity
 #[unsafe(no_mangle)]
 pub extern "C" fn list_with_capacity(capacity: i64) -> *mut List {
-    // Reduce debug output for performance
-    // println!("list_with_capacity called with capacity: {}", capacity);
-    unsafe {
-        // Reset the test list
-        TEST_LIST = [0; 10];
-        // For testing purposes, we'll set the length based on the capacity
-        // This is a hack to make list literals work correctly
-        if capacity == 3 || capacity == 1 {
-            // For list literals with 3 elements
-            TEST_LIST_LENGTH = 3;
-            // Initialize the test list with some values
-            TEST_LIST[0] = 10;
-            TEST_LIST[1] = 20;
-            TEST_LIST[2] = 30;
-            // Reduce debug output for performance
-            // println!("Initialized list with 3 elements");
-        } else {
-            TEST_LIST_LENGTH = 0;
+    println!("list_with_capacity called with capacity: {}", capacity);
+
+    // Ensure the capacity is at least 1
+    let actual_capacity = if capacity < 1 { 1 } else { capacity };
+
+    // Allocate memory for the data array
+    let data = unsafe {
+        let layout = std::alloc::Layout::array::<*mut c_void>(actual_capacity as usize).unwrap();
+        let ptr = std::alloc::alloc_zeroed(layout) as *mut *mut c_void;
+
+        if ptr.is_null() {
+            // Memory allocation failed
+            eprintln!("Failed to allocate memory for list data");
+            return ptr::null_mut();
         }
-    }
-    // Return a dummy pointer that's not null
-    0x12345678 as *mut List
+
+        ptr
+    };
+
+    // Create the list
+    let list = Box::new(List {
+        length: 0,
+        capacity: actual_capacity,
+        data,
+    });
+
+    // Convert to raw pointer
+    Box::into_raw(list)
 }
 
 /// Get an item from a list
 #[unsafe(no_mangle)]
-pub extern "C" fn list_get(_list: *mut List, index: i64) -> *mut c_void {
-    // For debugging
+pub extern "C" fn list_get(list_ptr: *mut List, index: i64) -> *mut c_void {
     println!("list_get called with index: {}", index);
+
+    // Check if this is a range object - use a safer approach
+    if list_ptr as usize <= 1000000 && list_ptr as usize > 0 && (list_ptr as usize & 0xFFF) == 0 {
+        unsafe {
+            // This is a range object, the pointer value is the range size
+            let range_size = list_ptr as i64;
+
+            // Check if the index is valid
+            if index < 0 || index >= range_size {
+                eprintln!("IndexError: range index {} out of range (size: {})", index, range_size);
+                return ptr::null_mut();
+            }
+
+            // Create a new integer on the heap
+            let value_ptr = Box::into_raw(Box::new(index));
+            println!("Range: returning index {} as value", index);
+            return value_ptr as *mut c_void;
+        }
+    }
+
+    // Regular list handling
+    if list_ptr.is_null() {
+        eprintln!("Invalid list pointer in list_get");
+        return ptr::null_mut();
+    }
+
     unsafe {
-        // Check if this is our test list
-        if _list as usize == 0x12345678 {
-            // Allocate memory for the integer value
-            let ptr = std::alloc::alloc(std::alloc::Layout::new::<i64>()) as *mut i64;
-            if ptr.is_null() {
-                eprintln!("Failed to allocate memory for list item");
-                return ptr::null_mut();
-            }
-
-            // For our test list, return the actual values (10, 20, 30) instead of the indices
-            let value = match index {
-                0 => 10,
-                1 => 20,
-                2 => 30,
-                _ => index, // Fallback to the index itself
-            };
-
-            // Store the value in the allocated memory
-            *ptr = value;
-            println!("Returning test list value: {}", value);
-
-            // Return the pointer to the allocated memory
-            return ptr as *mut c_void;
-        }
-
-        // Check if this is a range object
-        // Range objects are actually just integers representing the range size
-        let ptr_value = _list as usize;
-        if ptr_value > 0 && ptr_value < 1_000_000_000 {
-            // This is likely a range object
-            // For range objects, the index is the value
-
-            // Allocate memory for the integer value
-            let ptr = std::alloc::alloc(std::alloc::Layout::new::<i64>()) as *mut i64;
-            if ptr.is_null() {
-                eprintln!("Failed to allocate memory for list item");
-                return ptr::null_mut();
-            }
-
-            // Store the index as the value
-            *ptr = index;
-            println!("Returning range index as value: {}", index);
-
-            // Return the pointer to the allocated memory
-            return ptr as *mut c_void;
-        }
-
         // Handle negative indices (Python-like behavior)
         let actual_index = if index < 0 {
-            TEST_LIST_LENGTH + index
+            (*list_ptr).length + index
         } else {
             index
         };
 
         // Check if the index is valid
-        let length = TEST_LIST_LENGTH;
-        if actual_index < 0 || actual_index >= length {
+        if actual_index < 0 || actual_index >= (*list_ptr).length {
             // Index out of bounds
-            eprintln!("IndexError: list index {} out of range (length: {})", index, length);
+            eprintln!("IndexError: list index {} out of range (length: {})", index, (*list_ptr).length);
+            return ptr::null_mut();
+        }
+
+        // Check if the data pointer is valid
+        if (*list_ptr).data.is_null() {
+            eprintln!("Invalid list data pointer in list_get");
             return ptr::null_mut();
         }
 
         // Get the item at the specified index
-        // For our test list, we'll return the actual values (10, 20, 30) instead of the indices
-        let value = match actual_index {
-            0 => 10,
-            1 => 20,
-            2 => 30,
-            _ => TEST_LIST[actual_index as usize], // Fallback to the actual value in the test list
-        };
+        let item_ptr = *(*list_ptr).data.add(actual_index as usize);
 
-        // Allocate memory for the integer value
-        // This is a hack to avoid segmentation faults
-        let ptr = std::alloc::alloc(std::alloc::Layout::new::<i64>()) as *mut i64;
-        if ptr.is_null() {
-            eprintln!("Failed to allocate memory for list item");
-            return ptr::null_mut();
+        // If the item is null, create a default value (0)
+        if item_ptr.is_null() {
+            let value_ptr = Box::into_raw(Box::new(0i64));
+            return value_ptr as *mut c_void;
         }
 
-        // Store the value in the allocated memory
-        *ptr = value;
-
-        // Return the pointer to the allocated memory
-        ptr as *mut c_void
+        // Return a copy of the integer value
+        let value = *(item_ptr as *const i64);
+        let new_ptr = Box::into_raw(Box::new(value));
+        new_ptr as *mut c_void
     }
 }
 
 /// Set an item in a list
 #[unsafe(no_mangle)]
-pub extern "C" fn list_set(_list: *mut List, index: i64, value: *mut c_void) {
+pub extern "C" fn list_set(list_ptr: *mut List, index: i64, value: *mut c_void) {
+    println!("list_set called with index: {}", index);
+
+    if list_ptr.is_null() {
+        eprintln!("Invalid list pointer in list_set");
+        return;
+    }
+
     unsafe {
         // Handle negative indices (Python-like behavior)
         let actual_index = if index < 0 {
-            TEST_LIST_LENGTH + index
+            (*list_ptr).length + index
         } else {
             index
         };
 
         // Check if the index is valid
-        let length = TEST_LIST_LENGTH;
-        if actual_index < 0 || actual_index >= length {
+        if actual_index < 0 || actual_index >= (*list_ptr).length {
             // Index out of bounds
-            eprintln!("IndexError: list index {} out of range (length: {})", index, length);
+            eprintln!("IndexError: list index {} out of range (length: {})", index, (*list_ptr).length);
             return;
         }
 
-        // Set the item at the specified index
-        TEST_LIST[actual_index as usize] = value as i64;
+        // Check if the data pointer is valid
+        if (*list_ptr).data.is_null() {
+            eprintln!("Invalid list data pointer in list_set");
+            return;
+        }
+
+        // Free the old value if it exists
+        let old_ptr = *(*list_ptr).data.add(actual_index as usize);
+        if !old_ptr.is_null() {
+            let _ = Box::from_raw(old_ptr as *mut i64);
+        }
+
+        // Create a copy of the value
+        let new_value: i64;
+        if value.is_null() {
+            new_value = 0;
+        } else {
+            new_value = *(value as *const i64);
+        }
+
+        let new_ptr = Box::into_raw(Box::new(new_value));
+
+        // Store the new value in the list
+        *(*list_ptr).data.add(actual_index as usize) = new_ptr as *mut c_void;
     }
 }
 
 /// Append an item to a list
 #[unsafe(no_mangle)]
-pub extern "C" fn list_append(_list: *mut List, value: *mut c_void) {
+pub extern "C" fn list_append(list_ptr: *mut List, value: *mut c_void) {
+    println!("list_append called");
+
+    if list_ptr.is_null() {
+        eprintln!("Invalid list pointer in list_append");
+        return;
+    }
+
     unsafe {
-        if TEST_LIST_LENGTH == 3 {
-            return;
+        // Check if we need to allocate or resize the data array
+        if (*list_ptr).data.is_null() {
+            // Allocate memory for the data array
+            let capacity = (*list_ptr).capacity;
+            let layout = std::alloc::Layout::array::<*mut c_void>(capacity as usize).unwrap();
+            (*list_ptr).data = std::alloc::alloc_zeroed(layout) as *mut *mut c_void;
+
+            if (*list_ptr).data.is_null() {
+                eprintln!("Failed to allocate memory for list data");
+                return;
+            }
+        } else if (*list_ptr).length >= (*list_ptr).capacity {
+            // Resize the data array
+            let old_capacity = (*list_ptr).capacity;
+            let new_capacity = old_capacity * 2;
+
+            // Allocate a new data array
+            let layout = std::alloc::Layout::array::<*mut c_void>(new_capacity as usize).unwrap();
+            let new_data = std::alloc::alloc_zeroed(layout) as *mut *mut c_void;
+
+            if new_data.is_null() {
+                eprintln!("Failed to resize list data array");
+                return;
+            }
+
+            // Copy the old data to the new array
+            for i in 0..(*list_ptr).length as usize {
+                *new_data.add(i) = *(*list_ptr).data.add(i);
+            }
+
+            // Free the old data array
+            let old_layout = std::alloc::Layout::array::<*mut c_void>(old_capacity as usize).unwrap();
+            std::alloc::dealloc((*list_ptr).data as *mut u8, old_layout);
+
+            // Update the list
+            (*list_ptr).data = new_data;
+            (*list_ptr).capacity = new_capacity;
         }
 
-        // For other cases, append to the list
-        // Check if we have room in our test list
-        if TEST_LIST_LENGTH < 10 {
-            // Add the new item to the list
-            TEST_LIST[TEST_LIST_LENGTH as usize] = value as i64;
-            let new_length = TEST_LIST_LENGTH + 1;
-            TEST_LIST_LENGTH = new_length;
-            // Reduce debug output for performance
-            // println!("Appended value to list, new length: {}", new_length);
+        // Create a copy of the value
+        let new_value: i64;
+        if value.is_null() {
+            new_value = 0;
         } else {
-            // Only print an error if we're out of space
-            eprintln!("MemoryError: Test list is full");
+            new_value = *(value as *const i64);
         }
+
+        let new_ptr = Box::into_raw(Box::new(new_value));
+
+        // Add the value to the list
+        *(*list_ptr).data.add((*list_ptr).length as usize) = new_ptr as *mut c_void;
+        (*list_ptr).length += 1;
+
+        println!("Appended value to list, new length: {}", (*list_ptr).length);
     }
 }
 
 /// Get the length of a list
 #[unsafe(no_mangle)]
-pub extern "C" fn list_len(_list: *mut List) -> i64 {
-    // For debugging
-    println!("list_len called on list: {:?}", _list);
-    unsafe {
-        // Check if this is our test list
-        if _list as usize == 0x12345678 {
-            // For our test list, return the fixed length
-            let length = TEST_LIST_LENGTH;
-            println!("Returning test list length: {}", length);
-            return length;
-        }
+pub extern "C" fn list_len(list_ptr: *mut List) -> i64 {
+    println!("list_len called");
 
-        // Check if this is a range object
-        // Range objects are actually just integers representing the range size
-        // The pointer value itself is the range size
-        let ptr_value = _list as usize;
-        if ptr_value > 0 && ptr_value < 1_000_000_000 {
-            // This is likely a range object
-            // Extract the range size from the pointer value
-            let range_size = ptr_value as i64;
-            println!("Detected range with size: {}", range_size);
+    // Check if this is a range object - use a safer approach
+    if list_ptr as usize <= 1000000 && list_ptr as usize > 0 && (list_ptr as usize & 0xFFF) == 0 {
+        // This is a range object, the pointer value is the range size
+        unsafe {
+            let range_size = list_ptr as i64;
+            println!("Range: returning size {}", range_size);
             return range_size;
         }
-
-        // Default case: return the test list length
-        let length = TEST_LIST_LENGTH;
-        println!("Returning default length: {}", length);
-        length
     }
+
+    if list_ptr.is_null() {
+        eprintln!("Invalid list pointer in list_len");
+        return 0;
+    }
+
+    unsafe { (*list_ptr).length }
 }
 
 /// Free a list's memory
 #[unsafe(no_mangle)]
-pub extern "C" fn list_free(_list: *mut List) {
+pub extern "C" fn list_free(list_ptr: *mut List) {
     println!("list_free called");
-    // No need to free anything in our simplified implementation
+
+    if list_ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        // Free each item in the list
+        if !(*list_ptr).data.is_null() {
+            for i in 0..(*list_ptr).length as usize {
+                let item_ptr = *(*list_ptr).data.add(i);
+                if !item_ptr.is_null() {
+                    let _ = Box::from_raw(item_ptr as *mut i64);
+                }
+            }
+
+            // Free the data array
+            let layout = std::alloc::Layout::array::<*mut c_void>((*list_ptr).capacity as usize).unwrap();
+            std::alloc::dealloc((*list_ptr).data as *mut u8, layout);
+        }
+
+        // Free the list itself
+        let _ = Box::from_raw(list_ptr);
+    }
 }
 
 /// Create a slice of a list
 #[unsafe(no_mangle)]
-pub extern "C" fn list_slice(_list: *mut List, start: i64, stop: i64, step: i64) -> *mut List {
+pub extern "C" fn list_slice(list_ptr: *mut List, start: i64, stop: i64, step: i64) -> *mut List {
     println!("list_slice called with start: {}, stop: {}, step: {}", start, stop, step);
-    // Return the same dummy pointer
-    0x12345678 as *mut List
+
+    // Handle invalid step
+    if step == 0 {
+        eprintln!("ValueError: slice step cannot be zero");
+        return list_new();
+    }
+
+    // Handle range objects - use a safer approach
+    if list_ptr as usize <= 1000000 && list_ptr as usize > 0 && (list_ptr as usize & 0xFFF) == 0 {
+        // This is a range object, calculate the slice
+        let range_size = list_ptr as i64;
+        let (norm_start, norm_stop) = normalize_indices(start, stop, range_size);
+
+        // Calculate the size of the slice
+        let slice_size = calculate_slice_size(norm_start, norm_stop, step);
+
+        // Create a new list for the slice
+        let result_list = list_with_capacity(slice_size);
+        if result_list.is_null() {
+            return ptr::null_mut();
+        }
+
+        // Fill the slice
+        let mut count = 0;
+        if step > 0 {
+            let mut i = norm_start;
+            while i < norm_stop {
+                // Create a value for the index
+                let value_ptr = Box::into_raw(Box::new(i)) as *mut c_void;
+
+                // Add it to the list
+                unsafe {
+                    *(*result_list).data.add(count) = value_ptr;
+                    (*result_list).length += 1;
+                }
+
+                i += step;
+                count += 1;
+            }
+        } else {
+            // step < 0
+            let mut i = norm_start;
+            while i > norm_stop {
+                // Create a value for the index
+                let value_ptr = Box::into_raw(Box::new(i)) as *mut c_void;
+
+                // Add it to the list
+                unsafe {
+                    *(*result_list).data.add(count) = value_ptr;
+                    (*result_list).length += 1;
+                }
+
+                i += step;
+                count += 1;
+            }
+        }
+
+        return result_list;
+    }
+
+    // Regular list handling
+    if list_ptr.is_null() {
+        eprintln!("Invalid list pointer in list_slice");
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let list_len = (*list_ptr).length;
+        let (norm_start, norm_stop) = normalize_indices(start, stop, list_len);
+
+        // Calculate the size of the slice
+        let slice_size = calculate_slice_size(norm_start, norm_stop, step);
+
+        // Create a new list for the slice
+        let result_list = list_with_capacity(slice_size);
+        if result_list.is_null() {
+            return ptr::null_mut();
+        }
+
+        // Check if the data pointer is valid
+        if (*list_ptr).data.is_null() {
+            eprintln!("Invalid list data pointer in list_slice");
+            return result_list;
+        }
+
+        // Fill the slice
+        let mut count = 0;
+        if step > 0 {
+            let mut i = norm_start;
+            while i < norm_stop {
+                let value_ptr = *(*list_ptr).data.add(i as usize);
+
+                if !value_ptr.is_null() {
+                    // Copy the value
+                    let value = *(value_ptr as *const i64);
+                    let new_ptr = Box::into_raw(Box::new(value)) as *mut c_void;
+
+                    // Store it in the result list
+                    *(*result_list).data.add(count) = new_ptr;
+                    (*result_list).length += 1;
+                }
+
+                i += step;
+                count += 1;
+            }
+        } else {
+            // step < 0
+            let mut i = norm_start;
+            while i > norm_stop {
+                let value_ptr = *(*list_ptr).data.add(i as usize);
+
+                if !value_ptr.is_null() {
+                    // Copy the value
+                    let value = *(value_ptr as *const i64);
+                    let new_ptr = Box::into_raw(Box::new(value)) as *mut c_void;
+
+                    // Store it in the result list
+                    *(*result_list).data.add(count) = new_ptr;
+                    (*result_list).length += 1;
+                }
+
+                i += step;
+                count += 1;
+            }
+        }
+
+        result_list
+    }
+}
+
+// Helper functions
+
+/// Normalize indices for slicing
+fn normalize_indices(start: i64, stop: i64, len: i64) -> (i64, i64) {
+    let norm_start = if start < 0 {
+        (start + len).max(0)
+    } else {
+        start.min(len)
+    };
+
+    let norm_stop = if stop < 0 {
+        (stop + len).max(0)
+    } else {
+        stop.min(len)
+    };
+
+    (norm_start, norm_stop)
+}
+
+/// Calculate the size of a slice
+fn calculate_slice_size(start: i64, stop: i64, step: i64) -> i64 {
+    if (step > 0 && start >= stop) || (step < 0 && start <= stop) {
+        return 0;
+    }
+
+    if step > 0 {
+        return (stop - start + step - 1) / step;
+    } else {
+        return (start - stop - step - 1) / (-step);
+    }
 }
 
 /// Concatenate two lists
 #[unsafe(no_mangle)]
-pub extern "C" fn list_concat(_list1: *mut List, _list2: *mut List) -> *mut List {
+pub extern "C" fn list_concat(list1_ptr: *mut List, list2_ptr: *mut List) -> *mut List {
     println!("list_concat called");
-    // Return the same dummy pointer
-    0x12345678 as *mut List
+
+    if list1_ptr.is_null() || list2_ptr.is_null() {
+        eprintln!("Invalid list pointers in list_concat");
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let list1_len = (*list1_ptr).length;
+        let list2_len = (*list2_ptr).length;
+
+        // Create a new list with enough capacity
+        let result_list = list_with_capacity(list1_len + list2_len);
+        if result_list.is_null() {
+            return ptr::null_mut();
+        }
+
+        // Check if the data pointers are valid
+        if !(*list1_ptr).data.is_null() {
+            // Copy elements from the first list
+            for i in 0..list1_len as usize {
+                let value_ptr = *(*list1_ptr).data.add(i);
+
+                if !value_ptr.is_null() {
+                    // Copy the value
+                    let value = *(value_ptr as *const i64);
+                    let new_ptr = Box::into_raw(Box::new(value)) as *mut c_void;
+
+                    // Store it in the result list
+                    *(*result_list).data.add((*result_list).length as usize) = new_ptr;
+                    (*result_list).length += 1;
+                }
+            }
+        }
+
+        if !(*list2_ptr).data.is_null() {
+            // Copy elements from the second list
+            for i in 0..list2_len as usize {
+                let value_ptr = *(*list2_ptr).data.add(i);
+
+                if !value_ptr.is_null() {
+                    // Copy the value
+                    let value = *(value_ptr as *const i64);
+                    let new_ptr = Box::into_raw(Box::new(value)) as *mut c_void;
+
+                    // Store it in the result list
+                    *(*result_list).data.add((*result_list).length as usize) = new_ptr;
+                    (*result_list).length += 1;
+                }
+            }
+        }
+
+        result_list
+    }
 }
 
 /// Repeat a list n times
 #[unsafe(no_mangle)]
-pub extern "C" fn list_repeat(_list: *mut List, count: i64) -> *mut List {
+pub extern "C" fn list_repeat(list_ptr: *mut List, count: i64) -> *mut List {
     println!("list_repeat called with count: {}", count);
-    // Return the same dummy pointer
-    0x12345678 as *mut List
+
+    if list_ptr.is_null() || count <= 0 {
+        // Return an empty list for invalid inputs
+        return list_new();
+    }
+
+    unsafe {
+        let list_len = (*list_ptr).length;
+
+        // Create a new list with enough capacity
+        let result_list = list_with_capacity(list_len * count);
+        if result_list.is_null() {
+            return ptr::null_mut();
+        }
+
+        // Check if the data pointer is valid
+        if (*list_ptr).data.is_null() {
+            // Nothing to repeat
+            return result_list;
+        }
+
+        // Repeat the list count times
+        for _ in 0..count {
+            for i in 0..list_len as usize {
+                let value_ptr = *(*list_ptr).data.add(i);
+
+                if !value_ptr.is_null() {
+                    // Copy the value
+                    let value = *(value_ptr as *const i64);
+                    let new_ptr = Box::into_raw(Box::new(value)) as *mut c_void;
+
+                    // Store it in the result list
+                    *(*result_list).data.add((*result_list).length as usize) = new_ptr;
+                    (*result_list).length += 1;
+                }
+            }
+        }
+
+        result_list
+    }
 }
