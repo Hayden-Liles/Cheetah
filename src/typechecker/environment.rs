@@ -98,6 +98,12 @@ impl TypeEnvironment {
             Type::Bool
         ));
 
+        // Add range function with different argument counts
+        self.add_function("range".to_string(), Type::function(
+            vec![Type::Int],
+            Type::List(Box::new(Type::Int))
+        ));
+
         // Add more built-in functions as needed
     }
 

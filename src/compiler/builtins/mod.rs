@@ -2,3 +2,4 @@
 
 pub mod print_function;
 pub mod len_function;
+pub mod range_function;

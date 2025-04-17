@@ -18,7 +18,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     Some(f) => f,
                     None => return Err("print_int function not found".to_string()),
                 };
-                
+
                 // Get the variable's value
                 if let Some(ptr) = self.get_variable_ptr(id) {
                     // Check if the variable has the int type
@@ -30,14 +30,14 @@ impl<'ctx> CompilationContext<'ctx> {
                                 ptr,
                                 id
                             ).unwrap();
-                            
+
                             // Call print_int directly for maximum performance
                             self.builder.build_call(
                                 print_int_fn,
                                 &[int_val.into()],
                                 "print_int_call"
                             ).unwrap();
-                            
+
                             // Return void
                             return Ok((self.llvm_context.i64_type().const_zero().into(), Type::None));
                         }
@@ -54,17 +54,17 @@ impl<'ctx> CompilationContext<'ctx> {
                     Some(f) => f,
                     None => return Err("print_int function not found".to_string()),
                 };
-                
+
                 // Create integer constant
                 let int_val = self.llvm_context.i64_type().const_int(*val as u64, true);
-                
+
                 // Call print_int directly
                 self.builder.build_call(
                     print_int_fn,
                     &[int_val.into()],
                     "print_int_literal_call"
                 ).unwrap();
-                
+
                 // Return void
                 return Ok((self.llvm_context.i64_type().const_zero().into(), Type::None));
             }
@@ -373,6 +373,139 @@ impl<'ctx> CompilationContext<'ctx> {
 
                         let print_str_fn = self.module.get_function("print_string").unwrap();
                         self.builder.build_call(print_str_fn, &[str_ptr.into()], "print_newline").unwrap();
+                    }
+                },
+                Type::Tuple(element_types) => {
+                    // Get the print_string function
+                    let print_string_fn = self.module.get_function("print_string").unwrap();
+
+                    // Print the opening parenthesis
+                    let open_paren = self.builder.build_global_string_ptr("(", "open_paren").unwrap();
+                    self.builder.build_call(
+                        print_string_fn,
+                        &[open_paren.as_pointer_value().into()],
+                        "print_open_paren"
+                    ).unwrap();
+
+                    // Get the tuple struct type
+                    let llvm_types: Vec<inkwell::types::BasicTypeEnum> = element_types
+                        .iter()
+                        .map(|ty| self.get_llvm_type(ty))
+                        .collect();
+
+                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+
+                    // Get a pointer to the tuple
+                    let tuple_ptr = if arg_val.is_pointer_value() {
+                        arg_val.into_pointer_value()
+                    } else {
+                        // If not already a pointer, create a temporary
+                        let alloca = self.builder.build_alloca(arg_val.get_type(), "tuple_temp").unwrap();
+                        self.builder.build_store(alloca, arg_val).unwrap();
+                        alloca
+                    };
+
+                    // Print each element with commas between them
+                    for (i, element_type) in element_types.iter().enumerate() {
+                        // If not the first element, print a comma and space
+                        if i > 0 {
+                            let comma_space = self.builder.build_global_string_ptr(", ", "comma_space").unwrap();
+                            self.builder.build_call(
+                                print_string_fn,
+                                &[comma_space.as_pointer_value().into()],
+                                "print_comma_space"
+                            ).unwrap();
+                        }
+
+                        // Get a pointer to the element
+                        let element_ptr = self.builder.build_struct_gep(
+                            tuple_struct,
+                            tuple_ptr,
+                            i as u32,
+                            &format!("tuple_element_{}", i)
+                        ).unwrap();
+
+                        // Load the element
+                        let element_val = self.builder.build_load(
+                            self.get_llvm_type(element_type),
+                            element_ptr,
+                            &format!("load_tuple_element_{}", i)
+                        ).unwrap();
+
+                        // Convert the element to a string and print it
+                        match element_type {
+                            Type::Int => {
+                                let int_to_string_fn = self.module.get_function("int_to_string")
+                                    .ok_or_else(|| "int_to_string function not found".to_string())?;
+
+                                let call = self.builder.build_call(
+                                    int_to_string_fn,
+                                    &[element_val.into()],
+                                    &format!("int_to_string_result_{}", i)
+                                ).unwrap();
+
+                                let str_ptr = call.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to convert integer to string".to_string())?;
+
+                                self.builder.build_call(
+                                    print_string_fn,
+                                    &[str_ptr.into()],
+                                    &format!("print_tuple_element_{}", i)
+                                ).unwrap();
+                            },
+                            Type::String => {
+                                self.builder.build_call(
+                                    print_string_fn,
+                                    &[element_val.into()],
+                                    &format!("print_tuple_element_{}", i)
+                                ).unwrap();
+                            },
+                            _ => {
+                                // For other types, just print a placeholder
+                                let placeholder = self.builder.build_global_string_ptr("<element>", "placeholder").unwrap();
+                                self.builder.build_call(
+                                    print_string_fn,
+                                    &[placeholder.as_pointer_value().into()],
+                                    &format!("print_tuple_element_{}", i)
+                                ).unwrap();
+                            }
+                        }
+                    }
+
+                    // Print the closing parenthesis
+                    let close_paren = self.builder.build_global_string_ptr(")", "close_paren").unwrap();
+                    self.builder.build_call(
+                        print_string_fn,
+                        &[close_paren.as_pointer_value().into()],
+                        "print_close_paren"
+                    ).unwrap();
+
+                    // If this is not the last argument, print a space
+                    if i < args.len() - 1 {
+                        let space_str = self.llvm_context.const_string(b" ", false);
+                        let global_str = self.module.add_global(space_str.get_type(), None, "space_str");
+                        global_str.set_initializer(&space_str);
+
+                        let str_ptr = self.builder.build_pointer_cast(
+                            global_str.as_pointer_value(),
+                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                            "str_ptr"
+                        ).unwrap();
+
+                        self.builder.build_call(print_string_fn, &[str_ptr.into()], "print_space").unwrap();
+                    } else {
+                        // If this is the last argument, print a newline
+                        let newline_str = self.llvm_context.const_string(b"\n", false);
+                        let global_str = self.module.add_global(newline_str.get_type(), None, "newline_str");
+                        global_str.set_initializer(&newline_str);
+
+                        let str_ptr = self.builder.build_pointer_cast(
+                            global_str.as_pointer_value(),
+                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                            "str_ptr"
+                        ).unwrap();
+
+                        self.builder.build_call(print_string_fn, &[str_ptr.into()], "print_newline").unwrap();
                     }
                 },
                 _ => {
