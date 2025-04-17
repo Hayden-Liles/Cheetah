@@ -329,7 +329,6 @@ pub fn cleanup() {
 #[unsafe(no_mangle)]
 pub extern "C" fn range_iterator_1(stop: i64) -> *mut RangeIterator {
     // Safety check: ensure stop is reasonable
-    eprintln!("[DEBUG] range_iterator_1 called with stop={}", stop);
     let safe_stop = if stop > RANGE_SIZE_LIMIT {
         eprintln!(
             "[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
@@ -347,9 +346,7 @@ pub extern "C" fn range_iterator_1(stop: i64) -> *mut RangeIterator {
     let iter_box = Box::new(iter);
 
     // Convert to raw pointer
-    let ptr = Box::into_raw(iter_box);
-    eprintln!("[DEBUG] range_iterator_1 returning pointer: {:p}", ptr);
-    ptr
+    Box::into_raw(iter_box)
 }
 
 /// Create a new range iterator with two arguments (start, stop)
@@ -418,21 +415,16 @@ pub extern "C" fn range_iterator_3(start: i64, stop: i64, step: i64) -> *mut Ran
 /// Get the next value from a range iterator
 #[unsafe(no_mangle)]
 pub extern "C" fn range_iterator_next(iter_ptr: *mut RangeIterator, value_ptr: *mut i64) -> bool {
-    eprintln!("[DEBUG] range_iterator_next called with iter_ptr={:p}, value_ptr={:p}", iter_ptr, value_ptr);
     if iter_ptr.is_null() || value_ptr.is_null() {
-        eprintln!("[DEBUG] range_iterator_next: null pointer detected, returning false");
         return false;
     }
 
     unsafe {
         let iter = &mut *iter_ptr;
-        eprintln!("[DEBUG] range_iterator_next: current={}, stop={}, step={}", iter.current, iter.stop, iter.step);
         if let Some(value) = iter.next() {
-            eprintln!("[DEBUG] range_iterator_next: got value {}, storing at {:p}", value, value_ptr);
             *value_ptr = value;
             true
         } else {
-            eprintln!("[DEBUG] range_iterator_next: no more values, returning false");
             false
         }
     }

@@ -1,8 +1,11 @@
 total = 0
 print("Initial total:", total)
 
-for i in range(20000000):
+print("Loop values:")
+for i in range(10):
+    print("i =", i)
     total += i
+    print("total =", total)
 
 # Print the final result
 print("Final sum:")

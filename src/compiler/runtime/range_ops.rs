@@ -14,6 +14,8 @@ static RANGE_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 const VERY_LARGE_RANGE_THRESHOLD: i64 = 10_000_000; // 10 million iterations is very large
 const RANGE_SIZE_LIMIT: i64 = 100_000_000; // Absolute maximum range size to prevent segfaults
 
+// We'll use a simpler approach without caching to avoid dependencies
+
 /// Register range operation functions in the module
 pub fn register_range_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
     // Create range_1 function (range with stop only)
@@ -56,6 +58,8 @@ pub fn init() {
 
     // Reset operation count
     RANGE_OPERATION_COUNT.store(0, Ordering::Relaxed);
+
+    // No cache to clear in this simplified version
 }
 
 /// Track a range operation
@@ -82,25 +86,18 @@ pub fn track_range_operation(start: i64, stop: i64, step: i64) {
     }
 }
 
-/// Calculate range size with safety checks
+/// Calculate range size with caching for performance
 pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
-    eprintln!("[DEBUG] calculate_range_size called with start={}, stop={}, step={}", start, stop, step);
+    // Simple calculation without caching
+
     // Calculate the range size
     let mut size = if step == 0 {
-        eprintln!("[DEBUG] step is zero, returning 0");
         0 // Avoid division by zero
     } else if step == 1 && start < stop {
-        eprintln!("[DEBUG] optimizing for common case: step=1, start < stop");
         stop - start // Optimize for common case
     } else if (step > 0 && start < stop) || (step < 0 && start > stop) {
-        eprintln!("[DEBUG] calculating size for general case");
-        let diff = (stop - start).abs();
-        let abs_step = step.abs();
-        let result = (diff + abs_step - 1) / abs_step; // Ceiling division for proper range size
-        eprintln!("[DEBUG] diff={}, abs_step={}, result={}", diff, abs_step, result);
-        result
+        (stop - start) / step + ((stop - start) % step != 0) as i64
     } else {
-        eprintln!("[DEBUG] invalid range, returning 0");
         0 // Invalid range
     };
 
@@ -111,21 +108,24 @@ pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
         size = RANGE_SIZE_LIMIT;
     }
 
-    eprintln!("[DEBUG] calculate_range_size returning {}", size);
+    // No caching in this simplified version
+
     size
 }
 
 /// Clean up range operations (free memory, etc.)
 pub fn cleanup() {
+    // No cache to clear in this simplified version
+
     // Reset operation count
     RANGE_OPERATION_COUNT.store(0, Ordering::Relaxed);
 }
 
 /// Range function with one argument (stop)
 #[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn range_1(stop: i64) -> i64 {
     // Safety check: ensure stop is reasonable
-    eprintln!("[DEBUG] range_1 called with stop={}", stop);
     let safe_stop = if stop > RANGE_SIZE_LIMIT {
         eprintln!("[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
                  stop, RANGE_SIZE_LIMIT);
@@ -135,17 +135,12 @@ pub extern "C" fn range_1(stop: i64) -> i64 {
     };
 
     track_range_operation(0, safe_stop, 1);
-
-    // The range size is the value we return
-    // For range objects, we'll use the integer value itself as a "pointer"
-    // This allows us to distinguish range objects from regular lists
-    let size = calculate_range_size(0, safe_stop, 1);
-    eprintln!("[DEBUG] range_1 returning size: {}", size);
-    size
+    calculate_range_size(0, safe_stop, 1)
 }
 
 /// Range function with two arguments (start, stop)
 #[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn range_2(start: i64, stop: i64) -> i64 {
     // Safety check: ensure range is reasonable
     let range_size = if start < stop { stop - start } else { 0 };
@@ -158,21 +153,22 @@ pub extern "C" fn range_2(start: i64, stop: i64) -> i64 {
     };
 
     track_range_operation(safe_start, safe_stop, 1);
-
-    // Calculate and return the range size as a "pointer"
-    let size = calculate_range_size(safe_start, safe_stop, 1);
-    println!("range_2 returning size: {}", size);
-    size
+    calculate_range_size(safe_start, safe_stop, 1)
 }
 
 /// Range function with three arguments (start, stop, step)
 #[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn range_3(start: i64, stop: i64, step: i64) -> i64 {
     // Safety check for step
     let safe_step = if step == 0 { 1 } else { step };
 
     // Calculate the theoretical range size
-    let range_size = calculate_range_size(start, stop, safe_step);
+    let range_size = if (safe_step > 0 && start < stop) || (safe_step < 0 && start > stop) {
+        ((stop - start) / safe_step).abs() + (((stop - start) % safe_step) != 0) as i64
+    } else {
+        0
+    };
 
     // Apply safety limits
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
@@ -188,15 +184,12 @@ pub extern "C" fn range_3(start: i64, stop: i64, step: i64) -> i64 {
     };
 
     track_range_operation(safe_start, safe_stop, safe_step);
-
-    // Calculate and return the range size as a "pointer"
-    let size = calculate_range_size(safe_start, safe_stop, safe_step);
-    println!("range_3 returning size: {}", size);
-    size
+    calculate_range_size(safe_start, safe_stop, safe_step)
 }
 
 /// Clean up range operations
 #[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn range_cleanup() {
     cleanup();
 }

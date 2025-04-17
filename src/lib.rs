@@ -8,7 +8,6 @@ pub mod visitor;
 pub mod formatter;
 pub mod compiler;
 pub mod typechecker;
-pub mod interpreter;
 
 // Import the Visitor trait so it's in scope
 use crate::visitor::Visitor;
