@@ -134,18 +134,13 @@ pub fn track_range_operation(start: i64, stop: i64, step: i64) {
 
 /// Calculate range size with optimized paths
 pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
-    eprintln!("[DEBUG] calculate_range_size called with start={}, stop={}, step={}", start, stop, step);
-
     // Fast path for common cases
     let mut size = if step == 0 {
-        eprintln!("[DEBUG] step is zero, returning 0");
         0
     } else if step == 1 && start < stop {
-        eprintln!("[DEBUG] optimizing for common case: step=1, start < stop");
         // Use direct calculation for consecutive integers
         stop - start
     } else if (step > 0 && start < stop) || (step < 0 && start > stop) {
-        eprintln!("[DEBUG] calculating size for general case");
         let diff = (stop - start).abs();
         let abs_step = step.abs();
         // Optimize division for power-of-two steps
@@ -155,12 +150,12 @@ pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
             (diff + abs_step - 1) / abs_step // Ceiling division
         }
     } else {
-        eprintln!("[DEBUG] invalid range, returning 0");
         0
     };
 
     // Apply safety limits
     if size > RANGE_SIZE_LIMIT {
+        #[cfg(debug_assertions)]
         eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
                  size, RANGE_SIZE_LIMIT);
         size = RANGE_SIZE_LIMIT;
@@ -188,8 +183,8 @@ pub fn cleanup() {
 #[unsafe(no_mangle)]
 pub extern "C" fn range_1(stop: i64) -> i64 {
     // Safety check: ensure stop is reasonable
-    eprintln!("[DEBUG] range_1 called with stop={}", stop);
     let safe_stop = if stop > RANGE_SIZE_LIMIT {
+        #[cfg(debug_assertions)]
         eprintln!("[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
                  stop, RANGE_SIZE_LIMIT);
         RANGE_SIZE_LIMIT
@@ -197,14 +192,13 @@ pub extern "C" fn range_1(stop: i64) -> i64 {
         stop
     };
 
+    #[cfg(debug_assertions)]
     track_range_operation(0, safe_stop, 1);
 
     // The range size is the value we return
     // For range objects, we'll use the integer value itself as a "pointer"
     // This allows us to distinguish range objects from regular lists
-    let size = calculate_range_size(0, safe_stop, 1);
-    eprintln!("[DEBUG] range_1 returning size: {}", size);
-    size
+    calculate_range_size(0, safe_stop, 1)
 }
 
 /// Range function with two arguments (start, stop)
@@ -213,6 +207,7 @@ pub extern "C" fn range_2(start: i64, stop: i64) -> i64 {
     // Safety check: ensure range is reasonable
     let range_size = if start < stop { stop - start } else { 0 };
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
+        #[cfg(debug_assertions)]
         eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
                  range_size, RANGE_SIZE_LIMIT);
         (start, start + RANGE_SIZE_LIMIT)
@@ -220,12 +215,11 @@ pub extern "C" fn range_2(start: i64, stop: i64) -> i64 {
         (start, stop)
     };
 
+    #[cfg(debug_assertions)]
     track_range_operation(safe_start, safe_stop, 1);
 
     // Calculate and return the range size as a "pointer"
-    let size = calculate_range_size(safe_start, safe_stop, 1);
-    println!("range_2 returning size: {}", size);
-    size
+    calculate_range_size(safe_start, safe_stop, 1)
 }
 
 /// Range function with three arguments (start, stop, step)
@@ -239,6 +233,7 @@ pub extern "C" fn range_3(start: i64, stop: i64, step: i64) -> i64 {
 
     // Apply safety limits
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
+        #[cfg(debug_assertions)]
         eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
                  range_size, RANGE_SIZE_LIMIT);
         if safe_step > 0 {
@@ -250,12 +245,11 @@ pub extern "C" fn range_3(start: i64, stop: i64, step: i64) -> i64 {
         (start, stop)
     };
 
+    #[cfg(debug_assertions)]
     track_range_operation(safe_start, safe_stop, safe_step);
 
     // Calculate and return the range size as a "pointer"
-    let size = calculate_range_size(safe_start, safe_stop, safe_step);
-    println!("range_3 returning size: {}", size);
-    size
+    calculate_range_size(safe_start, safe_stop, safe_step)
 }
 
 /// Clean up range operations
@@ -392,6 +386,21 @@ pub extern "C" fn unrolled_range_sum(start: i64, end: i64) -> i64 {
 /// Optimized range iterator that chooses the best implementation
 #[unsafe(no_mangle)]
 pub extern "C" fn optimized_range_sum(start: i64, end: i64) -> i64 {
+    // For simple sum from 0 to n-1, use the arithmetic formula
+    if start == 0 {
+        return (end * (end - 1)) / 2;
+    }
+
+    // For other ranges, use the arithmetic sum formula if possible
+    if start < end {
+        // Sum of arithmetic sequence: n/2 * (first + last)
+        // where n is the number of elements, first is the first element, last is the last element
+        let n = end - start;
+        let first = start;
+        let last = end - 1;
+        return n * (first + last) / 2;
+    }
+
     let size = end - start;
 
     // Choose the most appropriate implementation based on range size
