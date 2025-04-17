@@ -66,7 +66,6 @@ pub extern "C" fn list_with_capacity(capacity: i64) -> *mut List {
 /// Get an item from a list
 #[unsafe(no_mangle)]
 pub extern "C" fn list_get(list_ptr: *mut List, index: i64) -> *mut c_void {
-    println!("list_get called with index: {}", index);
 
     // Check if this is a range object - use a safer approach
     if list_ptr as usize <= 1000000 && list_ptr as usize > 0 && (list_ptr as usize & 0xFFF) == 0 {
