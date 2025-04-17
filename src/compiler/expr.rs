@@ -82,8 +82,14 @@ pub trait ExprCompiler<'ctx> {
     /// Compile a dictionary comprehension expression
     fn compile_dict_comprehension(&mut self, key: &Expr, value: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
+    /// Non-recursive implementation of dictionary comprehension compilation
+    fn compile_dict_comprehension_non_recursive(&mut self, key: &Expr, value: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+
     /// Compile an attribute access expression (e.g., dict.keys())
     fn compile_attribute_access(&mut self, value: &Expr, attr: &str) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+
+    /// Non-recursive implementation of attribute access compilation
+    fn compile_attribute_access_non_recursive(&mut self, value: &Expr, attr: &str) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
     /// Compile a dict.keys() method call
     fn compile_dict_keys(&mut self, dict_ptr: inkwell::values::PointerValue<'ctx>, key_type: &Type) -> Result<(BasicValueEnum<'ctx>, Type), String>;
@@ -317,12 +323,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         work_stack.push((value, slice));
 
         while let Some((current_value, current_slice)) = work_stack.pop() {
-            // Compile the value
-            let (value_val, value_type) = self.compile_expr(current_value)?;
+            // Compile the value using the non-recursive implementation
+            use crate::compiler::expr_non_recursive::ExprNonRecursive;
+            let (value_val, value_type) = self.compile_expr_non_recursive(current_value)?;
 
             // Handle the slice
             let result = if let Expr::Slice { lower, upper, step, .. } = current_slice {
-                self.compile_slice_operation(
+                self.compile_slice_operation_non_recursive(
                     value_val,
                     value_type,
                     lower.as_deref(),
@@ -363,8 +370,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Ensure the current block has a terminator before we create new blocks
         self.ensure_block_has_terminator();
 
-        // Compile the index for regular subscript
-        let (index_val, index_type) = self.compile_expr(slice)?;
+        // Compile the index for regular subscript using the non-recursive implementation
+        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+        let (index_val, index_type) = self.compile_expr_non_recursive(slice)?;
 
         // Ensure the current block has a terminator after compiling the index
         self.ensure_block_has_terminator();
@@ -1060,7 +1068,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Handle start index (default = 0)
                 let start_val = match lower {
                     Some(expr) => {
-                        let (start_val, start_type) = self.compile_expr(expr)?;
+                        // Use non-recursive implementation
+                        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+                        let (start_val, start_type) = self.compile_expr_non_recursive(expr)?;
                         if !start_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice start index must be an integer, got {:?}", start_type));
                         }
@@ -1084,7 +1094,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Handle stop index (default = list length)
                 let stop_val = match upper {
                     Some(expr) => {
-                        let (stop_val, stop_type) = self.compile_expr(expr)?;
+                        // Use non-recursive implementation
+                        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+                        let (stop_val, stop_type) = self.compile_expr_non_recursive(expr)?;
                         if !stop_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice stop index must be an integer, got {:?}", stop_type));
                         }
@@ -1108,7 +1120,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Handle step (default = 1)
                 let step_val = match step {
                     Some(expr) => {
-                        let (step_val, step_type) = self.compile_expr(expr)?;
+                        // Use non-recursive implementation
+                        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+                        let (step_val, step_type) = self.compile_expr_non_recursive(expr)?;
                         if !step_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice step must be an integer, got {:?}", step_type));
                         }
@@ -1163,7 +1177,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Handle start index (default = 0)
                 let start_val = match lower {
                     Some(expr) => {
-                        let (start_val, start_type) = self.compile_expr(expr)?;
+                        // Use non-recursive implementation
+                        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+                        let (start_val, start_type) = self.compile_expr_non_recursive(expr)?;
                         if !start_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice start index must be an integer, got {:?}", start_type));
                         }
@@ -1181,7 +1197,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Handle stop index (default = string length)
                 let stop_val = match upper {
                     Some(expr) => {
-                        let (stop_val, stop_type) = self.compile_expr(expr)?;
+                        // Use non-recursive implementation
+                        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+                        let (stop_val, stop_type) = self.compile_expr_non_recursive(expr)?;
                         if !stop_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice stop index must be an integer, got {:?}", stop_type));
                         }
@@ -1199,7 +1217,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Handle step (default = 1)
                 let step_val = match step {
                     Some(expr) => {
-                        let (step_val, step_type) = self.compile_expr(expr)?;
+                        // Use non-recursive implementation
+                        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+                        let (step_val, step_type) = self.compile_expr_non_recursive(expr)?;
                         if !step_type.can_coerce_to(&Type::Int) {
                             return Err(format!("Slice step must be an integer, got {:?}", step_type));
                         }
@@ -2557,7 +2577,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         self.builder.position_at_end(then_block);
 
         // Compile the element expression non-recursively
-        let (element_val, mut element_type) = self.compile_expr(elt)?;
+        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+        let (element_val, mut element_type) = self.compile_expr_non_recursive(elt)?;
 
         // If the element type is a tuple, extract the element type if all elements are the same
         element_type = match &element_type {
@@ -2636,8 +2657,15 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
     /// Compile an attribute access expression (e.g., dict.keys())
     fn compile_attribute_access(&mut self, value: &Expr, attr: &str) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        // Compile the value being accessed
-        let (value_val, value_type) = self.compile_expr(value)?;
+        // Always use the non-recursive implementation to avoid stack overflow
+        self.compile_attribute_access_non_recursive(value, attr)
+    }
+
+    /// Non-recursive implementation of attribute access compilation
+    fn compile_attribute_access_non_recursive(&mut self, value: &Expr, attr: &str) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Compile the value being accessed using the non-recursive implementation
+        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+        let (value_val, value_type) = self.compile_expr_non_recursive(value)?;
 
         // Handle different types of attribute access
         match &value_type {
@@ -2678,6 +2706,12 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
     /// Compile a dictionary comprehension expression
     fn compile_dict_comprehension(&mut self, key: &Expr, value: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Always use the non-recursive implementation to avoid stack overflow
+        self.compile_dict_comprehension_non_recursive(key, value, generators)
+    }
+
+    /// Non-recursive implementation of dictionary comprehension compilation
+    fn compile_dict_comprehension_non_recursive(&mut self, key: &Expr, value: &Expr, generators: &[crate::ast::Comprehension]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         if generators.is_empty() {
             return Err("Dictionary comprehension must have at least one generator".to_string());
         }
@@ -2697,8 +2731,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Compile the first generator
         let generator = &generators[0];
 
-        // Compile the iterable expression
-        let (iter_val, iter_type) = self.compile_expr(&generator.iter)?;
+        // Compile the iterable expression using the non-recursive implementation
+        use crate::compiler::expr_non_recursive::ExprNonRecursive;
+        let (iter_val, iter_type) = self.compile_expr_non_recursive(&generator.iter)?;
 
         // Special case for range function
         if let Expr::Call { func, .. } = &*generator.iter {
@@ -2730,7 +2765,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                     let mut call_args = Vec::with_capacity(args.len());
                     for arg in args {
-                        let (arg_val, _) = self.compile_expr(arg)?;
+                        let (arg_val, _) = self.compile_expr_non_recursive(arg)?;
                         call_args.push(arg_val.into());
                     }
 
@@ -2791,8 +2826,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 let if_block = self.llvm_context.append_basic_block(current_function, "if_block");
                                 condition_blocks.push(if_block);
 
-                                // Compile the condition
-                                let (cond_val, _) = self.compile_expr(if_expr)?;
+                                // Compile the condition using the non-recursive implementation
+                                let (cond_val, _) = self.compile_expr_non_recursive(if_expr)?;
                                 let cond_val = self.builder.build_int_truncate_or_bit_cast(cond_val.into_int_value(), self.llvm_context.bool_type(), "cond").unwrap();
 
                                 // Branch based on the condition
@@ -2803,9 +2838,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 continue_block = if_block;
                             }
 
-                            // Compile the key and value expressions
-                            let (key_val, key_type) = self.compile_expr(key)?;
-                            let (value_val, value_type) = self.compile_expr(value)?;
+                            // Compile the key and value expressions using the non-recursive implementation
+                            let (key_val, key_type) = self.compile_expr_non_recursive(key)?;
+                            let (value_val, value_type) = self.compile_expr_non_recursive(value)?;
 
                             // Convert the key and value to the appropriate types for dict_set
                             // For dictionary comprehensions, we don't need to convert Int to Any
@@ -2993,8 +3028,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             let if_block = self.llvm_context.append_basic_block(current_function, "if_block");
                             condition_blocks.push(if_block);
 
-                            // Compile the condition
-                            let (cond_val, _) = self.compile_expr(if_expr)?;
+                            // Compile the condition using the non-recursive implementation
+                            let (cond_val, _) = self.compile_expr_non_recursive(if_expr)?;
                             let cond_val = self.builder.build_int_truncate_or_bit_cast(cond_val.into_int_value(), self.llvm_context.bool_type(), "cond").unwrap();
 
                             // Branch based on the condition
@@ -3005,9 +3040,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             continue_block = if_block;
                         }
 
-                        // Compile the key and value expressions
-                        let (key_val, key_type) = self.compile_expr(key)?;
-                        let (value_val, value_type) = self.compile_expr(value)?;
+                        // Compile the key and value expressions using the non-recursive implementation
+                        let (key_val, key_type) = self.compile_expr_non_recursive(key)?;
+                        let (value_val, value_type) = self.compile_expr_non_recursive(value)?;
 
                         // Convert the key and value to the appropriate types for dict_set
                         // For dictionary comprehensions, we don't need to convert Int to Any
