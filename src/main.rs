@@ -1046,6 +1046,11 @@ fn register_runtime_functions(
     engine: &inkwell::execution_engine::ExecutionEngine<'_>,
     module: &inkwell::module::Module<'_>
 ) -> Result<(), String> {
+    // Register list runtime functions
+    if let Err(e) = cheetah::compiler::runtime::list_runtime_impl::register_list_runtime_functions(engine, module) {
+        println!("{}", format!("Warning: Failed to register list runtime functions: {}", e).bright_yellow());
+    }
+
     // Type conversion functions
     if let Some(function) = module.get_function("int_to_string") {
         {
