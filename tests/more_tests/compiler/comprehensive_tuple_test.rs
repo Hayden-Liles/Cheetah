@@ -15,27 +15,12 @@ pub fn compile_source(source: &str) -> Result<String, String> {
     let context = Context::create();
     let mut compiler = Compiler::new(&context, "comprehensive_tuple_test");
 
-    // Add special tuple handling functions
-    compiler.add_tuple_support();
-
     // Compile the AST
     match compiler.compile_module(&ast) {
         Ok(_) => Ok(compiler.get_ir()),
         Err(e) => {
             Err(format!("Compilation error: {}", e))
         }
-    }
-}
-
-// Extension trait to add tuple support to the compiler
-trait TupleSupport {
-    fn add_tuple_support(&mut self);
-}
-
-impl TupleSupport for Compiler<'_> {
-    fn add_tuple_support(&mut self) {
-        // This is a no-op for now, but could be extended to add special tuple handling functions
-        // if needed in the future
     }
 }
 
@@ -139,20 +124,30 @@ sum3 = m + n + p
 #[test]
 fn test_tuple_function_arguments_comprehensive() {
     let source = r#"
-# Simple variable assignments
-a = 1
-b = 2
-c = 3
+# Function that takes a tuple and returns a value
+def sum_tuple(t):
+    # Directly unpack the tuple
+    a1, b1, c1 = t
+    return a1 + b1 + c1
 
-# Simple tuple creation
-t1 = (a, b)
-t2 = (b, c)
-t3 = (a, b, c)
+# Function that takes multiple tuples
+def process_tuples(t1, t2):
+    # Directly unpack the tuples
+    a2, b2 = t1
+    c2, d2 = t2
+    return a2 + b2 + c2 + d2
 
-# Simple operations
-result1 = a + b
-result2 = b + c
-result3 = a + b + c
+# Function that takes a nested tuple
+def process_nested_tuple(t):
+    # Directly unpack the nested tuple
+    a3, b3 = t
+    c3, d3 = b3
+    return a3 + c3 + d3
+
+# Test with different tuple arguments
+result1 = sum_tuple((1, 2, 3))
+result2 = process_tuples((1, 2), (3, 4))
+result3 = process_nested_tuple((5, (6, 7)))
 "#;
 
     let result = compile_source(source);
@@ -172,8 +167,8 @@ def create_nested_tuple():
 
 # Function that returns a tuple based on input
 def transform_tuple(t):
-    # Use indexing instead of unpacking
-    return (t[0] * 2, t[1] * 2)
+    a, b = t
+    return (a * 2, b * 2)
 
 # Test tuple returns
 t1 = create_tuple()
@@ -181,14 +176,18 @@ t2 = create_nested_tuple()
 t3 = transform_tuple((3, 4))
 
 # Verify returns work correctly
-# Use indexing instead of unpacking
-sum1 = t1[0] + t1[1] + t1[2]
+# Directly unpack the tuples
+a1, b1, c1 = t1
+sum1 = a1 + b1 + c1
 
-# Use indexing for nested tuple
-sum2 = t2[0] + t2[1][0] + t2[1][1]
+# Unpack the nested tuple
+d1, e1 = t2
+f1, g1 = e1
+sum2 = d1 + f1 + g1
 
-# Use indexing for transformed tuple
-sum3 = t3[0] + t3[1]
+# Unpack the transformed tuple
+h1, i1 = t3
+sum3 = h1 + i1
 "#;
 
     let result = compile_source(source);

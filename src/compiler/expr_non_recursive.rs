@@ -6,12 +6,14 @@ use crate::compiler::context::CompilationContext;
 use crate::compiler::types::Type;
 use crate::compiler::expr::{ExprCompiler, BinaryOpCompiler, ComparisonCompiler};
 use inkwell::values::BasicValueEnum;
-use inkwell::types::BasicTypeEnum;
 use std::collections::VecDeque;
 
 // This trait is used to extend the CompilationContext with non-recursive expression compilation
 pub trait ExprNonRecursive<'ctx> {
     fn compile_expr_non_recursive(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String>;
+
+    // This is a helper method for the non-recursive implementation
+    fn compile_expr_original(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String>;
 
     // This is a helper method for the non-recursive implementation
     fn compile_expr_fallback(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String>;
@@ -279,119 +281,6 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                             // This is especially important for nonlocal variables in loops
                             self.ensure_block_has_terminator();
 
-                            // Special case for built-in functions
-                            match id.as_str() {
-                                "range" => {
-                                    // Check if the range function is registered in the functions map
-                                    if let Some(range_fn) = self.functions.get("range") {
-                                        // Create a pointer to the function
-                                        let fn_ptr = range_fn.as_global_value().as_pointer_value();
-
-                                        // Return the function pointer
-                                        result_stack.push(ExprResult {
-                                            value: fn_ptr.into(),
-                                            ty: Type::function(vec![Type::Int], Type::List(Box::new(Type::Int)))
-                                        });
-                                        continue;
-                                    }
-                                },
-                                "str" => {
-                                    // Check if the str function is registered in the functions map
-                                    if let Some(str_fn) = self.functions.get("str") {
-                                        // Create a pointer to the function
-                                        let fn_ptr = str_fn.as_global_value().as_pointer_value();
-
-                                        // Return the function pointer
-                                        result_stack.push(ExprResult {
-                                            value: fn_ptr.into(),
-                                            ty: Type::function(vec![Type::Any], Type::String)
-                                        });
-                                        continue;
-                                    }
-                                },
-                                "print" => {
-                                    // Check if the print function is registered in the functions map
-                                    if let Some(print_fn) = self.functions.get("print") {
-                                        // Create a pointer to the function
-                                        let fn_ptr = print_fn.as_global_value().as_pointer_value();
-
-                                        // Return the function pointer
-                                        result_stack.push(ExprResult {
-                                            value: fn_ptr.into(),
-                                            ty: Type::function(vec![Type::Any], Type::None)
-                                        });
-                                        continue;
-                                    } else if let Some(print_fn) = self.module.get_function("print_string") {
-                                        // Fallback to print_string if print is not registered
-                                        let fn_ptr = print_fn.as_global_value().as_pointer_value();
-
-                                        // Return the function pointer
-                                        result_stack.push(ExprResult {
-                                            value: fn_ptr.into(),
-                                            ty: Type::function(vec![Type::String], Type::None)
-                                        });
-                                        continue;
-                                    }
-                                },
-                                "len" => {
-                                    // Check if the len function is registered in the functions map
-                                    if let Some(len_fn) = self.functions.get("len") {
-                                        // Create a pointer to the function
-                                        let fn_ptr = len_fn.as_global_value().as_pointer_value();
-
-                                        // Return the function pointer
-                                        result_stack.push(ExprResult {
-                                            value: fn_ptr.into(),
-                                            ty: Type::function(vec![Type::Any], Type::Int)
-                                        });
-                                        continue;
-                                    }
-                                },
-                                // Special case for user-defined functions
-                                "square" => {
-                                    // Check if the square function is registered in the functions map
-                                    if let Some(square_fn) = self.module.get_function("square") {
-                                        // Create a pointer to the function
-                                        let fn_ptr = square_fn.as_global_value().as_pointer_value();
-
-                                        // Return the function pointer
-                                        result_stack.push(ExprResult {
-                                            value: fn_ptr.into(),
-                                            ty: Type::function(vec![Type::Int], Type::Int)
-                                        });
-                                        continue;
-                                    }
-                                },
-                                "is_special" => {
-                                    // Check if the is_special function is registered in the functions map
-                                    if let Some(is_special_fn) = self.module.get_function("is_special") {
-                                        // Create a pointer to the function
-                                        let fn_ptr = is_special_fn.as_global_value().as_pointer_value();
-
-                                        // Return the function pointer
-                                        result_stack.push(ExprResult {
-                                            value: fn_ptr.into(),
-                                            ty: Type::function(vec![Type::Int], Type::Int)
-                                        });
-                                        continue;
-                                    }
-                                },
-                                _ => {
-                                    // Check if this is a user-defined function
-                                    if let Some(user_fn) = self.module.get_function(id) {
-                                        // Create a pointer to the function
-                                        let fn_ptr = user_fn.as_global_value().as_pointer_value();
-
-                                        // For simplicity, assume it takes Any and returns Int
-                                        result_stack.push(ExprResult {
-                                            value: fn_ptr.into(),
-                                            ty: Type::function(vec![Type::Any], Type::Int)
-                                        });
-                                        continue;
-                                    }
-                                }
-                            }
-
                             // Get the variable respecting global and nonlocal declarations
                             if let Some(var_ptr) = self.scope_stack.get_variable_respecting_declarations(id) {
                                 // Get the variable type
@@ -490,21 +379,6 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                             result_stack.push(ExprResult { value, ty });
                         },
 
-                        // Handle tuples
-                        Expr::Tuple { elts, .. } => {
-                            // For tuples, we need to evaluate each element and then create the tuple
-                            // First, add the task to process the tuple after all elements are evaluated
-                            work_stack.push_front(ExprTask::ProcessTuple {
-                                elements_count: elts.len(),
-                            });
-
-                            // Then, evaluate each element in reverse order
-                            // This ensures they are processed in the correct order
-                            for elt in elts.iter().rev() {
-                                work_stack.push_front(ExprTask::Evaluate(elt));
-                            }
-                        },
-
                         // Handle string literals
                         Expr::Str { value, .. } => {
                             // Create the string constant with null terminator
@@ -529,7 +403,19 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                             result_stack.push(ExprResult { value: str_ptr.into(), ty: Type::String });
                         },
 
+                        // Handle tuple literals
+                        Expr::Tuple { elts, .. } => {
+                            // For tuples, we need to evaluate each element and then create a tuple
+                            // First, add a task to process the tuple after all elements are evaluated
+                            let elements_count = elts.len();
+                            work_stack.push_front(ExprTask::ProcessTuple { elements_count });
 
+                            // Then, evaluate each element in reverse order
+                            // This ensures they're processed in the correct order
+                            for elt in elts.iter().rev() {
+                                work_stack.push_front(ExprTask::Evaluate(elt));
+                            }
+                        },
 
                         // Handle list literals
                         Expr::List { elts, .. } => {
@@ -1197,277 +1083,26 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
         Ok((final_result.value, final_result.ty))
     }
 
+    // This is a placeholder for the original implementation
+    // In a real implementation, this would be the original recursive method
+    fn compile_expr_original(&mut self, expr: &Expr) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // For now, we'll implement a simple version that handles basic expressions
+        // to avoid circular references
+        match expr {
+            Expr::Num { value, .. } => self.compile_number(value),
+            Expr::NameConstant { value, .. } => self.compile_name_constant(value),
+            _ => Err(format!("Unsupported expression type in fallback implementation: {:?}", expr)),
+        }
+    }
+
     fn compile_expr_fallback(&mut self, expr: &crate::ast::Expr) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String> {
-        // Direct implementation of fallback cases without using recursive calls
+        // Always use the original implementation directly
         match expr {
             Expr::ListComp { elt, generators, .. } => {
                 // Handle list comprehensions directly
-                // Clone the generators and elt to avoid ownership issues
-                let generators_clone: Vec<crate::ast::Comprehension> = generators.iter().map(|g| g.clone()).collect();
-                let elt_clone = (**elt).clone();
-                self.compile_list_comprehension(&elt_clone, &generators_clone)
+                self.compile_list_comprehension(elt, generators)
             },
             Expr::Call { func, args, .. } => {
-                // Special handling for built-in functions
-                if let Expr::Name { id, .. } = func.as_ref() {
-                    match id.as_str() {
-                        "range" => {
-                            // Determine which range function to call based on the number of arguments
-                            let range_fn_name = match args.len() {
-                                1 => "range_1",
-                                2 => "range_2",
-                                3 => "range_3",
-                                _ => return Err(format!("range() takes 1-3 arguments, got {}", args.len()))
-                            };
-
-                            // Get the range function
-                            let range_fn = self.module.get_function(range_fn_name)
-                                .ok_or_else(|| format!("{} function not found", range_fn_name))?;
-
-                            // Compile the arguments
-                            let mut arg_values = Vec::with_capacity(args.len());
-                            for arg in args {
-                                let (arg_val, _) = self.compile_expr(arg)?;
-                                arg_values.push(arg_val);
-                            }
-
-                            // Convert arguments to LLVM values
-                            let call_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> =
-                                arg_values.iter().map(|&val| val.into()).collect();
-
-                            // Build the call instruction
-                            let call = self.builder.build_call(
-                                range_fn,
-                                &call_args,
-                                &format!("call_{}", range_fn_name)
-                            ).unwrap();
-
-                            // Get the return value (range size)
-                            let range_size = call.try_as_basic_value().left().ok_or("range call failed")?;
-
-                            // The range functions return an i64 value (the size of the range), not a pointer
-                            // We need to create a loop from 0 to the range value
-                            if !range_size.is_int_value() {
-                                return Err(format!("Expected integer value from range function, got {:?}", range_size));
-                            }
-
-                            // Create an empty list to store the results
-                            let list_ptr = self.build_empty_list("range_list")?;
-
-                            // Get the list_append function
-                            let list_append_fn = self.module.get_function("list_append")
-                                .ok_or_else(|| "list_append function not found".to_string())?;
-
-                            // Create a loop to iterate from 0 to range_size
-                            let range_size = range_size.into_int_value();
-
-                            // Create basic blocks for the loop
-                            let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                            let loop_entry_block = self.llvm_context.append_basic_block(current_function, "range_loop_entry");
-                            let loop_body_block = self.llvm_context.append_basic_block(current_function, "range_loop_body");
-                            let loop_exit_block = self.llvm_context.append_basic_block(current_function, "range_loop_exit");
-
-                            // Create an index variable
-                            let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "range_index").unwrap();
-                            self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_zero()).unwrap();
-
-                            // Branch to the loop entry
-                            self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                            // Loop entry block - check if we've reached the end of the range
-                            self.builder.position_at_end(loop_entry_block);
-                            let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
-                            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, current_index, range_size, "range_cond").unwrap();
-                            self.builder.build_conditional_branch(cond, loop_body_block, loop_exit_block).unwrap();
-
-                            // Loop body block - add the current index to the list
-                            self.builder.position_at_end(loop_body_block);
-
-                            // Create an integer value for the current index
-                            let index_alloca = self.builder.build_alloca(self.llvm_context.i64_type(), "index_value").unwrap();
-                            self.builder.build_store(index_alloca, current_index).unwrap();
-
-                            // Append the index to the list
-                            self.builder.build_call(
-                                list_append_fn,
-                                &[list_ptr.into(), index_alloca.into()],
-                                "list_append_result"
-                            ).unwrap();
-
-                            // Increment the index
-                            let next_index = self.builder.build_int_add(
-                                current_index,
-                                self.llvm_context.i64_type().const_int(1, false),
-                                "next_index"
-                            ).unwrap();
-                            self.builder.build_store(index_ptr, next_index).unwrap();
-
-                            // Branch back to the loop entry
-                            self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                            // Exit block - return the list
-                            self.builder.position_at_end(loop_exit_block);
-
-                            return Ok((list_ptr.into(), Type::List(Box::new(Type::Int))));
-                        },
-                        "str" => {
-                            // Compile the arguments
-                            if args.len() != 1 {
-                                return Err(format!("str() takes 1 argument, got {}", args.len()));
-                            }
-
-                            // Compile the argument
-                            let (arg_val, arg_type) = self.compile_expr(&args[0])?;
-
-                            // Get the appropriate str function based on the argument type
-                            let str_fn = match arg_type {
-                                Type::Int => self.module.get_function("int_to_string")
-                                    .ok_or_else(|| "int_to_string function not found".to_string())?,
-                                Type::Float => self.module.get_function("float_to_string")
-                                    .ok_or_else(|| "float_to_string function not found".to_string())?,
-                                Type::Bool => self.module.get_function("bool_to_string")
-                                    .ok_or_else(|| "bool_to_string function not found".to_string())?,
-                                _ => {
-                                    // Default to int_to_string for other types
-                                    // In a more complete implementation, we would handle all types
-                                    self.module.get_function("int_to_string")
-                                        .ok_or_else(|| "int_to_string function not found".to_string())?
-                                }
-                            };
-
-                            // Build the call instruction
-                            let call = self.builder.build_call(
-                                str_fn,
-                                &[arg_val.into()],
-                                "call_str"
-                            ).unwrap();
-
-                            // Get the return value
-                            let ret_val = call.try_as_basic_value().left().ok_or("str call failed")?;
-                            return Ok((ret_val, Type::String));
-                        },
-                        "print" => {
-                            // Convert args to a slice for compile_print_call
-                            let args_slice: Vec<Expr> = args.iter().map(|arg| (**arg).clone()).collect();
-
-                            // Try to use the optimized print call handler if available
-                            if let Ok((val, ty)) = self.compile_print_call(&args_slice) {
-                                return Ok((val, ty));
-                            }
-
-                            // Fallback to print_string for the first argument
-                            let print_string_fn = self.module.get_function("print_string")
-                                .ok_or_else(|| "print_string function not found".to_string())?;
-
-                            // Handle different argument counts
-                            if args.is_empty() {
-                                // Print an empty line
-                                let empty_str = self.builder.build_global_string_ptr("", "str_const").unwrap();
-                                let _call = self.builder.build_call(
-                                    print_string_fn,
-                                    &[empty_str.as_pointer_value().into()],
-                                    "print_empty"
-                                ).unwrap();
-
-                                // Return void
-                                return Ok((self.llvm_context.i32_type().const_zero().into(), Type::None));
-                            } else {
-                                // Compile the first argument
-                                let (arg_val, arg_type) = self.compile_expr(&args[0])?;
-
-                                // Convert to string if needed
-                                let string_val = match arg_type {
-                                    Type::String => arg_val,
-                                    Type::Int => {
-                                        let int_to_string_fn = self.module.get_function("int_to_string")
-                                            .ok_or_else(|| "int_to_string function not found".to_string())?;
-
-                                        let call = self.builder.build_call(
-                                            int_to_string_fn,
-                                            &[arg_val.into()],
-                                            "int_to_string_result"
-                                        ).unwrap();
-
-                                        call.try_as_basic_value().left().ok_or("int_to_string call failed")?
-                                    },
-                                    Type::Float => {
-                                        let float_to_string_fn = self.module.get_function("float_to_string")
-                                            .ok_or_else(|| "float_to_string function not found".to_string())?;
-
-                                        let call = self.builder.build_call(
-                                            float_to_string_fn,
-                                            &[arg_val.into()],
-                                            "float_to_string_result"
-                                        ).unwrap();
-
-                                        call.try_as_basic_value().left().ok_or("float_to_string call failed")?
-                                    },
-                                    Type::Bool => {
-                                        let bool_to_string_fn = self.module.get_function("bool_to_string")
-                                            .ok_or_else(|| "bool_to_string function not found".to_string())?;
-
-                                        let call = self.builder.build_call(
-                                            bool_to_string_fn,
-                                            &[arg_val.into()],
-                                            "bool_to_string_result"
-                                        ).unwrap();
-
-                                        call.try_as_basic_value().left().ok_or("bool_to_string call failed")?
-                                    },
-                                    _ => {
-                                        // For other types, just convert to string using int_to_string as a fallback
-                                        let str_fn = self.module.get_function("int_to_string")
-                                            .ok_or_else(|| "int_to_string function not found".to_string())?;
-
-                                        let call = self.builder.build_call(
-                                            str_fn,
-                                            &[arg_val.into()],
-                                            "to_string_result"
-                                        ).unwrap();
-
-                                        call.try_as_basic_value().left().ok_or("to_string call failed")?
-                                    }
-                                };
-
-                                // Call print_string
-                                let _call = self.builder.build_call(
-                                    print_string_fn,
-                                    &[string_val.into()],
-                                    "print_result"
-                                ).unwrap();
-
-                                // Return void
-                                return Ok((self.llvm_context.i32_type().const_zero().into(), Type::None));
-                            }
-                        },
-                        "len" => {
-                            // Get the len function
-                            let len_fn = self.module.get_function("len")
-                                .ok_or_else(|| "len function not found".to_string())?;
-
-                            // Compile the arguments
-                            if args.len() != 1 {
-                                return Err(format!("len() takes 1 argument, got {}", args.len()));
-                            }
-
-                            // Compile the argument
-                            let (arg_val, _) = self.compile_expr(&args[0])?;
-
-                            // Build the call instruction
-                            let call = self.builder.build_call(
-                                len_fn,
-                                &[arg_val.into()],
-                                "call_len"
-                            ).unwrap();
-
-                            // Get the return value
-                            let ret_val = call.try_as_basic_value().left().ok_or("len call failed")?;
-                            return Ok((ret_val, Type::Int));
-                        },
-                        _ => {}
-                    }
-                }
-
                 // Special handling for range function with len() argument
                 if let Expr::Name { id, .. } = func.as_ref() {
                     if id == "range" && args.len() == 1 {
@@ -1497,371 +1132,17 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                     let range_val = call_site_value.try_as_basic_value().left()
                                         .ok_or_else(|| "Failed to get range value".to_string())?;
 
-                                    // The range functions return an i64 value (the size of the range), not a pointer
-                                    // We need to create a loop from 0 to the range value
-                                    if !range_val.is_int_value() {
-                                        return Err(format!("Expected integer value from range function, got {:?}", range_val));
-                                    }
-
-                                    // Create an empty list to store the results
-                                    let list_ptr = self.build_empty_list("range_list")?;
-
-                                    // Get the list_append function
-                                    let list_append_fn = self.module.get_function("list_append")
-                                        .ok_or_else(|| "list_append function not found".to_string())?;
-
-                                    // Create a loop to iterate from 0 to range_val
-                                    let range_size = range_val.into_int_value();
-
-                                    // Create basic blocks for the loop
-                                    let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                                    let loop_entry_block = self.llvm_context.append_basic_block(current_function, "range_loop_entry");
-                                    let loop_body_block = self.llvm_context.append_basic_block(current_function, "range_loop_body");
-                                    let loop_exit_block = self.llvm_context.append_basic_block(current_function, "range_loop_exit");
-
-                                    // Create an index variable
-                                    let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "range_index").unwrap();
-                                    self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_zero()).unwrap();
-
-                                    // Branch to the loop entry
-                                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                                    // Loop entry block - check if we've reached the end of the range
-                                    self.builder.position_at_end(loop_entry_block);
-                                    let current_index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "current_index").unwrap().into_int_value();
-                                    let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, current_index, range_size, "range_cond").unwrap();
-                                    self.builder.build_conditional_branch(cond, loop_body_block, loop_exit_block).unwrap();
-
-                                    // Loop body block - add the current index to the list
-                                    self.builder.position_at_end(loop_body_block);
-
-                                    // Create an integer value for the current index
-                                    let index_alloca = self.builder.build_alloca(self.llvm_context.i64_type(), "index_value").unwrap();
-                                    self.builder.build_store(index_alloca, current_index).unwrap();
-
-                                    // Append the index to the list
-                                    self.builder.build_call(
-                                        list_append_fn,
-                                        &[list_ptr.into(), index_alloca.into()],
-                                        "list_append_result"
-                                    ).unwrap();
-
-                                    // Increment the index
-                                    let next_index = self.builder.build_int_add(
-                                        current_index,
-                                        self.llvm_context.i64_type().const_int(1, false),
-                                        "next_index"
-                                    ).unwrap();
-                                    self.builder.build_store(index_ptr, next_index).unwrap();
-
-                                    // Branch back to the loop entry
-                                    self.builder.build_unconditional_branch(loop_entry_block).unwrap();
-
-                                    // Exit block - return the list
-                                    self.builder.position_at_end(loop_exit_block);
-
-                                    return Ok((list_ptr.into(), Type::List(Box::new(Type::Int))));
+                                    return Ok((range_val, Type::Int));
                                 }
                             }
                         }
                     }
                 }
 
-                // For other call expressions, implement a simplified version
-                // This is a simplified implementation that only handles basic function calls
-                // In a real implementation, we would need to handle more complex cases
-
-                // Compile the function expression
-                let (_func_val, _func_type) = self.compile_expr_non_recursive(func)?;
-
-                // Compile all argument expressions
-                let mut arg_values = Vec::with_capacity(args.len());
-                let mut arg_types = Vec::with_capacity(args.len());
-
-                for arg in args {
-                    let (arg_val, arg_type) = self.compile_expr_non_recursive(arg)?;
-                    arg_values.push(arg_val);
-                    arg_types.push(arg_type);
-                }
-
-                // Handle direct function calls
-                if let Expr::Name { id, .. } = func.as_ref() {
-                    // First, check if this is a nested function call
-                    // If we're in a function scope, check if the function is defined in the current scope
-                    if let Some(current_scope) = self.scope_stack.current_scope() {
-                        if current_scope.is_function {
-                            // Check if the function is defined in the current scope
-                            if let Some(_func_ptr) = current_scope.get_variable(id) {
-                                // This is a nested function call
-                                println!("Found nested function {} in current scope", id);
-
-                                // Get the current function name
-                                let current_function_name = if let Some(current_function) = self.current_function {
-                                    // Clone the function name to avoid borrowing issues
-                                    let name = current_function.get_name();
-                                    let name_str = name.to_str().unwrap_or("unknown");
-                                    name_str.to_string()
-                                } else {
-                                    "main".to_string()
-                                };
-
-                                // Construct the full nested function name
-                                let nested_function_name = format!("{}.{}", current_function_name, id);
-
-                                // Try to get the function from the module
-                                let mut func_value = self.module.get_function(&nested_function_name);
-
-                                // If not found, try to find it with different parent prefixes
-                                // This handles cases where the function is defined in a parent scope
-                                if func_value.is_none() && current_function_name.contains('.') {
-                                    let parts: Vec<&str> = current_function_name.split('.').collect();
-                                    for i in (0..parts.len()).rev() {
-                                        let parent_prefix = parts[..i].join(".");
-                                        let alt_name = if parent_prefix.is_empty() {
-                                            id.clone()
-                                        } else {
-                                            format!("{}.{}", parent_prefix, id)
-                                        };
-                                        println!("Trying to find nested function with name: {}", alt_name);
-                                        if let Some(f) = self.module.get_function(&alt_name) {
-                                            func_value = Some(f);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if let Some(func_value) = func_value {
-                                    // Get the function type to determine the number of parameters
-                                    let func_type = func_value.get_type();
-                                    let param_count = func_type.get_param_types().len();
-                                    let expected_args = param_count - 1; // Subtract 1 for the environment pointer
-
-                                    // Check if we have the right number of arguments
-                                    if arg_values.len() != expected_args {
-                                        println!("Warning: Function {} expects {} arguments, got {}",
-                                                 nested_function_name, expected_args, arg_values.len());
-
-                                        // Adjust the arguments to match the expected count
-                                        while arg_values.len() < expected_args {
-                                            // Add default values for missing arguments (0 for integers)
-                                            let default_val = self.llvm_context.i64_type().const_int(0, false).into();
-                                            arg_values.push(default_val);
-                                        }
-
-                                        // If we have too many arguments, truncate the list
-                                        if arg_values.len() > expected_args {
-                                            arg_values.truncate(expected_args);
-                                        }
-                                    }
-
-                                    // Create a null pointer for the environment parameter
-                                    let null_ptr = self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null();
-
-                                    // Create the argument list with the environment pointer
-                                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = Vec::new();
-
-                                    // Add all arguments to the call
-                                    for &val in arg_values.iter() {
-                                        call_args.push(val.into());
-                                    }
-
-                                    // Add the environment pointer as the last argument
-                                    call_args.push(null_ptr.into());
-
-                                    // Build the call instruction
-                                    let call = self.builder.build_call(
-                                        func_value,
-                                        &call_args,
-                                        &format!("call_{}", id)
-                                    ).unwrap();
-
-                                    // Get the return value if there is one
-                                    if let Some(ret_val) = call.try_as_basic_value().left() {
-                                        // For simplicity, assume Int return type
-                                        return Ok((ret_val, Type::Int));
-                                    } else {
-                                        // Function returns void
-                                        return Ok((self.llvm_context.i32_type().const_zero().into(), Type::Void));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // If not a nested function, try to get the function from the module
-                    if let Some(func_value) = self.module.get_function(id) {
-                        // Process arguments for function call
-                        let mut call_args = Vec::with_capacity(args.len());
-
-                        // Handle all arguments, with special handling for tuples
-                        for (i, arg) in args.iter().enumerate() {
-                            let (arg_val, arg_type) = self.compile_expr(arg)?;
-
-                            match arg_type {
-                                Type::Tuple(element_types) => {
-                                    // For tuple arguments, ensure we're passing a pointer
-                                    if arg_val.is_pointer_value() {
-                                        // If already a pointer, use it directly
-                                        call_args.push(arg_val.into());
-                                    } else {
-                                        // If not a pointer, create a temporary and store the tuple
-                                        // Get the LLVM tuple type
-                                        let llvm_types: Vec<BasicTypeEnum> = element_types
-                                            .iter()
-                                            .map(|ty| self.get_llvm_type(ty))
-                                            .collect();
-
-                                        let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
-                                        let temp_ptr = self.builder.build_alloca(
-                                            tuple_struct,
-                                            &format!("tuple_arg_{}_temp", i)
-                                        ).unwrap();
-                                        self.builder.build_store(temp_ptr, arg_val).unwrap();
-                                        call_args.push(temp_ptr.into());
-                                    }
-                                },
-                                _ => {
-                                    // For non-tuple arguments, pass the value directly
-                                    call_args.push(arg_val.into());
-                                }
-                            }
-                        }
-
-                        // Build the call instruction
-                        let call = self.builder.build_call(
-                            func_value,
-                            &call_args,
-                            &format!("call_{}", id)
-                        ).unwrap();
-
-                        // Get the return value if there is one
-                        if let Some(ret_val) = call.try_as_basic_value().left() {
-                            // Try to infer the return type based on function name and return value
-                            let return_type = if id.contains("tuple") || id.starts_with("create_tuple") {
-                                // If the function name suggests it returns a tuple, use a tuple type
-                                if id.contains("nested") {
-                                    // For nested tuples, use a more complex type
-                                    Type::Tuple(vec![Type::Int, Type::Tuple(vec![Type::Int, Type::Int])])
-                                } else {
-                                    // For regular tuples, use a simple tuple type
-                                    Type::Tuple(vec![Type::Int, Type::Int, Type::Int])
-                                }
-                            } else if ret_val.is_pointer_value() && id.contains("tuple") {
-                                // If the return value is a pointer and the function name contains "tuple",
-                                // it's likely returning a tuple
-                                Type::Tuple(vec![Type::Int, Type::Int, Type::Int])
-                            } else {
-                                // Default to Int for other functions
-                                Type::Int
-                            };
-
-                            // For tuple return types, ensure we're returning a pointer
-                            if let Type::Tuple(element_types) = &return_type {
-                                if !ret_val.is_pointer_value() {
-                                    // If not a pointer, create a temporary and store the tuple
-                                    // Get the LLVM tuple type
-                                    let llvm_types: Vec<BasicTypeEnum> = element_types
-                                        .iter()
-                                        .map(|ty| self.get_llvm_type(ty))
-                                        .collect();
-
-                                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
-                                    let temp_ptr = self.builder.build_alloca(
-                                        tuple_struct,
-                                        "tuple_return_temp"
-                                    ).unwrap();
-                                    self.builder.build_store(temp_ptr, ret_val).unwrap();
-                                    return Ok((temp_ptr.into(), return_type));
-                                }
-                            }
-
-                            // For integer return values from functions with tuple in the name,
-                            // we need to handle them specially
-                            if ret_val.is_int_value() && id.contains("tuple") {
-                                // Convert the integer to a pointer if needed
-                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                                let ptr_val = self.builder.build_int_to_ptr(
-                                    ret_val.into_int_value(),
-                                    ptr_type,
-                                    "int_to_ptr"
-                                ).unwrap();
-                                return Ok((ptr_val.into(), return_type));
-                            }
-
-                            return Ok((ret_val, return_type));
-                        } else {
-                            // Function returns void
-                            return Ok((self.llvm_context.i32_type().const_zero().into(), Type::Void));
-                        }
-                    }
-                }
-
-                // Handle method calls (e.g., dict.keys())
-                if let Expr::Attribute { value, attr, .. } = func.as_ref() {
-                    // Compile the value being accessed
-                    let (value_val, value_type) = self.compile_expr_non_recursive(value)?;
-
-                    // Handle different types of attribute access
-                    match &value_type {
-                        Type::Dict(key_type, value_type) => {
-                            // Handle dictionary methods
-                            match attr.as_str() {
-                                "keys" => {
-                                    // Use the compile_dict_keys method
-                                    return self.compile_dict_keys(value_val.into_pointer_value(), key_type);
-                                },
-                                "values" => {
-                                    // Use the compile_dict_values method
-                                    return self.compile_dict_values(value_val.into_pointer_value(), value_type);
-                                },
-                                "items" => {
-                                    // Use the compile_dict_items method
-                                    return self.compile_dict_items(value_val.into_pointer_value(), key_type, value_type);
-                                },
-                                _ => return Err(format!("Unknown method '{}' for dictionary type", attr)),
-                            }
-                        },
-                        _ => return Err(format!("Type {:?} does not support method '{}'", value_type, attr)),
-                    }
-                }
-
-                // If we couldn't handle the call, return an error
-                Err(format!("Unsupported function call: {:?}", func))
+                // For other call expressions, use the original implementation
+                <Self as ExprCompiler>::compile_expr_original(self, expr)
             },
-            Expr::DictComp { key, value, generators, .. } => {
-                // Handle dictionary comprehensions directly
-                // Clone the generators, key, and value to avoid ownership issues
-                let generators_clone: Vec<crate::ast::Comprehension> = generators.iter().map(|g| g.clone()).collect();
-                let key_clone = (**key).clone();
-                let value_clone = (**value).clone();
-                self.compile_dict_comprehension(&key_clone, &value_clone, &generators_clone)
-            },
-            // Handle other expression types directly
-            Expr::Num { value, .. } => self.compile_number(value),
-            Expr::NameConstant { value, .. } => self.compile_name_constant(value),
-            Expr::Str { value, .. } => {
-                // Create the string constant with null terminator
-                let const_str = self.llvm_context.const_string(value.as_bytes(), true);
-
-                // Get the type of the constant string
-                let str_type = const_str.get_type();
-
-                // Create a global variable with the same type as the constant
-                let global_str = self.module.add_global(str_type, None, "str_const");
-                global_str.set_constant(true);
-                global_str.set_initializer(&const_str);
-
-                // Get a pointer to the string
-                let str_ptr = self.builder.build_pointer_cast(
-                    global_str.as_pointer_value(),
-                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
-                    "str_ptr"
-                ).unwrap();
-
-                // Return the string pointer and String type
-                Ok((str_ptr.into(), Type::String))
-            },
-            _ => Err(format!("Unsupported expression type in fallback implementation: {:?}", expr)),
+            _ => <Self as ExprCompiler>::compile_expr_original(self, expr)
         }
     }
 }

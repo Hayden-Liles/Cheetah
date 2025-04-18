@@ -27,15 +27,15 @@ use inkwell::targets::{InitializationConfig, Target};
 #[derive(ClapParser)]
 #[command(name = "cheetah")]
 #[command(version = "0.1.0")]
-#[command(about = "Cheetah programming language compiler", long_about = None)]
+#[command(about = "Cheetah programming language interpreter", long_about = None)]
 struct Cli {
     /// Source file to run (with .ch extension)
     #[arg(value_name = "FILE")]
     file: Option<String>,
 
-    /// Use interpreter instead of LLVM JIT compilation
-    #[arg(short = 'i', long, default_value = "false")]
-    interpreter: bool,
+    /// Use LLVM JIT compilation instead of interpreter
+    #[arg(short = 'j', long, default_value = "false")]
+    jit: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -48,9 +48,9 @@ enum Commands {
         /// The source file to run
         file: String,
 
-        /// Use interpreter instead of LLVM JIT compilation
-        #[arg(short = 'i', long, default_value = "false")]
-        interpreter: bool,
+        /// Use LLVM JIT compilation instead of interpreter
+        #[arg(short = 'j', long)]
+        jit: bool,
     },
     /// Start a REPL session
     Repl {
@@ -186,21 +186,21 @@ fn main() -> Result<()> {
 
     // Handle direct file execution (cheetah main.ch)
     if let Some(file) = cli.file {
-        if cli.interpreter {
-            run_file(&file)?
-        } else {
+        if cli.jit {
             run_file_jit(&file)?
+        } else {
+            run_file(&file)?
         }
         return Ok(());
     }
 
     // Handle subcommands
     match cli.command {
-        Some(Commands::Run { file, interpreter }) => {
-            if interpreter {
-                run_file(&file)?;
-            } else {
+        Some(Commands::Run { file, jit }) => {
+            if jit {
                 run_file_jit(&file)?;
+            } else {
+                run_file(&file)?;
             }
         }
         Some(Commands::Repl { jit }) => {
@@ -322,10 +322,10 @@ fn run_file_jit(filename: &str) -> Result<()> {
     parallel_ops::init();
 
     let filename = ensure_ch_extension(filename);
-    println!("{}", format!("Compiling and executing {}", filename).bright_green());
+    println!("{}", format!("JIT compiling and executing {}", filename).bright_green());
 
     // Log that we're starting execution with debugging enabled
-    cheetah::compiler::runtime::debug_utils::debug_log(&format!("Starting execution of {}", filename));
+    cheetah::compiler::runtime::debug_utils::debug_log(&format!("Starting JIT execution of {}", filename));
 
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
@@ -1065,7 +1065,7 @@ fn register_runtime_functions(
         }
     }
 
-    // Range functions - map only the original functions, not the duplicates with suffixes
+    // Range functions
     if let Some(function) = module.get_function("range_1") {
         {
             engine.add_global_mapping(&function, range_ops::range_1 as usize);
@@ -1087,25 +1087,6 @@ fn register_runtime_functions(
     if let Some(function) = module.get_function("range_cleanup") {
         {
             engine.add_global_mapping(&function, range_ops::range_cleanup as usize);
-        }
-    }
-
-    // Map the range functions with suffixes to the same implementations
-    if let Some(function) = module.get_function("range_1.3") {
-        {
-            engine.add_global_mapping(&function, range_ops::range_1 as usize);
-        }
-    }
-
-    if let Some(function) = module.get_function("range_2.4") {
-        {
-            engine.add_global_mapping(&function, range_ops::range_2 as usize);
-        }
-    }
-
-    if let Some(function) = module.get_function("range_3.5") {
-        {
-            engine.add_global_mapping(&function, range_ops::range_3 as usize);
         }
     }
 

@@ -21,8 +21,8 @@ pub extern "C" fn float_to_string(value: f64) -> *mut c_char {
 
 /// Convert a boolean to a string (C-compatible wrapper)
 #[unsafe(no_mangle)]
-pub extern "C" fn bool_to_string(value: bool) -> *mut c_char {
-    let s = if value { "True" } else { "False" }.to_string();
+pub extern "C" fn bool_to_string(value: i64) -> *mut c_char {
+    let s = if value != 0 { "True" } else { "False" }.to_string();
     let c_str = CString::new(s).unwrap();
     c_str.into_raw()
 }

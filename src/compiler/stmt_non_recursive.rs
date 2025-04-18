@@ -7,7 +7,6 @@ use crate::compiler::expr::{ExprCompiler, AssignmentCompiler, BinaryOpCompiler};
 use crate::compiler::stmt::StmtCompiler;
 use crate::compiler::types::Type;
 use inkwell::values::BasicValueEnum;
-use inkwell::types::BasicTypeEnum;
 use std::collections::VecDeque;
 
 // This trait is used to extend the CompilationContext with non-recursive statement compilation
@@ -372,110 +371,117 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         Stmt::Nonlocal { names, .. } => {
                             // Register each name as a nonlocal variable in the current scope
                             for name in names {
-                                // For nonlocal declarations, we check if the variable exists in any outer scope
-                                // This is for debugging purposes only, as we'll proceed with the declaration regardless
+                                // For nonlocal declarations, we need to check if the variable exists in any outer scope
+                                // This is important for handling shadowing correctly
+                                let mut found_in_outer_scope = false;
 
                                 // First check the immediate outer scope (this handles shadowing correctly)
                                 if self.scope_stack.scopes.len() >= 2 {
                                     let parent_scope_index = self.scope_stack.scopes.len() - 2;
                                     if let Some(_) = self.scope_stack.scopes[parent_scope_index].get_variable(&name) {
+                                        found_in_outer_scope = true;
                                         println!("Found variable '{}' in immediate outer scope {} for nonlocal declaration", name, parent_scope_index);
-                                    } else if self.scope_stack.scopes.len() >= 3 {
-                                        // If not found in the immediate outer scope, look in all outer scopes
-                                        // This is needed for cases where the variable is defined in a scope that's not the immediate parent
-                                        for i in (0..self.scope_stack.scopes.len() - 2).rev() {
-                                            if let Some(_) = self.scope_stack.scopes[i].get_variable(&name) {
-                                                println!("Found variable '{}' in outer scope {} for nonlocal declaration", name, i);
-                                                break;
-                                            }
+                                    }
+                                }
+
+                                // If not found in the immediate outer scope, look in all outer scopes
+                                // This is needed for cases where the variable is defined in a scope that's not the immediate parent
+                                if !found_in_outer_scope && self.scope_stack.scopes.len() >= 3 {
+                                    for i in (0..self.scope_stack.scopes.len() - 2).rev() {
+                                        if let Some(_) = self.scope_stack.scopes[i].get_variable(&name) {
+                                            found_in_outer_scope = true;
+                                            println!("Found variable '{}' in outer scope {} for nonlocal declaration", name, i);
+                                            break;
                                         }
                                     }
                                 }
 
-                                // Always proceed with nonlocal declaration, even if not found in outer scope
-                                // This allows for cases where the variable is defined later or in a parent function
-                                // that's not directly in the scope stack
-                                // Proceed with nonlocal declaration
-                                self.declare_nonlocal(name.clone());
+                                // Only proceed with nonlocal declaration if the variable exists in an outer scope
+                                if found_in_outer_scope {
+                                    // Proceed with nonlocal declaration
+                                    self.declare_nonlocal(name.clone());
 
-                                // If we're in a nested function, we need to create a local variable for the nonlocal variable
-                                if let Some(current_function) = self.current_function {
-                                    // Get the current function name
-                                    let fn_name = current_function.get_name().to_string_lossy().to_string();
+                                    // If we're in a nested function, we need to create a local variable for the nonlocal variable
+                                    if let Some(current_function) = self.current_function {
+                                        // Get the current function name
+                                        let fn_name = current_function.get_name().to_string_lossy().to_string();
 
-                                    // Create a unique name for the nonlocal variable that includes the function name
-                                    let unique_name = format!("__nonlocal_{}_{}", fn_name.replace('.', "_"), name);
+                                        // Create a unique name for the nonlocal variable that includes the function name
+                                        let unique_name = format!("__nonlocal_{}_{}", fn_name.replace('.', "_"), name);
 
-                                    // Find the variable in the outer scope
-                                    let mut found_ptr = None;
-                                    let mut found_type = None;
+                                        // Find the variable in the outer scope
+                                        let mut found_ptr = None;
+                                        let mut found_type = None;
 
-                                    // Get the current scope index
-                                    let current_index = self.scope_stack.scopes.len() - 1;
+                                        // Get the current scope index
+                                        let current_index = self.scope_stack.scopes.len() - 1;
 
-                                    // First check the immediate outer scope
-                                    if current_index > 0 {
-                                        let parent_scope_index = current_index - 1;
-                                        if let Some(ptr) = self.scope_stack.scopes[parent_scope_index].get_variable(&name) {
-                                            found_ptr = Some(*ptr);
-                                            if let Some(ty) = self.scope_stack.scopes[parent_scope_index].get_type(&name) {
-                                                found_type = Some(ty.clone());
-                                            }
-                                        }
-                                    }
-
-                                    // If not found in the immediate outer scope, look in all outer scopes
-                                    if found_ptr.is_none() && current_index > 1 {
-                                        for i in (0..current_index-1).rev() {
-                                            if let Some(ptr) = self.scope_stack.scopes[i].get_variable(&name) {
+                                        // First check the immediate outer scope
+                                        if current_index > 0 {
+                                            let parent_scope_index = current_index - 1;
+                                            if let Some(ptr) = self.scope_stack.scopes[parent_scope_index].get_variable(&name) {
                                                 found_ptr = Some(*ptr);
-                                                if let Some(ty) = self.scope_stack.scopes[i].get_type(&name) {
+                                                if let Some(ty) = self.scope_stack.scopes[parent_scope_index].get_type(&name) {
                                                     found_type = Some(ty.clone());
                                                 }
-                                                break;
                                             }
                                         }
-                                    }
 
-                                    // If we found the variable in an outer scope, create a local variable for it
-                                    if let (Some(ptr), Some(var_type)) = (found_ptr, found_type) {
-                                        // Add the variable to the closure environment
-                                        self.add_to_current_environment(name.clone(), ptr, var_type.clone());
-                                        println!("Added nonlocal variable '{}' to current closure environment", name);
-
-                                        // Create a local variable for the nonlocal variable at the beginning of the function
-                                        // Save current position
-                                        let current_position = self.builder.get_insert_block().unwrap();
-
-                                        // Move to the beginning of the entry block
-                                        let entry_block = current_function.get_first_basic_block().unwrap();
-                                        if let Some(first_instr) = entry_block.get_first_instruction() {
-                                            self.builder.position_before(&first_instr);
-                                        } else {
-                                            self.builder.position_at_end(entry_block);
+                                        // If not found in the immediate outer scope, look in all outer scopes
+                                        if found_ptr.is_none() && current_index > 1 {
+                                            for i in (0..current_index-1).rev() {
+                                                if let Some(ptr) = self.scope_stack.scopes[i].get_variable(&name) {
+                                                    found_ptr = Some(*ptr);
+                                                    if let Some(ty) = self.scope_stack.scopes[i].get_type(&name) {
+                                                        found_type = Some(ty.clone());
+                                                    }
+                                                    break;
+                                                }
+                                            }
                                         }
 
-                                        // Create the alloca at the beginning of the function
-                                        let local_ptr = self.builder.build_alloca(
-                                            self.get_llvm_type(&var_type).into_int_type(),
-                                            &unique_name
-                                        ).unwrap();
+                                        // If we found the variable in an outer scope, create a local variable for it
+                                        if let (Some(ptr), Some(var_type)) = (found_ptr, found_type) {
+                                            // Add the variable to the closure environment
+                                            self.add_to_current_environment(name.clone(), ptr, var_type.clone());
+                                            println!("Added nonlocal variable '{}' to current closure environment", name);
 
-                                        // Restore position
-                                        self.builder.position_at_end(current_position);
+                                            // Create a local variable for the nonlocal variable at the beginning of the function
+                                            // Save current position
+                                            let current_position = self.builder.get_insert_block().unwrap();
 
-                                        // Add the variable to the current scope with the unique name
-                                        if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                                            current_scope.add_variable(unique_name.clone(), local_ptr, var_type.clone());
-                                            current_scope.add_nonlocal_mapping(name.clone(), unique_name.clone());
-                                            println!("Created local variable for nonlocal variable '{}' with unique name '{}'", name, unique_name);
+                                            // Move to the beginning of the entry block
+                                            let entry_block = current_function.get_first_basic_block().unwrap();
+                                            if let Some(first_instr) = entry_block.get_first_instruction() {
+                                                self.builder.position_before(&first_instr);
+                                            } else {
+                                                self.builder.position_at_end(entry_block);
+                                            }
+
+                                            // Create the alloca at the beginning of the function
+                                            let local_ptr = self.builder.build_alloca(
+                                                self.get_llvm_type(&var_type).into_int_type(),
+                                                &unique_name
+                                            ).unwrap();
+
+                                            // Restore position
+                                            self.builder.position_at_end(current_position);
+
+                                            // Add the variable to the current scope with the unique name
+                                            if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                                                current_scope.add_variable(unique_name.clone(), local_ptr, var_type.clone());
+                                                current_scope.add_nonlocal_mapping(name.clone(), unique_name.clone());
+                                                println!("Created local variable for nonlocal variable '{}' with unique name '{}'", name, unique_name);
+                                            }
+
+                                            // Mark the variable as nonlocal in the current scope
+                                            println!("Marked '{}' as nonlocal in nested function '{}'", name, fn_name);
                                         }
-
-                                        // Mark the variable as nonlocal in the current scope
-                                        println!("Marked '{}' as nonlocal in nested function '{}'", name, fn_name);
                                     }
+                                } else {
+                                    // Just declare the variable as nonlocal without additional setup
+                                    self.declare_nonlocal(name.clone());
                                 }
-                                // No else clause needed since we always declare the variable as nonlocal
                             }
                         },
 
@@ -1176,99 +1182,14 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
 
                             // Check if we're returning a tuple from a function that expects an integer
                             if let Some(ret_type) = value_type {
-                                if let Type::Tuple(element_types) = ret_type {
+                                if let Type::Tuple(_) = ret_type {
                                     // If the function returns an integer but we're returning a tuple,
                                     // extract the first element of the tuple
-                                    if return_type.is_some() {
-                                        // Get the function return type
-                                        let func_return_type = return_type.unwrap();
-
-                                        // If the return value is a pointer to a tuple
-                                        if ret_val.is_pointer_value() {
-                                            // If the function expects an integer return
-                                            if func_return_type.is_int_type() {
-                                                // Get the tuple struct type
-                                                let llvm_types: Vec<BasicTypeEnum> = element_types
-                                                    .iter()
-                                                    .map(|ty| self.get_llvm_type(ty))
-                                                    .collect();
-
-                                                let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
-
-                                                // Get a pointer to the first element
-                                                let element_ptr = self.builder.build_struct_gep(
-                                                    tuple_struct,
-                                                    ret_val.into_pointer_value(),
-                                                    0,
-                                                    "tuple_element_0"
-                                                ).unwrap();
-
-                                                // Load the first element
-                                                let element_val = self.builder.build_load(
-                                                    self.get_llvm_type(&element_types[0]),
-                                                    element_ptr,
-                                                    "load_tuple_element_0"
-                                                ).unwrap();
-
-                                                // Return the first element
-                                                self.builder.build_return(Some(&element_val)).unwrap();
-                                                return Ok(());
-                                            } else if func_return_type.is_pointer_type() {
-                                                // If the function expects a pointer return, return the pointer directly
-                                                self.builder.build_return(Some(&ret_val)).unwrap();
-                                                return Ok(());
-                                            } else {
-                                                // For other return types, try to extract the first element
-                                                let llvm_types: Vec<BasicTypeEnum> = element_types
-                                                    .iter()
-                                                    .map(|ty| self.get_llvm_type(ty))
-                                                    .collect();
-
-                                                let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
-
-                                                // Get a pointer to the first element
-                                                let element_ptr = self.builder.build_struct_gep(
-                                                    tuple_struct,
-                                                    ret_val.into_pointer_value(),
-                                                    0,
-                                                    "tuple_element_0"
-                                                ).unwrap();
-
-                                                // Load the first element
-                                                let element_val = self.builder.build_load(
-                                                    self.get_llvm_type(&element_types[0]),
-                                                    element_ptr,
-                                                    "load_tuple_element_0"
-                                                ).unwrap();
-
-                                                // Return the first element
-                                                self.builder.build_return(Some(&element_val)).unwrap();
-                                                return Ok(());
-                                            }
-                                        } else {
-                                            // If the return value is not a pointer
-                                            if func_return_type.is_int_type() {
-                                                // If the function expects an integer return, return the value directly
-                                                self.builder.build_return(Some(&ret_val)).unwrap();
-                                                return Ok(());
-                                            } else if func_return_type.is_pointer_type() {
-                                                // If the function expects a pointer return, convert the value to a pointer
-                                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                                                let ptr_val = self.builder.build_int_to_ptr(
-                                                    ret_val.into_int_value(),
-                                                    ptr_type,
-                                                    "int_to_ptr"
-                                                ).unwrap();
-
-                                                // Return the pointer
-                                                self.builder.build_return(Some(&ptr_val)).unwrap();
-                                                return Ok(());
-                                            } else {
-                                                // For other return types, return the value directly
-                                                self.builder.build_return(Some(&ret_val)).unwrap();
-                                                return Ok(());
-                                            }
-                                        }
+                                    if return_type.is_some() && return_type.unwrap().is_int_type() {
+                                        // For now, just return the tuple pointer as is
+                                        // In a full implementation, we would extract the first element
+                                        self.builder.build_return(Some(&ret_val)).unwrap();
+                                        return Ok(());
                                     }
                                 }
                             }

@@ -164,7 +164,7 @@ def outer():
             x = 30
         return x
 
-    return inner(1)
+    return inner(True)
 
 result = outer()
 "#;

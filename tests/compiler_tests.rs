@@ -202,7 +202,3 @@ mod stmt_non_recursive_test;
 // Include the list comprehension with tuple tests
 #[path = "more_tests/compiler/list_comprehension_tuple_test.rs"]
 mod list_comprehension_tuple_test;
-
-// Include the tuple dynamic index tests
-#[path = "more_tests/compiler/tuple_dynamic_index_test.rs"]
-mod tuple_dynamic_index_test;

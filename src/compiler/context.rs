@@ -822,9 +822,6 @@ impl<'ctx> CompilationContext<'ctx> {
             param_types.push(context.i64_type().into());
         }
 
-        // Debug print
-        println!("Function {} has {} parameters", name, params.len());
-
         // Create a closure environment for this function
         self.create_closure_environment(name);
 
@@ -836,7 +833,6 @@ impl<'ctx> CompilationContext<'ctx> {
             // Get the current scope's nonlocal variables
             if let Some(current_scope) = self.scope_stack.current_scope() {
                 nonlocal_vars = current_scope.nonlocal_vars.clone();
-                println!("Nonlocal variables for function {}: {:?}", name, nonlocal_vars);
             }
 
             // Also check if there are any nonlocal variables already registered for this function
@@ -847,14 +843,6 @@ impl<'ctx> CompilationContext<'ctx> {
                     }
                 }
             }
-        }
-
-        // Register the function in the current scope
-        if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-            // Create a function value to store in the scope
-            let function_value = self.builder.build_alloca(context.i64_type(), name).unwrap();
-            current_scope.add_variable(name.to_string(), function_value, Type::function(vec![], Type::Int));
-            println!("Added function {} to current scope", name);
         }
 
         // Debug print the nonlocal variables
@@ -894,29 +882,6 @@ impl<'ctx> CompilationContext<'ctx> {
             }
         }
 
-        // If this is a nested function, also register it in the parent function's scope
-        if name.contains('.') {
-            // Extract the parent function name and the nested function name
-            let parts: Vec<&str> = name.split('.').collect();
-            if parts.len() >= 2 {
-                let nested_name = parts.last().unwrap();
-
-                // Register the nested function in the parent function's scope
-                if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                    // Create a function value to store in the scope
-                    let function_value = self.builder.build_alloca(context.i64_type(), nested_name).unwrap();
-                    current_scope.add_variable(nested_name.to_string(), function_value, Type::function(vec![], Type::Int));
-                    println!("Added nested function {} to current scope", nested_name);
-
-                    // Also register the function with its full qualified name
-                    // This ensures we can find it when called from nested functions
-                    let function_value = self.builder.build_alloca(context.i64_type(), name).unwrap();
-                    current_scope.add_variable(name.to_string(), function_value, Type::function(vec![], Type::Int));
-                    println!("Added qualified function {} to current scope", name);
-                }
-            }
-        }
-
         Ok(())
     }
 
@@ -949,21 +914,6 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // Debug print
         println!("After pushing function scope, stack size: {}", self.scope_stack.scopes.len());
-
-        // Print the number of parameters
-        println!("Function {} has {} parameters", name, params.len());
-
-        // Get nonlocal variables for this function
-        let nonlocal_vars = if let Some(env) = self.get_closure_environment(name) {
-            env.nonlocal_params.clone()
-        } else {
-            Vec::new()
-        };
-
-        // Calculate the total number of parameters (regular + nonlocal + env ptr)
-        let total_params = params.len() + if nonlocal_vars.is_empty() { 0 } else { 1 };
-        println!("Function {} should have {} parameters: {} regular + {} nonlocal + {} env ptr",
-                 name, total_params, params.len(), nonlocal_vars.len(), if nonlocal_vars.is_empty() { 0 } else { 1 });
 
         // For backward compatibility
         let mut local_vars = HashMap::new();
