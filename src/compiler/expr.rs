@@ -4089,6 +4089,7 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                     // Add the variable to the current scope
                     if let Some(current_scope) = self.scope_stack.current_scope_mut() {
                         current_scope.add_variable(id.clone(), ptr, value_type.clone());
+                        println!("Added variable '{}' to current scope", id);
                     }
 
                     // Store the value to the newly created variable
