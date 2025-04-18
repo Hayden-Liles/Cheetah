@@ -49,9 +49,6 @@ impl TypeChecker {
                 // Infer the type of the value
                 let value_type = TypeInference::infer_expr_immut(&self.env, value)?;
 
-                // Debug print
-                println!("Assignment value type: {:?}", value_type);
-
                 // Special handling for function calls that return dictionaries
                 let mut enhanced_value_type = value_type.clone();
                 if let Expr::Call { func, .. } = &**value {
@@ -69,18 +66,15 @@ impl TypeChecker {
                                     // Create a nested dictionary type
                                     let inner_dict_type = Type::Dict(Box::new(Type::String), Box::new(Type::String));
                                     enhanced_value_type = Type::Dict(Box::new(Type::String), Box::new(inner_dict_type));
-                                    println!("Enhanced assignment value type for nested dictionary function call '{}': {:?}", id, enhanced_value_type);
                                 } else {
                                     // Override the type to be a dictionary
                                     enhanced_value_type = Type::Dict(Box::new(Type::String), Box::new(Type::String));
-                                    println!("Enhanced assignment value type for function call '{}': {:?}", id, enhanced_value_type);
                                 }
 
                                 // Register this variable as a dictionary in the environment
                                 for target in targets {
                                     if let Expr::Name { id: var_name, .. } = &**target {
                                         self.env.add_variable(var_name.clone(), enhanced_value_type.clone());
-                                        println!("Registered variable '{}' as dictionary type: {:?}", var_name, enhanced_value_type);
                                     }
                                 }
                             }
