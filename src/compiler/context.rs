@@ -183,10 +183,6 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // Add the variable to the current scope
         self.add_variable_to_scope(name.clone(), ptr, ty.clone());
-
-        // Debug print
-        println!("Added variable '{}' to current scope", name);
-
         // Register the variable type if not already present
         if !self.type_env.contains_key(&name) {
             self.register_variable(name, ty.clone());
