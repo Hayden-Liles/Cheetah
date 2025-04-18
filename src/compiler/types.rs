@@ -132,6 +132,7 @@ pub enum Type {
     Tuple(Vec<Type>),
     Dict(Box<Type>, Box<Type>),
     Set(Box<Type>),
+    RangeIterator,
 
     // Function type
     Function {
@@ -241,6 +242,9 @@ impl Hash for Type {
                 base_type.hash(state);
                 type_args.hash(state);
             },
+            Type::RangeIterator => {
+                17.hash(state);
+            },
         }
     }
 }
@@ -295,6 +299,7 @@ impl fmt::Display for Type {
                 }
                 write!(f, "]")
             },
+            Type::RangeIterator => write!(f, "range_iterator"),
         }
     }
 }
@@ -401,6 +406,10 @@ impl Type {
                 // For completeness, though void should be handled separately
                 context.ptr_type(AddressSpace::default()).as_basic_type_enum()
             },
+            Type::RangeIterator => {
+                // Range iterator is represented as a struct with start, stop, step values
+                context.ptr_type(AddressSpace::default()).as_basic_type_enum()
+            },
         }
     }
 
@@ -491,6 +500,7 @@ impl Type {
             Type::Unknown => 15,
             Type::TypeParam(_) => 16,
             Type::Generic { .. } => 17,
+            Type::RangeIterator => 18,
         };
 
         let type_name = match self {
@@ -511,6 +521,7 @@ impl Type {
             Type::Unknown => "unknown",
             Type::TypeParam(name) => return self.create_named_type_info(context, "TypeParam", name),
             Type::Generic { base_type, .. } => return self.create_generic_type_info(context, base_type),
+            Type::RangeIterator => "range_iterator",
         };
 
         let i32_type = context.i32_type();
