@@ -31,12 +31,7 @@ enum StmtTask<'a, 'ctx> {
         index: usize,
     },
 
-    // Process an if statement after the condition is evaluated
-    ProcessIf {
-        test: &'a Expr,
-        body: &'a [Box<Stmt>],
-        orelse: &'a [Box<Stmt>],
-    },
+
 
     // Process a for loop after the iterator is evaluated
     ProcessFor {
@@ -148,16 +143,6 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             });
                         },
 
-                        // Compile an if statement
-                        Stmt::If { test, body, orelse, .. } => {
-                            // Add a task to process the if statement
-                            work_stack.push_front(StmtTask::ProcessIf {
-                                test,
-                                body,
-                                orelse,
-                            });
-                        },
-
                         // Compile an augmented assignment (e.g., x += 1)
                         Stmt::AugAssign { target, op, value, .. } => {
                             // Compile the target and value
@@ -188,7 +173,82 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             }
                         },
 
+                        // Compile an if statement
+                        Stmt::If { test, body, orelse, .. } => {
+                            // Compile the test expression
+                            let (test_val, _) = self.compile_expr(test)?;
 
+                            // Convert to boolean using our helper method
+                            let bool_val = self.convert_to_bool(test_val);
+
+                            // Get the current function
+                            let function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+
+                            // Create basic blocks for the then, else, and end parts
+                            let then_block = self.llvm_context.append_basic_block(function, "then");
+                            let else_block = self.llvm_context.append_basic_block(function, "else");
+                            let end_block = self.llvm_context.append_basic_block(function, "endif");
+
+                            // Branch based on the condition
+                            self.builder.build_conditional_branch(bool_val, then_block, else_block).unwrap();
+
+                            // Position at the then block
+                            self.builder.position_at_end(then_block);
+
+                            // Execute the then block
+                            for stmt in body {
+                                // Check if the current block already has a terminator
+                                if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                                    break;
+                                }
+
+                                // Execute the statement directly
+                                // Non-recursive implementations are always used
+
+
+                                if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
+                                    return Err(e);
+                                }
+
+                                // Non-recursive implementations are always used
+                            }
+
+                            // Check if the block already has a terminator (from break, continue, return)
+                            if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                                // If not, add a branch to the end block
+                                self.builder.build_unconditional_branch(end_block).unwrap();
+                            }
+
+                            // Position at the else block
+                            self.builder.position_at_end(else_block);
+
+                            // Execute the else block
+                            for stmt in orelse {
+                                // Check if the current block already has a terminator
+                                if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                                    break;
+                                }
+
+                                // Execute the statement directly
+                                // Non-recursive implementations are always used
+
+
+                                if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
+                                    return Err(e);
+                                }
+
+                                // Non-recursive implementations are always used
+                            }
+
+                            // Check if the block already has a terminator (from break, continue, return)
+                            if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                                // If not, add a branch to the end block
+                                self.builder.build_unconditional_branch(end_block).unwrap();
+                            }
+
+                            // Position at the end block for further code
+                            self.builder.position_at_end(end_block);
+                        },
 
                         // Compile a for loop
                         Stmt::For { target, iter, body, orelse, .. } => {
@@ -604,13 +664,28 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
 
                         match iter_type {
                             Type::List(elem_type) => {
-                                // For simplicity, just use the index as the loop variable value
-                                // This is a temporary solution until we fix the list element access
+                                // Get the element from the list
+                                let _list_ptr = iter_val.into_pointer_value();
+
+                                // Create a new variable for the loop index
                                 let var_ptr = self.builder.build_alloca(i64_type, id.as_str()).unwrap();
+
+                                // Store the index value in the variable
                                 self.builder.build_store(var_ptr, index_val).unwrap();
 
-                                // Use the element type from the list
-                                let element_type = *elem_type.clone();
+                                // If the element type is a tuple, extract the element type if all elements are the same
+                                let element_type = match &*elem_type {
+                                    Type::Tuple(tuple_element_types) => {
+                                        if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
+                                            // All tuple elements have the same type, use that type
+                                            tuple_element_types[0].clone()
+                                        } else {
+                                            // Keep the original type
+                                            *elem_type.clone()
+                                        }
+                                    },
+                                    _ => *elem_type.clone()
+                                };
 
                                 // Add the variable to the current scope
                                 self.add_variable_to_scope(id.clone(), var_ptr, element_type);
@@ -1159,71 +1234,6 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             return Err(e);
                         }
                     }
-                },
-                StmtTask::ProcessIf { test, body, orelse } => {
-                    // Compile the test expression
-                    let (test_val, _) = self.compile_expr(test)?;
-
-                    // Convert to boolean using our helper method
-                    let bool_val = self.convert_to_bool(test_val);
-
-                    // Get the current function
-                    let function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-
-                    // Create basic blocks for the then, else, and end parts
-                    let then_block = self.llvm_context.append_basic_block(function, "then");
-                    let else_block = self.llvm_context.append_basic_block(function, "else");
-                    let end_block = self.llvm_context.append_basic_block(function, "endif");
-
-                    // Branch based on the condition
-                    self.builder.build_conditional_branch(bool_val, then_block, else_block).unwrap();
-
-                    // Position at the then block
-                    self.builder.position_at_end(then_block);
-
-                    // Execute the then block
-                    for stmt in body {
-                        // Check if the current block already has a terminator
-                        if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                            break;
-                        }
-
-                        // Execute the statement directly
-                        if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
-                            return Err(e);
-                        }
-                    }
-
-                    // Check if the block already has a terminator (from break, continue, return)
-                    if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                        // If not, add a branch to the end block
-                        self.builder.build_unconditional_branch(end_block).unwrap();
-                    }
-
-                    // Position at the else block
-                    self.builder.position_at_end(else_block);
-
-                    // Execute the else block
-                    for stmt in orelse {
-                        // Check if the current block already has a terminator
-                        if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                            break;
-                        }
-
-                        // Execute the statement directly
-                        if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
-                            return Err(e);
-                        }
-                    }
-
-                    // Check if the block already has a terminator (from break, continue, return)
-                    if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                        // If not, add a branch to the end block
-                        self.builder.build_unconditional_branch(end_block).unwrap();
-                    }
-
-                    // Position at the end block for further code
-                    self.builder.position_at_end(end_block);
                 },
                 // Removed ContinueLoop variant case
 
