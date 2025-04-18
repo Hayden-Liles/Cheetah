@@ -184,7 +184,7 @@ struct ExprResult<'ctx> {
 
 // Helper methods for the non-recursive implementation
 impl<'ctx> CompilationContext<'ctx> {
-    pub fn get_list_element(
+    fn get_list_element(
         &self,
         list_ptr: inkwell::values::PointerValue<'ctx>,
         index: inkwell::values::IntValue<'ctx>
@@ -1561,6 +1561,9 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     if args_count == 0 {
                         return Err("range() requires at least one argument".to_string());
                     }
+
+                    // For now, we'll just create a list with the appropriate values
+                    // This is a simplified implementation that doesn't handle large ranges efficiently
 
                     // Get the arguments
                     let (start, stop, step) = match args_count {
