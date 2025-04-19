@@ -100,15 +100,22 @@ impl<'ctx> Compiler<'ctx> {
             .map_err(|e| format!("Invalid UTF-8 from llvm-config: {}", e))?;
 
         // 8) Invoke the system linker
-        let mut cmd = Command::new("cc");
+        let mut cmd = Command::new("c++");
         cmd.arg(&obj_path)
-           .arg("-L").arg(&runtime_lib_dir)
-           .arg("-lcheetah");
+            .arg("-L").arg(&runtime_lib_dir)
+            .arg("-lcheetah");
 
         // append each llvm-config flag (e.g. -lLLVM -lstdc++ -lpthread -ldl ...)
         for token in llvm_flags.split_whitespace() {
             cmd.arg(token);
         }
+
+
+        cmd.arg("-lstdc++")
+            .arg("-lz")
+            .arg("-lzstd")
+            .arg("-lffi")
+            .arg("-ltinfo");
 
         cmd.arg("-o").arg(filename);
 

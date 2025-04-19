@@ -1,28 +1,31 @@
-use std::fs;
-use std::io::{self, Write};
-use std::path::PathBuf;
+use anyhow::{Context, Result};
 use clap::{Parser as ClapParser, Subcommand};
-use anyhow::{Result, Context};
 use colored::Colorize;
 use std::ffi::{CStr, CString};
+use std::fs;
+use std::io::{self, Write};
 use std::os::raw::c_char;
+use std::path::PathBuf;
 
 // For stack size control
 use libc;
 
 // Import modules from lib.rs
-use cheetah::lexer::{Lexer, Token, TokenType, LexerConfig};
-use cheetah::parser::{self, ParseErrorFormatter};
-use cheetah::formatter::CodeFormatter;
-use cheetah::visitor::Visitor;
+use cheetah::compiler::runtime::{
+    buffered_output, circular_buffer, parallel_ops,
+    print_ops::{print_bool, print_float, print_int, print_string, println_string},
+    range_iterator, range_ops,
+};
 use cheetah::compiler::Compiler;
-use cheetah::compiler::runtime::{print_ops::{print_string, println_string, print_int, print_float, print_bool}, buffered_output, range_ops, range_iterator, circular_buffer, parallel_ops};
+use cheetah::formatter::CodeFormatter;
+use cheetah::lexer::{Lexer, LexerConfig, Token, TokenType};
 use cheetah::parse;
+use cheetah::parser::{self, ParseErrorFormatter};
+use cheetah::visitor::Visitor;
 
 use inkwell::context;
 // Import LLVM context and optimization-related modules
 use inkwell::targets::{InitializationConfig, Target};
-
 
 #[derive(ClapParser)]
 #[command(name = "cheetah")]
@@ -51,6 +54,14 @@ enum Commands {
         /// Use LLVM JIT compilation instead of interpreter
         #[arg(short = 'j', long)]
         jit: bool,
+    },
+    Build {
+        /// The source file to compile
+        file: String,
+
+        /// Optimization level (0-3)
+        #[arg(short, long, default_value = "0")]
+        opt: u8,
     },
     /// Start a REPL session
     Repl {
@@ -148,13 +159,17 @@ fn increase_stack_size() {
         }
 
         // Use the maximum available or our desired size, whichever is smaller
-        let new_size = if current_rlim.rlim_max != libc::RLIM_INFINITY && current_rlim.rlim_max < stack_size {
-            eprintln!("Note: System maximum stack size is {}MB, using that instead of requested {}MB",
-                     current_rlim.rlim_max / (1024 * 1024), stack_size / (1024 * 1024));
-            current_rlim.rlim_max
-        } else {
-            stack_size
-        };
+        let new_size =
+            if current_rlim.rlim_max != libc::RLIM_INFINITY && current_rlim.rlim_max < stack_size {
+                eprintln!(
+                    "Note: System maximum stack size is {}MB, using that instead of requested {}MB",
+                    current_rlim.rlim_max / (1024 * 1024),
+                    stack_size / (1024 * 1024)
+                );
+                current_rlim.rlim_max
+            } else {
+                stack_size
+            };
 
         let rlim = libc::rlimit {
             rlim_cur: new_size,
@@ -165,7 +180,14 @@ fn increase_stack_size() {
         if libc::setrlimit(libc::RLIMIT_STACK, &rlim) != 0 {
             eprintln!("Warning: Failed to increase stack size. Stack overflows may occur with large ranges.");
         } else {
-            println!("{}", format!("Stack size increased to {}MB for handling large ranges", new_size / (1024 * 1024)).bright_green());
+            println!(
+                "{}",
+                format!(
+                    "Stack size increased to {}MB for handling large ranges",
+                    new_size / (1024 * 1024)
+                )
+                .bright_green()
+            );
         }
     }
 }
@@ -175,7 +197,17 @@ fn increase_stack_size() {
     eprintln!("Warning: Stack size adjustment not supported on this platform.");
 }
 
+extern "C" { fn setlocale(category: i32, locale: *const i8) -> *mut i8; }
+fn init_locale() {
+    // LC_ALL = 0, C‑string must be NUL‑terminated
+    let locale = CString::new("C").unwrap();
+    unsafe { setlocale(0 /*LC_ALL*/, locale.as_ptr()) };
+}
+
 fn main() -> Result<()> {
+    // Initialize locale to C for consistent output
+    init_locale();
+
     // Increase stack size to prevent stack overflow
     increase_stack_size();
 
@@ -184,12 +216,21 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Handle direct file execution (cheetah main.ch)
+    // Handle direct `cheetah foo.ch` → compile to native and exec
     if let Some(file) = cli.file {
         if cli.jit {
-            run_file_jit(&file)?
+            run_file_jit(&file)?;
         } else {
-            run_file(&file)?
+            let src = ensure_ch_extension(&file);
+            let path = PathBuf::from(&src);
+            let file_stem = path.file_stem().unwrap();
+            let exe_stem = file_stem.to_string_lossy();
+            // build with default opt=0
+            compile_file(&src, Some(exe_stem.to_string()), 0, true, None)?;
+            println!("▶️  Running {}", exe_stem);
+            std::process::Command::new(exe_stem.as_ref())
+                .status()
+                .expect("failed to run executable");
         }
         return Ok(());
     }
@@ -203,6 +244,16 @@ fn main() -> Result<()> {
                 run_file(&file)?;
             }
         }
+        Some(Commands::Build { file, opt }) => {
+            // 1) Ensure we have .ch
+            let src = ensure_ch_extension(&file);
+            // 2) pick output exe name
+            let exe = PathBuf::from(src.trim_end_matches(".ch"));
+            // 3) compile to object/exe in-place
+            compile_file(&src, Some(exe.to_string_lossy().into()), opt, true, None)?;
+            println!("✅ Built executable: {}", exe.display());
+        }
+
         Some(Commands::Repl { jit }) => {
             if jit {
                 run_repl_jit()?;
@@ -210,7 +261,12 @@ fn main() -> Result<()> {
                 run_repl()?;
             }
         }
-        Some(Commands::Lex { file, verbose, color, line_numbers }) => {
+        Some(Commands::Lex {
+            file,
+            verbose,
+            color,
+            line_numbers,
+        }) => {
             lex_file(&file, verbose, color, line_numbers)?;
         }
         Some(Commands::Parse { file, verbose }) => {
@@ -219,10 +275,20 @@ fn main() -> Result<()> {
         Some(Commands::Check { file, verbose }) => {
             check_file(&file, verbose)?;
         }
-        Some(Commands::Format { file, write, indent }) => {
+        Some(Commands::Format {
+            file,
+            write,
+            indent,
+        }) => {
             format_file(&file, write, indent)?;
         }
-        Some(Commands::Compile { file, output, opt, object, target }) => {
+        Some(Commands::Compile {
+            file,
+            output,
+            opt,
+            object,
+            target,
+        }) => {
             compile_file(&file, output, opt, object, target)?;
         }
         None => {
@@ -286,7 +352,7 @@ fn run_file(filename: &str) -> Result<()> {
             println!("Successfully parsed file: {}", filename);
             println!("AST contains {} top-level statements", module.body.len());
             // Here you would execute the parsed code in a future interpreter
-        },
+        }
         Err(errors) => {
             eprintln!("Syntax errors found in '{}':", filename);
             for error in errors {
@@ -322,10 +388,16 @@ fn run_file_jit(filename: &str) -> Result<()> {
     parallel_ops::init();
 
     let filename = ensure_ch_extension(filename);
-    println!("{}", format!("JIT compiling and executing {}", filename).bright_green());
+    println!(
+        "{}",
+        format!("JIT compiling and executing {}", filename).bright_green()
+    );
 
     // Log that we're starting execution with debugging enabled
-    cheetah::compiler::runtime::debug_utils::debug_log(&format!("Starting JIT execution of {}", filename));
+    cheetah::compiler::runtime::debug_utils::debug_log(&format!(
+        "Starting JIT execution of {}",
+        filename
+    ));
 
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
@@ -353,19 +425,26 @@ fn run_file_jit(filename: &str) -> Result<()> {
 
                     // Register runtime functions with the execution engine
                     if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
-                        println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
+                        println!(
+                            "{}",
+                            format!("Warning: Failed to register some runtime functions: {}", e)
+                                .bright_yellow()
+                        );
                     }
 
                     // Execute the "main" function using the JIT execution engine
                     unsafe {
                         // Look up the main function in the module
-                        match execution_engine.get_function::<unsafe extern "C" fn() -> ()>("main") {
+                        match execution_engine.get_function::<unsafe extern "C" fn() -> ()>("main")
+                        {
                             Ok(main_fn) => {
                                 // Execute the main function
                                 println!("{}", "Executing main function...".bright_green());
 
                                 // Log that we're about to execute the main function
-                                cheetah::compiler::runtime::debug_utils::debug_log("Starting main function execution");
+                                cheetah::compiler::runtime::debug_utils::debug_log(
+                                    "Starting main function execution",
+                                );
 
                                 // Execute with timing
                                 let start_time = std::time::Instant::now();
@@ -390,10 +469,18 @@ fn run_file_jit(filename: &str) -> Result<()> {
                                 // Clean up parallel processing
                                 cheetah::compiler::runtime::parallel_ops::cleanup();
 
-                                println!("{}", format!("Execution completed in {:.2?}", elapsed).bright_green());
-                            },
+                                println!(
+                                    "{}",
+                                    format!("Execution completed in {:.2?}", elapsed)
+                                        .bright_green()
+                                );
+                            }
                             Err(e) => {
-                                println!("{}", format!("Warning: Failed to find main function: {}", e).bright_yellow());
+                                println!(
+                                    "{}",
+                                    format!("Warning: Failed to find main function: {}", e)
+                                        .bright_yellow()
+                                );
                                 println!("{}", "Displaying IR instead:".bright_yellow());
                                 println!("{}", compiler.get_ir());
                             }
@@ -401,10 +488,10 @@ fn run_file_jit(filename: &str) -> Result<()> {
                     }
 
                     Ok(())
-                },
+                }
                 Err(e) => Err(anyhow::anyhow!("Compilation failed: {}", e)),
             }
-        },
+        }
         Err(errors) => {
             for error in &errors {
                 let formatter = ParseErrorFormatter::new(error, Some(&source), true);
@@ -449,10 +536,19 @@ fn run_repl() -> Result<()> {
         input_buffer.push_str(input);
         input_buffer.push('\n');
 
-        update_repl_state(&input, &mut paren_level, &mut bracket_level, &mut brace_level, &mut in_multiline_block);
+        update_repl_state(
+            &input,
+            &mut paren_level,
+            &mut bracket_level,
+            &mut brace_level,
+            &mut in_multiline_block,
+        );
 
-        let should_execute = !in_multiline_block && paren_level == 0 && bracket_level == 0 && brace_level == 0 &&
-                                    (input.trim().is_empty() || !input.trim().ends_with(':'));
+        let should_execute = !in_multiline_block
+            && paren_level == 0
+            && bracket_level == 0
+            && brace_level == 0
+            && (input.trim().is_empty() || !input.trim().ends_with(':'));
 
         if should_execute {
             let complete_input = input_buffer.trim();
@@ -478,15 +574,18 @@ fn run_repl() -> Result<()> {
                             if input.starts_with("tokens") || input.starts_with("lexer") {
                                 for token in &tokens {
                                     match &token.token_type {
-                                        TokenType::Invalid(_) => println!("{}", format!("{}", token).bright_red()),
+                                        TokenType::Invalid(_) => {
+                                            println!("{}", format!("{}", token).bright_red())
+                                        }
                                         _ => println!("{}", format_token_for_repl(token, true)),
                                     }
                                 }
                             }
-                        },
+                        }
                         Err(errors) => {
                             for error in errors {
-                                let formatter = ParseErrorFormatter::new(&error, Some(complete_input), true);
+                                let formatter =
+                                    ParseErrorFormatter::new(&error, Some(complete_input), true);
                                 eprintln!("{}", formatter.format().bright_red());
                             }
                         }
@@ -507,7 +606,10 @@ fn run_repl() -> Result<()> {
 }
 
 fn run_repl_jit() -> Result<()> {
-    println!("{}", "Cheetah Programming Language REPL (JIT Mode)".bright_green());
+    println!(
+        "{}",
+        "Cheetah Programming Language REPL (JIT Mode)".bright_green()
+    );
     println!("Type 'exit' or press Ctrl+D to exit");
 
     let mut input_buffer = String::new();
@@ -544,10 +646,19 @@ fn run_repl_jit() -> Result<()> {
         input_buffer.push_str(input);
         input_buffer.push('\n');
 
-        update_repl_state(&input, &mut paren_level, &mut bracket_level, &mut brace_level, &mut in_multiline_block);
+        update_repl_state(
+            &input,
+            &mut paren_level,
+            &mut bracket_level,
+            &mut brace_level,
+            &mut in_multiline_block,
+        );
 
-        let should_execute = !in_multiline_block && paren_level == 0 && bracket_level == 0 && brace_level == 0 &&
-                                    (input.trim().is_empty() || !input.trim().ends_with(':'));
+        let should_execute = !in_multiline_block
+            && paren_level == 0
+            && bracket_level == 0
+            && brace_level == 0
+            && (input.trim().is_empty() || !input.trim().ends_with(':'));
 
         if should_execute {
             let complete_input = input_buffer.trim();
@@ -574,26 +685,38 @@ fn run_repl_jit() -> Result<()> {
                                 apply_optimization_passes(compiled_module);
 
                                 // Create JIT execution engine with aggressive optimization
-                                match compiled_module.create_jit_execution_engine(inkwell::OptimizationLevel::Aggressive) {
+                                match compiled_module.create_jit_execution_engine(
+                                    inkwell::OptimizationLevel::Aggressive,
+                                ) {
                                     Ok(execution_engine) => {
                                         // Register runtime functions with the execution engine
-                                        if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
+                                        if let Err(e) = register_runtime_functions(
+                                            &execution_engine,
+                                            compiled_module,
+                                        ) {
                                             println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
                                         }
 
                                         // Execute the "main" function using the JIT execution engine
                                         unsafe {
                                             // Look up the main function in the module
-                                            match execution_engine.get_function::<unsafe extern "C" fn() -> ()>("main") {
+                                            match execution_engine
+                                                .get_function::<unsafe extern "C" fn() -> ()>(
+                                                    "main",
+                                                ) {
                                                 Ok(main_fn) => {
                                                     // Execute the main function
-                                                    println!("{}", "Executing main function...".bright_green());
+                                                    println!(
+                                                        "{}",
+                                                        "Executing main function...".bright_green()
+                                                    );
                                                     main_fn.call();
                                                     // Flush any remaining output
                                                     cheetah::compiler::runtime::buffered_output::flush_output_buffer();
 
                                                     // Clean up range operations
-                                                    cheetah::compiler::runtime::range_ops::cleanup();
+                                                    cheetah::compiler::runtime::range_ops::cleanup(
+                                                    );
 
                                                     // Clean up range iterator system
                                                     cheetah::compiler::runtime::range_iterator::cleanup();
@@ -607,26 +730,36 @@ fn run_repl_jit() -> Result<()> {
                                                     // Clean up parallel processing
                                                     cheetah::compiler::runtime::parallel_ops::cleanup();
 
-                                                    println!("{}", "Execution completed.".bright_green());
-                                                },
+                                                    println!(
+                                                        "{}",
+                                                        "Execution completed.".bright_green()
+                                                    );
+                                                }
                                                 Err(e) => {
                                                     println!("{}", format!("Warning: Failed to find main function: {}", e).bright_yellow());
-                                                    println!("{}", "Displaying IR instead:".bright_yellow());
+                                                    println!(
+                                                        "{}",
+                                                        "Displaying IR instead:".bright_yellow()
+                                                    );
                                                     println!("{}", compiler.get_ir());
                                                 }
                                             }
                                         }
-                                    },
+                                    }
                                     Err(e) => {
-                                        eprintln!("{}", format!("Failed to create execution engine: {}", e).bright_red());
+                                        eprintln!(
+                                            "{}",
+                                            format!("Failed to create execution engine: {}", e)
+                                                .bright_red()
+                                        );
                                     }
                                 }
-                            },
+                            }
                             Err(e) => {
                                 eprintln!("{}", format!("Compilation error: {}", e).bright_red());
                             }
                         }
-                    },
+                    }
                     Err(errors) => {
                         for error in errors {
                             eprintln!("{}", error.get_message().bright_red());
@@ -648,15 +781,33 @@ fn run_repl_jit() -> Result<()> {
 }
 
 /// Updates the REPL state based on the current line of input
-fn update_repl_state(input: &str, paren_level: &mut usize, bracket_level: &mut usize, brace_level: &mut usize, in_multiline_block: &mut bool) {
+fn update_repl_state(
+    input: &str,
+    paren_level: &mut usize,
+    bracket_level: &mut usize,
+    brace_level: &mut usize,
+    in_multiline_block: &mut bool,
+) {
     for c in input.chars() {
         match c {
             '(' => *paren_level += 1,
-            ')' => if *paren_level > 0 { *paren_level -= 1 },
+            ')' => {
+                if *paren_level > 0 {
+                    *paren_level -= 1
+                }
+            }
             '[' => *bracket_level += 1,
-            ']' => if *bracket_level > 0 { *bracket_level -= 1 },
+            ']' => {
+                if *bracket_level > 0 {
+                    *bracket_level -= 1
+                }
+            }
             '{' => *brace_level += 1,
-            '}' => if *brace_level > 0 { *brace_level -= 1 },
+            '}' => {
+                if *brace_level > 0 {
+                    *brace_level -= 1
+                }
+            }
             _ => {}
         }
     }
@@ -702,18 +853,28 @@ fn lex_file(filename: &str, verbose: bool, use_color: bool, line_numbers: bool) 
 
             if use_color {
                 match &token.token_type {
-                    TokenType::Def | TokenType::If | TokenType::Else | TokenType::For |
-                    TokenType::While | TokenType::Return => println!("{}", token_str.bright_blue()),
+                    TokenType::Def
+                    | TokenType::If
+                    | TokenType::Else
+                    | TokenType::For
+                    | TokenType::While
+                    | TokenType::Return => println!("{}", token_str.bright_blue()),
                     TokenType::Identifier(_) => println!("{}", token_str.bright_yellow()),
-                    TokenType::StringLiteral(_) | TokenType::RawString(_) |
-                    TokenType::FString(_) | TokenType::BytesLiteral(_) => {
+                    TokenType::StringLiteral(_)
+                    | TokenType::RawString(_)
+                    | TokenType::FString(_)
+                    | TokenType::BytesLiteral(_) => {
                         println!("{}", token_str.bright_green())
-                    },
-                    TokenType::IntLiteral(_) | TokenType::FloatLiteral(_) |
-                    TokenType::BinaryLiteral(_) | TokenType::OctalLiteral(_) |
-                    TokenType::HexLiteral(_) => println!("{}", token_str.bright_cyan()),
+                    }
+                    TokenType::IntLiteral(_)
+                    | TokenType::FloatLiteral(_)
+                    | TokenType::BinaryLiteral(_)
+                    | TokenType::OctalLiteral(_)
+                    | TokenType::HexLiteral(_) => println!("{}", token_str.bright_cyan()),
                     TokenType::Invalid(_) => println!("{}", token_str.bright_red()),
-                    TokenType::Indent | TokenType::Dedent => println!("{}", token_str.bright_magenta()),
+                    TokenType::Indent | TokenType::Dedent => {
+                        println!("{}", token_str.bright_magenta())
+                    }
                     _ => println!("{}", token_str),
                 }
             } else {
@@ -786,7 +947,7 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
                     }
                 }
             }
-        },
+        }
         Err(errors) => {
             eprintln!("Syntax errors found in '{}':", filename);
             for error in errors {
@@ -821,7 +982,10 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
         eprintln!("✗ Lexical errors found in '{}':", filename);
         for error in lexer_errors {
             if verbose {
-                eprintln!("  Line {}, Col {}: {}", error.line, error.column, error.message);
+                eprintln!(
+                    "  Line {}, Col {}: {}",
+                    error.line, error.column, error.message
+                );
                 eprintln!("  {}", error.snippet);
                 eprintln!("  {}^", " ".repeat(error.column + 1));
                 if let Some(suggestion) = &error.suggestion {
@@ -839,7 +1003,7 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
     match parser::parse(tokens) {
         Ok(_) => {
             println!("✓ No syntax errors found in '{}'", filename);
-        },
+        }
         Err(errors) => {
             eprintln!("✗ Syntax errors found in '{}':", filename);
             for error in errors {
@@ -890,7 +1054,7 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
             } else {
                 print!("{}", formatted_source);
             }
-        },
+        }
         Err(errors) => {
             eprintln!("Cannot format file with syntax errors:");
             for error in errors {
@@ -914,7 +1078,11 @@ fn compile_file(
     let filename = ensure_ch_extension(filename);
     println!(
         "{}",
-        format!("Compiling {} with optimization level {}", filename, opt_level).bright_green()
+        format!(
+            "Compiling {} with optimization level {}",
+            filename, opt_level
+        )
+        .bright_green()
     );
 
     let source = fs::read_to_string(&filename)
@@ -996,15 +1164,23 @@ fn format_token(token: &Token, use_color: bool) -> String {
         TokenType::Invalid(_) => format!("{}", token).bright_red().to_string(),
         TokenType::Indent | TokenType::Dedent | TokenType::Newline => {
             format!("{}", token).bright_magenta().to_string()
-        },
+        }
         TokenType::Identifier(_) => format!("{}", token).bright_yellow().to_string(),
-        TokenType::Def | TokenType::If | TokenType::Else | TokenType::For |
-        TokenType::While | TokenType::Return => format!("{}", token).bright_blue().to_string(),
-        TokenType::StringLiteral(_) | TokenType::RawString(_) |
-        TokenType::FString(_) | TokenType::BytesLiteral(_) => format!("{}", token).bright_green().to_string(),
-        TokenType::IntLiteral(_) | TokenType::FloatLiteral(_) |
-        TokenType::BinaryLiteral(_) | TokenType::OctalLiteral(_) |
-        TokenType::HexLiteral(_) => format!("{}", token).bright_cyan().to_string(),
+        TokenType::Def
+        | TokenType::If
+        | TokenType::Else
+        | TokenType::For
+        | TokenType::While
+        | TokenType::Return => format!("{}", token).bright_blue().to_string(),
+        TokenType::StringLiteral(_)
+        | TokenType::RawString(_)
+        | TokenType::FString(_)
+        | TokenType::BytesLiteral(_) => format!("{}", token).bright_green().to_string(),
+        TokenType::IntLiteral(_)
+        | TokenType::FloatLiteral(_)
+        | TokenType::BinaryLiteral(_)
+        | TokenType::OctalLiteral(_)
+        | TokenType::HexLiteral(_) => format!("{}", token).bright_cyan().to_string(),
         _ => format!("{}", token).to_string(),
     }
 }
@@ -1021,15 +1197,20 @@ fn format_token_for_repl(token: &Token, use_color: bool) -> String {
         TokenType::IntLiteral(val) => format!("Int: {}", val).bright_cyan().to_string(),
         TokenType::FloatLiteral(val) => format!("Float: {}", val).bright_cyan().to_string(),
         TokenType::StringLiteral(val) => format!("String: \"{}\"", val).bright_green().to_string(),
-        TokenType::RawString(val) => format!("RawString: r\"{}\"", val).bright_green().to_string(),
+        TokenType::RawString(val) => format!("RawString: r\"{}\"", val)
+            .bright_green()
+            .to_string(),
         TokenType::FString(val) => format!("FString: f\"{}\"", val).bright_green().to_string(),
         TokenType::BytesLiteral(bytes) => {
-            let bytes_str = bytes.iter()
+            let bytes_str = bytes
+                .iter()
                 .map(|b| format!("\\x{:02x}", b))
                 .collect::<Vec<_>>()
                 .join("");
-            format!("Bytes: b\"{}\"", bytes_str).bright_green().to_string()
-        },
+            format!("Bytes: b\"{}\"", bytes_str)
+                .bright_green()
+                .to_string()
+        }
         TokenType::BinaryLiteral(val) => format!("Binary: 0b{:b}", val).bright_cyan().to_string(),
         TokenType::OctalLiteral(val) => format!("Octal: 0o{:o}", val).bright_cyan().to_string(),
         TokenType::HexLiteral(val) => format!("Hex: 0x{:x}", val).bright_cyan().to_string(),
@@ -1049,17 +1230,25 @@ fn apply_optimization_passes(_module: &inkwell::module::Module<'_>) {
     // The actual optimization will be done when creating the execution engine
     // with OptimizationLevel::Aggressive
 
-    println!("{}", "Using aggressive optimization level for improved performance".bright_green());
+    println!(
+        "{}",
+        "Using aggressive optimization level for improved performance".bright_green()
+    );
     println!("{}", "Stack overflow prevention enabled".bright_green());
 }
 
 fn register_runtime_functions(
     engine: &inkwell::execution_engine::ExecutionEngine<'_>,
-    module: &inkwell::module::Module<'_>
+    module: &inkwell::module::Module<'_>,
 ) -> Result<(), String> {
     // Register list runtime functions
-    if let Err(e) = cheetah::compiler::runtime::list_runtime_impl::register_list_runtime_functions(engine, module) {
-        println!("{}", format!("Warning: Failed to register list runtime functions: {}", e).bright_yellow());
+    if let Err(e) = cheetah::compiler::runtime::list_runtime_impl::register_list_runtime_functions(
+        engine, module,
+    ) {
+        println!(
+            "{}",
+            format!("Warning: Failed to register list runtime functions: {}", e).bright_yellow()
+        );
     }
 
     // Type conversion functions
