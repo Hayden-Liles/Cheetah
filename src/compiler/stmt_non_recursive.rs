@@ -571,232 +571,130 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                 StmtTask::ProcessFor { target, body, orelse, iter } => {
                     // Get the current function
                     let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-
-                    // Create basic blocks for loop initialization, condition, body, increment, else, and end
-                    let init_block = self.llvm_context.append_basic_block(current_function, "for.init");
-                    let cond_block = self.llvm_context.append_basic_block(current_function, "for.cond");
-                    let body_block = self.llvm_context.append_basic_block(current_function, "for.body");
+                
+                    // Create basic blocks for init, cond, body, increment, else, and end
+                    let init_block      = self.llvm_context.append_basic_block(current_function, "for.init");
+                    let cond_block      = self.llvm_context.append_basic_block(current_function, "for.cond");
+                    let body_block      = self.llvm_context.append_basic_block(current_function, "for.body");
                     let increment_block = self.llvm_context.append_basic_block(current_function, "for.inc");
-                    let else_block = self.llvm_context.append_basic_block(current_function, "for.else");
-                    let end_block = self.llvm_context.append_basic_block(current_function, "for.end");
-
-                    // Register this loop in the loop stack for break/continue
+                    let else_block      = self.llvm_context.append_basic_block(current_function, "for.else");
+                    let end_block       = self.llvm_context.append_basic_block(current_function, "for.end");
+                
+                    // Register this loop for break/continue targets
                     self.push_loop(increment_block, end_block);
-
-                    // Branch to the initialization block
+                
+                    // Jump into the init block
                     self.builder.build_unconditional_branch(init_block).unwrap();
-
-                    // Initialization block (get iterator)
+                
+                    // ===== Initialization block =====
                     self.builder.position_at_end(init_block);
-
+                    let i64_type = self.llvm_context.i64_type();
+                
+                    // Initialize the index variable to 0
+                    let index_ptr = self.builder.build_alloca(i64_type, "for.index").unwrap();
+                    self.builder.build_store(index_ptr, i64_type.const_int(0, false)).unwrap();
+                
+                    // Hoist the loop‐variable allocation so it only runs once
+                    // and register it in the scope immediately
+                    let var_ptr = if let Expr::Name { id, .. } = target {
+                        let ptr = self.builder.build_alloca(i64_type, id).unwrap();
+                        self.scope_stack.add_variable(id.clone(), ptr, Type::Int);
+                        ptr
+                    } else {
+                        // For complex targets, you can fall back or error out
+                        return Err("Unsupported loop target".to_string());
+                    };
+                
                     // Compile the iterator expression
                     let (iter_val, iter_type) = self.compile_expr(iter)?;
-
-                    // Create an index variable initialized to 0
-                    let i64_type = self.llvm_context.i64_type();
-                    let index_ptr = self.builder.build_alloca(i64_type, "for.index").unwrap();
-
-                    // Initialize the index variable to 0
-                    self.builder.build_store(index_ptr, i64_type.const_int(0, false)).unwrap();
-
-                    // Get the length of the iterable
+                
+                    // Compute the length of the iterable
                     let len_val = match iter_type {
                         Type::List(_) => {
-                            // For lists, get the length using list_len function
-                            let list_len_fn = match self.module.get_function("list_len") {
-                                Some(f) => f,
-                                None => return Err("list_len function not found".to_string()),
-                            };
-
-                            let call_site_value = self.builder.build_call(
+                            let list_len_fn = self.module.get_function("list_len")
+                                .ok_or("list_len function not found".to_string())?;
+                            let call = self.builder.build_call(
                                 list_len_fn,
                                 &[iter_val.into_pointer_value().into()],
                                 "list_len_result"
                             ).unwrap();
-
-                            call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to get list length".to_string())?
+                            call.try_as_basic_value().left().unwrap()
                         },
                         Type::Int => {
-                            // For integers (like range), use the value directly
-                            // If it's a pointer, load it first
+                            // A range length: if it's a pointer, load it; else it's already the length
                             if iter_val.is_pointer_value() {
-                                self.builder.build_load(
-                                    self.llvm_context.i64_type(),
-                                    iter_val.into_pointer_value(),
-                                    "range_len"
-                                ).unwrap()
+                                self.builder.build_load(i64_type, iter_val.into_pointer_value(), "range_len").unwrap()
                             } else {
                                 iter_val
                             }
                         },
                         _ => {
-                            // For other types, use the value directly
+                            // Default: treat the value itself as length
                             iter_val
                         }
                     };
-
-                    // Branch to the condition block
+                
+                    // Jump to the condition check
                     self.builder.build_unconditional_branch(cond_block).unwrap();
-
-                    // Condition block (check if index < length)
+                
+                    // ===== Condition block =====
                     self.builder.position_at_end(cond_block);
                     let index_val = self.builder.build_load(i64_type, index_ptr, "index").unwrap().into_int_value();
-                    let cond_val = self.builder.build_int_compare(
+                    let cond = self.builder.build_int_compare(
                         inkwell::IntPredicate::SLT,
                         index_val,
                         len_val.into_int_value(),
                         "loop.cond"
                     ).unwrap();
-                    self.builder.build_conditional_branch(cond_val, body_block, else_block).unwrap();
-
-                    // Body block with its own scope
+                    self.builder.build_conditional_branch(cond, body_block, else_block).unwrap();
+                
+                    // ===== Body block =====
                     self.builder.position_at_end(body_block);
-                    self.push_scope(false, true, false); // Create a new scope for the loop body (is_loop=true)
-
-                    // Load the current index value
-                    let index_val = self.builder.build_load(i64_type, index_ptr, "index").unwrap().into_int_value();
-
-                    // Assign the current index to the target variable
-                    if let Expr::Name { id, .. } = target {
-                        // Always create a new variable in the loop scope
-                        println!("Creating loop variable: {}", id);
-
-                        match iter_type {
-                            Type::List(elem_type) => {
-                                // Get the element from the list
-                                let _list_ptr = iter_val.into_pointer_value();
-
-                                // Create a new variable for the loop index
-                                let var_ptr = self.builder.build_alloca(i64_type, id.as_str()).unwrap();
-
-                                // Store the index value in the variable
-                                self.builder.build_store(var_ptr, index_val).unwrap();
-
-                                // If the element type is a tuple, extract the element type if all elements are the same
-                                let element_type = match &*elem_type {
-                                    Type::Tuple(tuple_element_types) => {
-                                        if !tuple_element_types.is_empty() && tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
-                                            // All tuple elements have the same type, use that type
-                                            tuple_element_types[0].clone()
-                                        } else {
-                                            // Keep the original type
-                                            *elem_type.clone()
-                                        }
-                                    },
-                                    _ => *elem_type.clone()
-                                };
-
-                                // Add the variable to the current scope
-                                self.add_variable_to_scope(id.clone(), var_ptr, element_type);
-                            },
-                            _ => {
-                                // For other types, just use the index directly
-                                let var_ptr = self.builder.build_alloca(i64_type, id.as_str()).unwrap();
-                                self.builder.build_store(var_ptr, index_val).unwrap();
-                                self.add_variable_to_scope(id.clone(), var_ptr, Type::Int);
-                            }
+                    self.push_scope(false, true, false); // new inner scope for the loop body
+                
+                    // Store the current index into our hoisted loop variable
+                    self.builder.build_store(var_ptr, index_val).unwrap();
+                
+                    // Compile all the body statements
+                    for stmt in body {
+                        if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                            break;
                         }
-
-                        // Execute the loop body
-                        for stmt in body {
-                            // Check if the current block already has a terminator
-                            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                                break;
-                            }
-
-                            // Execute the statement directly
-                            if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
-                                return Err(e);
-                            }
-                        }
-
-                        // Check if the block already has a terminator (from break, continue, return)
-                        if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                            // If not, add a branch to the increment block
-                            self.builder.build_unconditional_branch(increment_block).unwrap();
-                        }
-                    } else {
-                        // For complex targets, use the fallback implementation
-                        // Non-recursive implementations are always used
-
-
-                        // Create a temporary For statement to pass to the fallback
-                        let for_stmt = Stmt::For {
-                            target: Box::new(target.clone()),
-                            iter: Box::new(iter.clone()),
-                            body: body.to_vec(),
-                            orelse: orelse.to_vec(),
-                            is_async: false,
-                            line: 0,
-                            column: 0
-                        };
-
-                        // Call the fallback implementation
-                        let result = self.compile_stmt_fallback(&for_stmt);
-
-                        // Non-recursive implementations are always used
-
-                        if let Err(e) = result {
-                            return Err(e);
-                        }
-
-                        // Return early since we've already compiled the for loop
-                        return Ok(());
+                        self.compile_stmt_non_recursive(stmt)?;
                     }
-
-                    // After executing the body, increment the index and branch back to the condition
+                
+                    // Make sure we fall through to the increment block
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                        self.builder.build_unconditional_branch(increment_block).unwrap();
+                    }
+                    self.pop_scope(); // exit loop‐body scope
+                
+                    // ===== Increment block =====
                     self.builder.position_at_end(increment_block);
-                    let index_val = self.builder.build_load(i64_type, index_ptr, "index").unwrap().into_int_value();
-                    let next_index = self.builder.build_int_add(
-                        index_val,
-                        i64_type.const_int(1, false),
-                        "next_index"
-                    ).unwrap();
+                    let prev_index = self.builder.build_load(i64_type, index_ptr, "index").unwrap().into_int_value();
+                    let next_index = self.builder.build_int_add(prev_index, i64_type.const_int(1, false), "next_index").unwrap();
                     self.builder.build_store(index_ptr, next_index).unwrap();
                     self.builder.build_unconditional_branch(cond_block).unwrap();
-
-                    // Else block
+                
+                    // ===== Else block =====
                     self.builder.position_at_end(else_block);
-                    self.push_scope(false, false, false); // Create a new scope for the else block
-
-                    // Execute the else block if it exists
+                    self.push_scope(false, false, false); // scope for else
                     if !orelse.is_empty() {
                         for stmt in orelse {
-                            // Check if the current block already has a terminator
                             if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
                                 break;
                             }
-
-                            // Execute the statement directly
-                            // Non-recursive implementations are always used
-
-
-                            if let Err(e) = self.compile_stmt_non_recursive(stmt.as_ref()) {
-                                return Err(e);
-                            }
-
-                            // Non-recursive implementations are always used
+                            self.compile_stmt_non_recursive(stmt)?;
                         }
                     }
-
-                    // Check if the block already has a terminator (from break, continue, return)
-                    if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                        // If not, add a branch to the end block
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
                         self.builder.build_unconditional_branch(end_block).unwrap();
                     }
-
-                    // Pop the scope for the else block
                     self.pop_scope();
-
-                    // End block
+                
+                    // ===== End block =====
                     self.builder.position_at_end(end_block);
-
-                    // Pop this loop from the stack
-                    self.pop_loop();
-
-                    // Pop the scope for the loop body
-                    self.pop_scope();
+                    self.pop_loop();  // remove break/continue targets
                 },
 
                 StmtTask::ProcessWhile { test, body, orelse } => {
