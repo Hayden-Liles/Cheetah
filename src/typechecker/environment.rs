@@ -56,10 +56,8 @@ impl TypeEnvironment {
             current_return_type: None,
         };
 
-        // Add global scope
         env.push_scope();
 
-        // Add built-in types and functions
         env.add_builtin_types();
 
         env
@@ -67,38 +65,35 @@ impl TypeEnvironment {
 
     /// Add built-in types and functions to the environment
     fn add_builtin_types(&mut self) {
-        // Add built-in functions
-        self.add_function("print".to_string(), Type::function(
-            vec![Type::Any],
-            Type::None
-        ));
+        self.add_function(
+            "print".to_string(),
+            Type::function(vec![Type::Any], Type::None),
+        );
 
-        self.add_function("len".to_string(), Type::function(
-            vec![Type::Any],
-            Type::Int
-        ));
+        self.add_function(
+            "len".to_string(),
+            Type::function(vec![Type::Any], Type::Int),
+        );
 
-        self.add_function("str".to_string(), Type::function(
-            vec![Type::Any],
-            Type::String
-        ));
+        self.add_function(
+            "str".to_string(),
+            Type::function(vec![Type::Any], Type::String),
+        );
 
-        self.add_function("int".to_string(), Type::function(
-            vec![Type::Any],
-            Type::Int
-        ));
+        self.add_function(
+            "int".to_string(),
+            Type::function(vec![Type::Any], Type::Int),
+        );
 
-        self.add_function("float".to_string(), Type::function(
-            vec![Type::Any],
-            Type::Float
-        ));
+        self.add_function(
+            "float".to_string(),
+            Type::function(vec![Type::Any], Type::Float),
+        );
 
-        self.add_function("bool".to_string(), Type::function(
-            vec![Type::Any],
-            Type::Bool
-        ));
-
-        // Add more built-in functions as needed
+        self.add_function(
+            "bool".to_string(),
+            Type::function(vec![Type::Any], Type::Bool),
+        );
     }
 
     /// Push a new scope onto the stack
@@ -144,7 +139,6 @@ impl TypeEnvironment {
 
     /// Update a function's type in the environment
     pub fn update_function(&mut self, name: String, ty: Type) {
-        // Search from innermost to outermost scope
         for scope in self.scopes.iter_mut().rev() {
             if scope.functions.contains_key(&name) {
                 scope.functions.insert(name, ty);
@@ -152,7 +146,6 @@ impl TypeEnvironment {
             }
         }
 
-        // If the function wasn't found, add it to the innermost scope
         self.add_function(name, ty);
     }
 
@@ -165,7 +158,6 @@ impl TypeEnvironment {
 
     /// Look up a variable's type in the environment
     pub fn lookup_variable(&self, name: &str) -> Option<&Type> {
-        // Search from innermost to outermost scope
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.variables.get(name) {
                 return Some(ty);
@@ -176,7 +168,6 @@ impl TypeEnvironment {
 
     /// Look up a function's type in the environment
     pub fn lookup_function(&self, name: &str) -> Option<&Type> {
-        // Search from innermost to outermost scope
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.functions.get(name) {
                 return Some(ty);
@@ -187,7 +178,6 @@ impl TypeEnvironment {
 
     /// Look up a class's type in the environment
     pub fn lookup_class(&self, name: &str) -> Option<&Type> {
-        // Search from innermost to outermost scope
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.classes.get(name) {
                 return Some(ty);
@@ -198,9 +188,9 @@ impl TypeEnvironment {
 
     /// Check if a name is defined in the environment (variable, function, or class)
     pub fn is_defined(&self, name: &str) -> bool {
-        self.lookup_variable(name).is_some() ||
-        self.lookup_function(name).is_some() ||
-        self.lookup_class(name).is_some()
+        self.lookup_variable(name).is_some()
+            || self.lookup_function(name).is_some()
+            || self.lookup_class(name).is_some()
     }
 
     /// Get a reference to the current (innermost) scope
@@ -225,7 +215,6 @@ impl TypeEnvironment {
     /// Set a variable's type in the environment
     pub fn set_variable_type(&mut self, name: &str, ty: Type) {
         println!("Setting variable type for '{}' to {:?}", name, ty);
-        // Search from innermost to outermost scope
         for scope in self.scopes.iter_mut().rev() {
             if scope.variables.contains_key(name) {
                 scope.variables.insert(name.to_string(), ty);
@@ -233,9 +222,6 @@ impl TypeEnvironment {
             }
         }
 
-        // If the variable wasn't found, add it to the innermost scope
         self.add_variable(name.to_string(), ty);
     }
-
-    // We don't need to track parent expressions in the environment
 }

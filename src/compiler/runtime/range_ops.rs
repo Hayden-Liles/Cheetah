@@ -12,14 +12,16 @@ static RANGE_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 // Constants for range optimization
 const VERY_LARGE_RANGE_THRESHOLD: i64 = 10_000_000; // 10 million iterations is very large
-const RANGE_SIZE_LIMIT: i64 = 100_000_000; // Absolute maximum range size to prevent segfaults
+const RANGE_SIZE_LIMIT: i64 = 1_000_000_000_000; // Absolute maximum range size to prevent segfaults
 
 // We'll use a simpler approach without caching to avoid dependencies
 
 /// Register range operation functions in the module
 pub fn register_range_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
     // Create range_1 function (range with stop only)
-    let range_1_type = context.i64_type().fn_type(&[context.i64_type().into()], false);
+    let range_1_type = context
+        .i64_type()
+        .fn_type(&[context.i64_type().into()], false);
     module.add_function("range_1", range_1_type, None);
 
     // Create range_2 function (range with start and stop)
@@ -80,7 +82,10 @@ pub fn track_range_operation(start: i64, stop: i64, step: i64) {
         if (stop - start).abs() > VERY_LARGE_RANGE_THRESHOLD {
             eprintln!(
                 "[RANGE WARNING] Very large range detected: {}..{} step {} (size: {})",
-                start, stop, step, (stop - start).abs()
+                start,
+                stop,
+                step,
+                (stop - start).abs()
             );
         }
     }
@@ -103,8 +108,10 @@ pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
 
     // Safety check: limit the maximum range size to prevent segfaults
     if size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            size, RANGE_SIZE_LIMIT
+        );
         size = RANGE_SIZE_LIMIT;
     }
 
@@ -127,8 +134,10 @@ pub fn cleanup() {
 pub extern "C" fn range_1(stop: i64) -> i64 {
     // Safety check: ensure stop is reasonable
     let safe_stop = if stop > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
-                 stop, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
+            stop, RANGE_SIZE_LIMIT
+        );
         RANGE_SIZE_LIMIT
     } else {
         stop
@@ -145,8 +154,10 @@ pub extern "C" fn range_2(start: i64, stop: i64) -> i64 {
     // Safety check: ensure range is reasonable
     let range_size = if start < stop { stop - start } else { 0 };
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 range_size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            range_size, RANGE_SIZE_LIMIT
+        );
         (start, start + RANGE_SIZE_LIMIT)
     } else {
         (start, stop)
@@ -172,8 +183,10 @@ pub extern "C" fn range_3(start: i64, stop: i64, step: i64) -> i64 {
 
     // Apply safety limits
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 range_size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            range_size, RANGE_SIZE_LIMIT
+        );
         if safe_step > 0 {
             (start, start + (RANGE_SIZE_LIMIT * safe_step))
         } else {

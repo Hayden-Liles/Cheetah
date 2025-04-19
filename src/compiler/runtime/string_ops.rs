@@ -8,7 +8,7 @@ use std::os::raw::c_char;
 pub extern "C" fn int_to_string(value: i64) -> *mut c_char {
     let s = format!("{}", value);
     let c_str = CString::new(s).unwrap();
-    c_str.into_raw() // Caller is responsible for freeing this memory
+    c_str.into_raw()
 }
 
 /// Convert a float to a string (C-compatible wrapper)
@@ -61,10 +61,9 @@ pub extern "C" fn string_get_char(value: *const c_char, index: i64) -> i64 {
     let s = c_str.to_str().unwrap_or("");
 
     if index < 0 || index >= s.len() as i64 {
-        return 0; // Return null character for out-of-bounds
+        return 0;
     }
 
-    // Get the character at the given index
     let index = index as usize;
     s.chars().nth(index).map(|c| c as i64).unwrap_or(0)
 }
@@ -72,24 +71,25 @@ pub extern "C" fn string_get_char(value: *const c_char, index: i64) -> i64 {
 /// Convert a character code to a string (C-compatible wrapper)
 #[unsafe(no_mangle)]
 pub extern "C" fn char_to_string(value: i64) -> *mut c_char {
-    // Convert the character code to a Rust char
     let c = std::char::from_u32(value as u32).unwrap_or('\0');
 
-    // Create a string with just this character
     let s = c.to_string();
 
-    // Convert to C string and return
     let c_str = CString::new(s).unwrap();
-    c_str.into_raw() // Caller is responsible for freeing this memory
+    c_str.into_raw()
 }
 
 /// Get a slice of a string (C-compatible wrapper)
 #[unsafe(no_mangle)]
-pub extern "C" fn string_slice(value: *const c_char, start: i64, stop: i64, step: i64) -> *mut c_char {
+pub extern "C" fn string_slice(
+    value: *const c_char,
+    start: i64,
+    stop: i64,
+    step: i64,
+) -> *mut c_char {
     let c_str = unsafe { CStr::from_ptr(value) };
     let s = c_str.to_str().unwrap_or("");
 
-    // Handle empty string case
     if s.is_empty() {
         let empty = CString::new("").unwrap();
         return empty.into_raw();
@@ -97,17 +97,26 @@ pub extern "C" fn string_slice(value: *const c_char, start: i64, stop: i64, step
 
     let len = s.len() as i64;
 
-    // Normalize indices
-    let start = if start < 0 { 0 } else if start > len { len } else { start };
-    let stop = if stop < 0 { 0 } else if stop > len { len } else { stop };
+    let start = if start < 0 {
+        0
+    } else if start > len {
+        len
+    } else {
+        start
+    };
+    let stop = if stop < 0 {
+        0
+    } else if stop > len {
+        len
+    } else {
+        stop
+    };
 
-    // Handle step = 0 case (invalid in Python, but we'll just return empty string)
     if step == 0 {
         let empty = CString::new("").unwrap();
         return empty.into_raw();
     }
 
-    // Create the sliced string
     let mut result = String::new();
 
     if step > 0 {
@@ -118,19 +127,17 @@ pub extern "C" fn string_slice(value: *const c_char, start: i64, stop: i64, step
             }
             i += step;
         }
-    } else { // step < 0
         let mut i = start;
         while i > stop {
             if let Some(c) = s.chars().nth(i as usize) {
                 result.push(c);
             }
-            i += step; // This will decrease i since step is negative
+            i += step;
         }
     }
 
-    // Convert to C string and return
     let c_result = CString::new(result).unwrap();
-    c_result.into_raw() // Caller is responsible for freeing this memory
+    c_result.into_raw()
 }
 
 /// Get the length of a string (C-compatible wrapper)
@@ -147,7 +154,6 @@ pub extern "C" fn free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
         unsafe {
             let _ = CString::from_raw(ptr);
-            // Memory is freed when CString is dropped
         }
     }
 }

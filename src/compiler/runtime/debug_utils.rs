@@ -1,7 +1,7 @@
 // debug_utils.rs - Utilities for debugging runtime issues
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::backtrace::Backtrace;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 // Debug flags
@@ -10,11 +10,10 @@ static STACK_TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
 static PERFORMANCE_TRACKING_ENABLED: AtomicBool = AtomicBool::new(false);
 static OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
 static LAST_STACK_TRACE_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static STACK_TRACE_INTERVAL_MS: u64 = 1000; // Only capture stack trace every second
+static STACK_TRACE_INTERVAL_MS: u64 = 1000;
 
 // Initialize debug utilities
 pub fn init() {
-    // Check environment variables to enable debugging features
     if std::env::var("CHEETAH_DEBUG").is_ok() {
         eprintln!("Debug mode enabled");
         DEBUG_ENABLED.store(true, Ordering::Relaxed);
@@ -30,7 +29,6 @@ pub fn init() {
         PERFORMANCE_TRACKING_ENABLED.store(true, Ordering::Relaxed);
     }
 
-    // Reset operation count
     OPERATION_COUNT.store(0, Ordering::Relaxed);
 }
 
@@ -45,21 +43,24 @@ pub fn debug_log(message: &str) {
 pub fn track_operation(operation_name: &str) -> usize {
     let count = OPERATION_COUNT.fetch_add(1, Ordering::Relaxed);
 
-    // Only log every 10,000 operations to avoid flooding
     if DEBUG_ENABLED.load(Ordering::Relaxed) && count % 10000 == 0 {
-        eprintln!("[DEBUG] Operation count: {}, Last operation: {}", count, operation_name);
+        eprintln!(
+            "[DEBUG] Operation count: {}, Last operation: {}",
+            count, operation_name
+        );
     }
 
-    // Capture stack trace periodically if enabled
     if STACK_TRACE_ENABLED.load(Ordering::Relaxed) && count % 100000 == 0 {
-        // Check if enough time has passed since the last stack trace
         let now = Instant::now().elapsed().as_millis() as u64;
         let last = LAST_STACK_TRACE_TIME.load(Ordering::Relaxed);
 
         if now - last > STACK_TRACE_INTERVAL_MS {
             LAST_STACK_TRACE_TIME.store(now, Ordering::Relaxed);
             let bt = Backtrace::capture();
-            eprintln!("[STACK TRACE] Operation count: {}, Backtrace: {:?}", count, bt);
+            eprintln!(
+                "[STACK TRACE] Operation count: {}, Backtrace: {:?}",
+                count, bt
+            );
         }
     }
 
@@ -89,12 +90,10 @@ impl Drop for PerformanceTracker {
             let elapsed = self.start_time.elapsed();
             let elapsed_ms = elapsed.as_millis() as u64;
 
-            // Only log operations that take longer than the threshold
             if elapsed_ms > self.threshold_ms {
                 eprintln!(
                     "[PERF] Operation '{}' took {}ms",
-                    self.operation,
-                    elapsed_ms
+                    self.operation, elapsed_ms
                 );
             }
         }
@@ -107,19 +106,22 @@ pub fn check_stack_depth(function_name: &str) -> bool {
         return false;
     }
 
-    // A simple way to estimate remaining stack space is to allocate a small array
-    // If this fails, we're close to stack overflow
     let result = std::panic::catch_unwind(|| {
-        let _buffer = [0u8; 1024]; // 1KB buffer
+        let _buffer = [0u8; 1024];
     });
 
     if result.is_err() {
-        eprintln!("[STACK WARNING] Stack space low in function: {}", function_name);
+        eprintln!(
+            "[STACK WARNING] Stack space low in function: {}",
+            function_name
+        );
 
-        // Capture a stack trace
         if STACK_TRACE_ENABLED.load(Ordering::Relaxed) {
             let bt = Backtrace::capture();
-            eprintln!("[STACK TRACE] Function: {}, Backtrace: {:?}", function_name, bt);
+            eprintln!(
+                "[STACK TRACE] Function: {}, Backtrace: {:?}",
+                function_name, bt
+            );
         }
 
         return true;

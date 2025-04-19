@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use inkwell::values::PointerValue;
-use inkwell::types::BasicTypeEnum;
 use crate::compiler::types::Type;
+use inkwell::types::BasicTypeEnum;
+use inkwell::values::PointerValue;
+use std::collections::HashMap;
 
 /// Represents a closure environment for a nested function
 pub struct ClosureEnvironment<'ctx> {
@@ -104,51 +104,51 @@ impl<'ctx> ClosureEnvironment<'ctx> {
     }
 
     /// Access a nonlocal variable with proper dominance validation using phi nodes
-    pub fn access_nonlocal_with_phi(&self,
-                                    builder: &inkwell::builder::Builder<'ctx>,
-                                    name: &str,
-                                    llvm_type: inkwell::types::BasicTypeEnum<'ctx>,
-                                    _llvm_context: &'ctx inkwell::context::Context) -> Option<inkwell::values::BasicValueEnum<'ctx>> {
-        // Check if we have a proxy for this nonlocal variable
+    pub fn access_nonlocal_with_phi(
+        &self,
+        builder: &inkwell::builder::Builder<'ctx>,
+        name: &str,
+        llvm_type: inkwell::types::BasicTypeEnum<'ctx>,
+        _llvm_context: &'ctx inkwell::context::Context,
+    ) -> Option<inkwell::values::BasicValueEnum<'ctx>> {
         if let Some(proxy_ptr) = self.get_nonlocal_proxy(name) {
-            // Get the current function
             let current_function = builder.get_insert_block().unwrap().get_parent().unwrap();
 
-            // Save the current position
             let current_position = builder.get_insert_block().unwrap();
 
-            // Instead of creating a new builder, we'll save the current position,
-            // move to the entry block, create the alloca, and then restore the position
             let entry_block = current_function.get_first_basic_block().unwrap();
 
-            // Save the current position
             let original_block = builder.get_insert_block().unwrap();
 
-            // Move to the entry block
             builder.position_at_end(entry_block);
 
-            // Create an alloca in the entry block
-            let temp_alloca = builder.build_alloca(llvm_type, &format!("nonlocal_{}_alloca", name)).unwrap();
+            let temp_alloca = builder
+                .build_alloca(llvm_type, &format!("nonlocal_{}_alloca", name))
+                .unwrap();
 
-            // Restore the original position
             builder.position_at_end(original_block);
 
-            // Return to the original position
             builder.position_at_end(current_position);
 
-            // Load the value from the proxy
-            let value = builder.build_load(llvm_type, *proxy_ptr, &format!("load_{}_from_proxy", name)).unwrap();
+            let value = builder
+                .build_load(llvm_type, *proxy_ptr, &format!("load_{}_from_proxy", name))
+                .unwrap();
 
-            // Store the value in the temporary alloca
             builder.build_store(temp_alloca, value).unwrap();
 
-            // Load the value from the temporary alloca
-            // This creates a proper dominance relationship that LLVM can validate
-            let result = builder.build_load(llvm_type, temp_alloca, &format!("load_{}_from_alloca", name)).unwrap();
+            let result = builder
+                .build_load(
+                    llvm_type,
+                    temp_alloca,
+                    &format!("load_{}_from_alloca", name),
+                )
+                .unwrap();
 
-            println!("Accessed nonlocal variable '{}' with phi node technique", name);
+            println!(
+                "Accessed nonlocal variable '{}' with phi node technique",
+                name
+            );
 
-            // Return the loaded value
             Some(result)
         } else {
             None
@@ -161,16 +161,16 @@ impl<'ctx> ClosureEnvironment<'ctx> {
             return;
         }
 
-        // Create the struct type for the environment
         if !self.captured_vars.is_empty() {
-            // Sort variables by their index to ensure consistent ordering
-            let mut vars: Vec<(String, u32)> = self.var_indices.iter()
+            let mut vars: Vec<(String, u32)> = self
+                .var_indices
+                .iter()
                 .map(|(name, &index)| (name.clone(), index))
                 .collect();
             vars.sort_by_key(|&(_, index)| index);
 
-            // Create the field types
-            self.field_types = vars.iter()
+            self.field_types = vars
+                .iter()
                 .map(|(name, _)| {
                     let ty = &self.captured_types[name];
                     match ty {
@@ -180,14 +180,15 @@ impl<'ctx> ClosureEnvironment<'ctx> {
                         Type::String => context.ptr_type(inkwell::AddressSpace::default()).into(),
                         Type::List(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
                         Type::Tuple(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
-                        Type::Dict(_, _) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+                        Type::Dict(_, _) => {
+                            context.ptr_type(inkwell::AddressSpace::default()).into()
+                        }
                         Type::Set(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
                         _ => context.ptr_type(inkwell::AddressSpace::default()).into(),
                     }
                 })
                 .collect();
 
-            // Create the struct type
             let _struct_name = format!("env_{}", self.function_name.replace('.', "_"));
             let struct_type = context.struct_type(&self.field_types, false);
             self.env_type = Some(struct_type);

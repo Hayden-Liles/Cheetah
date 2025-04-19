@@ -5,14 +5,9 @@ use std::ffi::{CStr, CString};
 use std::fs;
 use std::io::{self, Write};
 use std::os::raw::c_char;
-use std::path::PathBuf;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 
-
-// For stack size control
-use libc;
-
-// Import modules from lib.rs
 use cheetah::compiler::runtime::{
     buffered_output, circular_buffer, parallel_ops,
     print_ops::{print_bool, print_float, print_int, print_string, println_string},
@@ -24,9 +19,9 @@ use cheetah::lexer::{Lexer, LexerConfig, Token, TokenType};
 use cheetah::parse;
 use cheetah::parser::{self, ParseErrorFormatter};
 use cheetah::visitor::Visitor;
+use libc;
 
 use inkwell::context;
-// Import LLVM context and optimization-related modules
 use inkwell::targets::{InitializationConfig, Target};
 
 #[derive(ClapParser)]
@@ -57,6 +52,7 @@ enum Commands {
         #[arg(short = 'j', long)]
         jit: bool,
     },
+    /// Build a Cheetah source file to an executable
     Build {
         /// The source file to compile
         file: String,
@@ -145,22 +141,18 @@ enum Commands {
 // Function to increase the stack size limit
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn increase_stack_size() {
-    // Set stack size to 256MB (256 * 1024 * 1024) for large ranges
     let stack_size = 256 * 1024 * 1024;
 
-    // Get current limits
     let mut current_rlim = libc::rlimit {
         rlim_cur: 0,
         rlim_max: 0,
     };
 
     unsafe {
-        // Get current limits first
         if libc::getrlimit(libc::RLIMIT_STACK, &mut current_rlim) != 0 {
             eprintln!("Warning: Failed to get current stack size limits.");
         }
 
-        // Use the maximum available or our desired size, whichever is smaller
         let new_size =
             if current_rlim.rlim_max != libc::RLIM_INFINITY && current_rlim.rlim_max < stack_size {
                 eprintln!(
@@ -178,7 +170,6 @@ fn increase_stack_size() {
             rlim_max: current_rlim.rlim_max,
         };
 
-        // Try to increase the stack size
         if libc::setrlimit(libc::RLIMIT_STACK, &rlim) != 0 {
             eprintln!("Warning: Failed to increase stack size. Stack overflows may occur with large ranges.");
         } else {
@@ -199,42 +190,37 @@ fn increase_stack_size() {
     eprintln!("Warning: Stack size adjustment not supported on this platform.");
 }
 
-extern "C" { fn setlocale(category: i32, locale: *const i8) -> *mut i8; }
+extern "C" {
+    fn setlocale(category: i32, locale: *const i8) -> *mut i8;
+}
 fn init_locale() {
-    // LC_ALL = 0, C‑string must be NUL‑terminated
     let locale = CString::new("C").unwrap();
-    unsafe { setlocale(0 /*LC_ALL*/, locale.as_ptr()) };
+    unsafe {
+        setlocale(0 /*LC_ALL*/, locale.as_ptr())
+    };
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    
-    // Initialize locale to C for consistent output
+
     init_locale();
 
-    // Increase stack size to prevent stack overflow
     increase_stack_size();
 
-    // Initialize LLVM targets for cross-compilation support
     initialize_llvm_targets();
 
-
-    // If they passed a bare FILE (no subcommand), we do build‑if‑needed, then exec
     if let (None, Some(raw)) = (&cli.command, &cli.file) {
         if cli.jit {
             run_file_jit(raw)?;
         } else {
-            // 1) Normalize & absolutize the source path
             let src = ensure_ch_extension(raw);
             let abs_src = std::fs::canonicalize(&src)
                 .map_err(|e| anyhow::anyhow!("Cannot find {}: {}", src, e))?;
 
-            // 2) Prepare build dir
             let cwd = std::env::current_dir()?;
             let build_dir = cwd.join(".cheetah_build");
             std::fs::create_dir_all(&build_dir)?;
 
-            // 3) Figure out the exe's stem & path
             let exe_stem = abs_src
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -243,7 +229,6 @@ fn main() -> Result<()> {
 
             if !exe_path.exists() {
                 println!("⚙️  No existing build for `{}`, compiling…", exe_stem);
-                // temporarily cd into the build dir so compile_file spits artifacts here
                 std::env::set_current_dir(&build_dir)?;
                 compile_file(
                     abs_src.to_string_lossy().as_ref(),
@@ -252,14 +237,12 @@ fn main() -> Result<()> {
                     true,
                     None,
                 )?;
-                // go back so our exec (& anything else) sees the original cwd again
                 std::env::set_current_dir(&cwd)?;
                 println!("⚙️ Built {}", exe_path.display());
             } else {
                 println!("⏩ Found existing build: {}", exe_path.display());
             }
 
-            // 4) Exec the AOT binary
             println!("▶️  Running {}", exe_path.display());
             let err = std::process::Command::new(&exe_path).exec();
             eprintln!("❌ failed to exec `{}`: {}", exe_path.display(), err);
@@ -268,14 +251,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Handle subcommands
     match cli.command {
-        // `cheetah run file.ch` → only exec, never recompile
         Some(Commands::Run { file, jit }) => {
             if jit {
                 run_file_jit(&file)?;
             } else {
-                // mirror the same logic: look for ./.cheetah_build/<stem>
                 let src = ensure_ch_extension(&file);
                 let cwd = std::env::current_dir()?;
                 let build_dir = cwd.join(".cheetah_build");
@@ -288,7 +268,8 @@ fn main() -> Result<()> {
                 if !exe_path.is_file() {
                     return Err(anyhow::anyhow!(
                         "No build found for `{}`. Please run `cheetah build {}` first.",
-                        file, file
+                        file,
+                        file
                     ));
                 }
                 println!("▶️  Exec'ing {}", exe_path.display());
@@ -298,24 +279,20 @@ fn main() -> Result<()> {
             }
         }
         Some(Commands::Build { file, opt }) => {
-            // 1) Normalize & absolutize
             let src = ensure_ch_extension(&file);
             let abs_src = std::fs::canonicalize(&src)
                 .map_err(|e| anyhow::anyhow!("Cannot find {}: {}", src, e))?;
 
-            // 2) Prepare build dir
             let cwd = std::env::current_dir()?;
             let build_dir = cwd.join(".cheetah_build");
             std::fs::create_dir_all(&build_dir)?;
 
-            // 3) Decide on exe name & path
             let exe_stem = abs_src
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
             let exe_path = build_dir.join(exe_stem);
 
-            // 4) Actually build into .cheetah_build
             println!("🔨 Building {} → {}", file, exe_path.display());
             std::env::set_current_dir(&build_dir)?;
             compile_file(
@@ -366,10 +343,7 @@ fn main() -> Result<()> {
         }) => {
             compile_file(&file, output, opt, object, target)?;
         }
-        None => {
-            // If no file and no command, start REPL
-            run_repl()?
-        }
+        None => run_repl()?,
     }
 
     Ok(())
@@ -397,32 +371,20 @@ fn ensure_ch_extension(filename: &str) -> String {
         }
     }
 
-    // If no extension or not .ch, add .ch extension
     let mut path_with_ext = path.clone();
     path_with_ext.set_extension("ch");
     path_with_ext.to_string_lossy().to_string()
 }
 
 fn run_file_jit(filename: &str) -> Result<()> {
-    // Initialize debug utilities first
-    // cheetah::compiler::runtime::debug_utils::init();
-
-    // Then initialize the buffered output system
     buffered_output::init();
 
-    // Initialize range operations
     range_ops::init();
 
-    // Initialize range iterator system
     range_iterator::init();
 
-    // Initialize circular buffer
     circular_buffer::init();
 
-    // Initialize memory profiler
-    // memory_profiler::init();
-
-    // Initialize parallel processing
     parallel_ops::init();
 
     let filename = ensure_ch_extension(filename);
@@ -431,7 +393,6 @@ fn run_file_jit(filename: &str) -> Result<()> {
         format!("JIT compiling and executing {}", filename).bright_green()
     );
 
-    // Log that we're starting execution with debugging enabled
     cheetah::compiler::runtime::debug_utils::debug_log(&format!(
         "Starting JIT execution of {}",
         filename
@@ -440,28 +401,21 @@ fn run_file_jit(filename: &str) -> Result<()> {
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
-    // Parse the source code
     match parse(&source) {
         Ok(module) => {
-            // Create LLVM context and compiler
             let context = context::Context::create();
             let mut compiler = Compiler::new(&context, &filename);
 
-            // Compile the AST
             match compiler.compile_module(&module) {
                 Ok(_) => {
-                    // Get the compiled module using the getter
                     let compiled_module = compiler.get_module();
 
-                    // Apply optimization passes to the module
                     apply_optimization_passes(compiled_module);
 
-                    // Create JIT execution engine with aggressive optimization
                     let execution_engine = compiled_module
                         .create_jit_execution_engine(inkwell::OptimizationLevel::Aggressive)
                         .map_err(|e| anyhow::anyhow!("Failed to create execution engine: {}", e))?;
 
-                    // Register runtime functions with the execution engine
                     if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
                         println!(
                             "{}",
@@ -470,41 +424,30 @@ fn run_file_jit(filename: &str) -> Result<()> {
                         );
                     }
 
-                    // Execute the "main" function using the JIT execution engine
                     unsafe {
-                        // Look up the main function in the module
                         match execution_engine.get_function::<unsafe extern "C" fn() -> ()>("main")
                         {
                             Ok(main_fn) => {
-                                // Execute the main function
                                 println!("{}", "Executing main function...".bright_green());
 
-                                // Log that we're about to execute the main function
                                 cheetah::compiler::runtime::debug_utils::debug_log(
                                     "Starting main function execution",
                                 );
 
-                                // Execute with timing
                                 let start_time = std::time::Instant::now();
                                 main_fn.call();
                                 let elapsed = start_time.elapsed();
 
-                                // Flush any remaining output
                                 cheetah::compiler::runtime::buffered_output::flush_output_buffer();
 
-                                // Clean up range operations
                                 cheetah::compiler::runtime::range_ops::cleanup();
 
-                                // Clean up range iterator system
                                 cheetah::compiler::runtime::range_iterator::cleanup();
 
-                                // Clean up circular buffer
                                 cheetah::compiler::runtime::circular_buffer::cleanup();
 
-                                // Clean up memory profiler
                                 cheetah::compiler::runtime::memory_profiler::cleanup();
 
-                                // Clean up parallel processing
                                 cheetah::compiler::runtime::parallel_ops::cleanup();
 
                                 println!(
@@ -592,7 +535,6 @@ fn run_repl() -> Result<()> {
             let complete_input = input_buffer.trim();
 
             if !complete_input.is_empty() {
-                // First lexical analysis
                 let mut lexer = Lexer::new(complete_input);
                 let tokens = lexer.tokenize();
 
@@ -602,13 +544,10 @@ fn run_repl() -> Result<()> {
                         eprintln!("{}", error.to_string().bright_red());
                     }
                 } else {
-                    // Then try parsing with the new parser interface
                     match parser::parse(tokens.clone()) {
                         Ok(_module) => {
                             println!("{}", "✓ Parsed successfully".bright_green());
-                            // Here you would execute the parsed code in a future interpreter
 
-                            // For now, just print the tokens
                             if input.starts_with("tokens") || input.starts_with("lexer") {
                                 for token in &tokens {
                                     match &token.token_type {
@@ -656,7 +595,6 @@ fn run_repl_jit() -> Result<()> {
     let mut brace_level = 0;
     let mut in_multiline_block = false;
 
-    // Create LLVM context once for the entire REPL session
     let context = context::Context::create();
     let mut repl_count = 0;
 
@@ -705,29 +643,22 @@ fn run_repl_jit() -> Result<()> {
                 repl_count += 1;
                 let module_name = format!("repl_{}", repl_count);
 
-                // Parse the input
                 match parse(complete_input) {
                     Ok(module) => {
-                        // Create compiler for this REPL entry
                         let mut compiler = Compiler::new(&context, &module_name);
 
-                        // Compile the AST
                         match compiler.compile_module(&module) {
                             Ok(_) => {
                                 println!("{}", "✓ Compiled successfully".bright_green());
 
-                                // Get the compiled module
                                 let compiled_module = compiler.get_module();
 
-                                // Apply optimization passes to the module
                                 apply_optimization_passes(compiled_module);
 
-                                // Create JIT execution engine with aggressive optimization
                                 match compiled_module.create_jit_execution_engine(
                                     inkwell::OptimizationLevel::Aggressive,
                                 ) {
                                     Ok(execution_engine) => {
-                                        // Register runtime functions with the execution engine
                                         if let Err(e) = register_runtime_functions(
                                             &execution_engine,
                                             compiled_module,
@@ -735,37 +666,28 @@ fn run_repl_jit() -> Result<()> {
                                             println!("{}", format!("Warning: Failed to register some runtime functions: {}", e).bright_yellow());
                                         }
 
-                                        // Execute the "main" function using the JIT execution engine
                                         unsafe {
-                                            // Look up the main function in the module
                                             match execution_engine
                                                 .get_function::<unsafe extern "C" fn() -> ()>(
                                                     "main",
                                                 ) {
                                                 Ok(main_fn) => {
-                                                    // Execute the main function
                                                     println!(
                                                         "{}",
                                                         "Executing main function...".bright_green()
                                                     );
                                                     main_fn.call();
-                                                    // Flush any remaining output
                                                     cheetah::compiler::runtime::buffered_output::flush_output_buffer();
 
-                                                    // Clean up range operations
                                                     cheetah::compiler::runtime::range_ops::cleanup(
                                                     );
 
-                                                    // Clean up range iterator system
                                                     cheetah::compiler::runtime::range_iterator::cleanup();
 
-                                                    // Clean up circular buffer
                                                     cheetah::compiler::runtime::circular_buffer::cleanup();
 
-                                                    // Clean up memory profiler
                                                     cheetah::compiler::runtime::memory_profiler::cleanup();
 
-                                                    // Clean up parallel processing
                                                     cheetah::compiler::runtime::parallel_ops::cleanup();
 
                                                     println!(
@@ -941,7 +863,6 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
-    // First, lex the file
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
 
@@ -954,23 +875,19 @@ fn parse_file(filename: &str, verbose: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Then, parse the tokens with the new parser interface
     match parser::parse(tokens) {
         Ok(module) => {
             println!("Successfully parsed file: {}", filename);
 
             if verbose {
-                // Use the AstPrinter to display the AST structure
                 use cheetah::visitor::AstPrinter;
                 let mut printer = AstPrinter::new();
                 let output = printer.visit_module(&module);
                 println!("AST Structure:");
                 println!("{}", output);
             } else {
-                // Just print summary info
                 println!("AST contains {} top-level statements", module.body.len());
 
-                // Print the first few statements as a preview
                 let max_preview = 5;
                 let preview_count = std::cmp::min(max_preview, module.body.len());
 
@@ -1003,7 +920,6 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
-    // Check for lexical errors first
     let config = LexerConfig {
         enforce_indent_consistency: true,
         standard_indent_size: 4,
@@ -1037,7 +953,6 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Then check for syntax errors using the new parser interface
     match parser::parse(tokens) {
         Ok(_) => {
             println!("✓ No syntax errors found in '{}'", filename);
@@ -1046,7 +961,6 @@ fn check_file(filename: &str, verbose: bool) -> Result<()> {
             eprintln!("✗ Syntax errors found in '{}':", filename);
             for error in errors {
                 if verbose {
-                    // Use the new ParseErrorFormatter for better error messages
                     let formatter = ParseErrorFormatter::new(&error, Some(&source), true);
                     eprintln!("  {}", formatter);
                 } else {
@@ -1064,7 +978,6 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
-    // First, check for lexical errors
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
 
@@ -1077,10 +990,8 @@ fn format_file(filename: &str, write: bool, indent_size: usize) -> Result<()> {
         return Ok(());
     }
 
-    // Then parse into AST using the new parser interface
     match parser::parse(tokens) {
         Ok(module) => {
-            // Format the AST
             let mut formatter = CodeFormatter::new(indent_size);
             formatter.visit_module(&module);
             let formatted_source = formatter.get_output().to_string();
@@ -1126,14 +1037,11 @@ fn compile_file(
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
 
-    // Parse the source code
     match parse(&source) {
         Ok(module) => {
-            // Create LLVM context and compiler
             let context = context::Context::create();
             let mut compiler = Compiler::new(&context, &filename);
 
-            // Select optimization level
             let llvm_opt = match opt_level {
                 0 => inkwell::OptimizationLevel::None,
                 1 => inkwell::OptimizationLevel::Less,
@@ -1145,10 +1053,8 @@ fn compile_file(
                 format!("Using optimization level: {:?}", llvm_opt).bright_green()
             );
 
-            // Compile the AST
             match compiler.compile_module(&module) {
                 Ok(_) => {
-                    // Determine output path / stem
                     let output_path = match output {
                         Some(path) => PathBuf::from(path),
                         None => {
@@ -1159,18 +1065,15 @@ fn compile_file(
                     };
 
                     if output_object {
-                        // AOT path: strip extension to get executable name
                         let exe_name = output_path
                             .file_stem()
                             .and_then(|s| s.to_str())
                             .ok_or_else(|| anyhow::anyhow!("Invalid output filename"))?;
 
-                        // Emit native object + link to exe
                         compiler
                             .emit_to_aot(exe_name)
                             .map_err(|e| anyhow::anyhow!("AOT compilation failed: {}", e))?;
                     } else {
-                        // Emit LLVM IR
                         compiler
                             .write_to_file(&output_path)
                             .map_err(|e| anyhow::anyhow!("Failed to write IR to file: {}", e))?;
@@ -1261,13 +1164,8 @@ fn format_token_for_repl(token: &Token, use_color: bool) -> String {
     format!("{} at {}:{}", token_desc, token.line, token.column)
 }
 
-// This function registers all runtime functions with the JIT execution engine
 /// Apply optimization passes to the LLVM module to improve performance
 fn apply_optimization_passes(_module: &inkwell::module::Module<'_>) {
-    // We'll use LLVM's built-in optimization levels instead of manual passes
-    // The actual optimization will be done when creating the execution engine
-    // with OptimizationLevel::Aggressive
-
     println!(
         "{}",
         "Using aggressive optimization level for improved performance".bright_green()
@@ -1279,7 +1177,6 @@ fn register_runtime_functions(
     engine: &inkwell::execution_engine::ExecutionEngine<'_>,
     module: &inkwell::module::Module<'_>,
 ) -> Result<(), String> {
-    // Register list runtime functions
     if let Err(e) = cheetah::compiler::runtime::list_runtime_impl::register_list_runtime_functions(
         engine, module,
     ) {
@@ -1289,7 +1186,6 @@ fn register_runtime_functions(
         );
     }
 
-    // Type conversion functions
     if let Some(function) = module.get_function("int_to_string") {
         {
             engine.add_global_mapping(&function, jit_int_to_string as usize);
@@ -1308,7 +1204,6 @@ fn register_runtime_functions(
         }
     }
 
-    // Range functions
     if let Some(function) = module.get_function("range_1") {
         {
             engine.add_global_mapping(&function, range_ops::range_1 as usize);
@@ -1363,7 +1258,6 @@ fn register_runtime_functions(
         }
     }
 
-    // Built-in functions (these would call the type conversion functions)
     if let Some(function) = module.get_function("str_int") {
         {
             engine.add_global_mapping(&function, jit_str_int as usize);
@@ -1382,7 +1276,6 @@ fn register_runtime_functions(
         }
     }
 
-    // Print functions
     if let Some(function) = module.get_function("print_string") {
         {
             engine.add_global_mapping(&function, print_string as usize);
@@ -1413,7 +1306,6 @@ fn register_runtime_functions(
         }
     }
 
-    // String operations
     if let Some(function) = module.get_function("string_concat") {
         {
             engine.add_global_mapping(&function, jit_string_concat as usize);
@@ -1437,17 +1329,14 @@ fn register_runtime_functions(
 
 // Runtime function implementations - optimized for performance
 extern "C" fn jit_int_to_string(value: i64) -> *mut c_char {
-    // Use a more efficient approach for small integers
     let s = if value >= -9999 && value <= 9999 {
-        // Small integers can use a fixed buffer
-        let mut buffer = [0u8; 16]; // More than enough for small integers
+        let mut buffer = [0u8; 16];
         let s = value.to_string();
         let bytes = s.as_bytes();
         buffer[..bytes.len()].copy_from_slice(bytes);
-        buffer[bytes.len()] = 0; // Null terminator
+        buffer[bytes.len()] = 0;
         unsafe { CString::from_raw(buffer.as_ptr() as *mut c_char) }
     } else {
-        // For larger integers, use the standard approach
         CString::new(value.to_string()).unwrap()
     };
     s.into_raw()
@@ -1466,13 +1355,10 @@ extern "C" fn jit_bool_to_string(value: i64) -> *mut c_char {
 }
 
 extern "C" fn jit_char_to_string(value: i64) -> *mut c_char {
-    // Convert the character code to a Rust char
     let c = std::char::from_u32(value as u32).unwrap_or('\0');
 
-    // Create a string with just this character
     let s = c.to_string();
 
-    // Convert to C string and return
     let c_str = CString::new(s).unwrap();
     c_str.into_raw()
 }
@@ -1502,12 +1388,10 @@ extern "C" fn jit_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
         unsafe {
             let _ = CString::from_raw(ptr);
-            // Memory is freed when CString is dropped
         }
     }
 }
 
-// Built-in function implementations
 extern "C" fn jit_str_int(value: i64) -> *mut c_char {
     jit_int_to_string(value)
 }
@@ -1520,7 +1404,6 @@ extern "C" fn jit_str_bool(value: bool) -> *mut c_char {
     jit_bool_to_string(if value { 1 } else { 0 })
 }
 
-// String operation implementations
 extern "C" fn jit_string_concat(left: *const c_char, right: *const c_char) -> *mut c_char {
     let left_cstr = unsafe { CStr::from_ptr(left) };
     let right_cstr = unsafe { CStr::from_ptr(right) };
@@ -1548,5 +1431,3 @@ extern "C" fn jit_string_length(string: *const c_char) -> i64 {
     let s = cstr.to_str().unwrap_or("");
     s.len() as i64
 }
-
-// Range functions are now implemented in src/compiler/runtime/range_ops.rs

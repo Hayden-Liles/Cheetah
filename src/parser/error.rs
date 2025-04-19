@@ -1,6 +1,6 @@
 use crate::lexer::TokenType;
-use std::fmt;
 use colored::Colorize;
+use std::fmt;
 
 /// Formatter for parse errors with source context
 pub struct ParseErrorFormatter<'a> {
@@ -12,14 +12,17 @@ pub struct ParseErrorFormatter<'a> {
 impl<'a> ParseErrorFormatter<'a> {
     /// Create a new error formatter
     pub fn new(error: &'a ParseError, source: Option<&'a str>, colored: bool) -> Self {
-        Self { error, source, colored }
+        Self {
+            error,
+            source,
+            colored,
+        }
     }
 
     /// Format the error with source context
     pub fn format(&self) -> String {
         let mut result = String::new();
 
-        // Add the error message
         let error_msg = self.error.get_message();
         if self.colored {
             result.push_str(&error_msg.bright_red().to_string());
@@ -28,7 +31,6 @@ impl<'a> ParseErrorFormatter<'a> {
         }
         result.push('\n');
 
-        // Add source context if available
         if let Some(source) = self.source {
             if let Some(context) = self.get_source_context(source) {
                 result.push_str(&context);
@@ -54,20 +56,16 @@ impl<'a> ParseErrorFormatter<'a> {
 
         let mut result = String::new();
 
-        // Show a few lines before and after the error
         let start_line = if line > 2 { line - 2 } else { 1 };
         let end_line = std::cmp::min(line + 2, lines.len());
 
-        // Calculate padding for line numbers
         let line_num_width = end_line.to_string().len();
 
         for i in start_line..=end_line {
             let line_content = lines[i - 1];
 
-            // Format line number
             let line_num = format!("{:>width$}", i, width = line_num_width);
 
-            // Highlight the error line
             if i == line {
                 if self.colored {
                     result.push_str(&format!(" {} | {}", line_num.bright_yellow(), line_content));
@@ -76,7 +74,6 @@ impl<'a> ParseErrorFormatter<'a> {
                 }
                 result.push('\n');
 
-                // Add caret pointing to the error position
                 let spaces = " ".repeat(line_num_width + 3 + column);
                 if self.colored {
                     result.push_str(&format!("{}{}", spaces, "^".bright_red()));
@@ -160,7 +157,13 @@ impl ParseError {
     }
 
     /// Create a new unexpected token error with suggestion
-    pub fn unexpected_token_with_suggestion(expected: &str, found: TokenType, line: usize, column: usize, suggestion: &str) -> Self {
+    pub fn unexpected_token_with_suggestion(
+        expected: &str,
+        found: TokenType,
+        line: usize,
+        column: usize,
+        suggestion: &str,
+    ) -> Self {
         ParseError::UnexpectedToken {
             expected: expected.to_string(),
             found,
@@ -181,7 +184,12 @@ impl ParseError {
     }
 
     /// Create a new invalid syntax error with suggestion
-    pub fn invalid_syntax_with_suggestion(message: &str, line: usize, column: usize, suggestion: &str) -> Self {
+    pub fn invalid_syntax_with_suggestion(
+        message: &str,
+        line: usize,
+        column: usize,
+        suggestion: &str,
+    ) -> Self {
         ParseError::InvalidSyntax {
             message: message.to_string(),
             line,
@@ -201,7 +209,12 @@ impl ParseError {
     }
 
     /// Create a new end of file error with suggestion
-    pub fn eof_with_suggestion(expected: &str, line: usize, column: usize, suggestion: &str) -> Self {
+    pub fn eof_with_suggestion(
+        expected: &str,
+        line: usize,
+        column: usize,
+        suggestion: &str,
+    ) -> Self {
         ParseError::EOF {
             expected: expected.to_string(),
             line,
@@ -213,24 +226,44 @@ impl ParseError {
     /// Get a user-friendly error message
     pub fn get_message(&self) -> String {
         match self {
-            ParseError::UnexpectedToken { expected, found, line, column, suggestion } => {
-                let mut msg = format!("Line {}, column {}: Expected {}, but found {:?}",
-                    line, column, expected, found);
+            ParseError::UnexpectedToken {
+                expected,
+                found,
+                line,
+                column,
+                suggestion,
+            } => {
+                let mut msg = format!(
+                    "Line {}, column {}: Expected {}, but found {:?}",
+                    line, column, expected, found
+                );
                 if let Some(sug) = suggestion {
                     msg.push_str(&format!(". Suggestion: {}", sug));
                 }
                 msg
             }
-            ParseError::InvalidSyntax { message, line, column, suggestion } => {
+            ParseError::InvalidSyntax {
+                message,
+                line,
+                column,
+                suggestion,
+            } => {
                 let mut msg = format!("Line {}, column {}: {}", line, column, message);
                 if let Some(sug) = suggestion {
                     msg.push_str(&format!(". Suggestion: {}", sug));
                 }
                 msg
             }
-            ParseError::EOF { expected, line, column, suggestion } => {
-                let mut msg = format!("Line {}, column {}: Unexpected end of file, expected {}",
-                    line, column, expected);
+            ParseError::EOF {
+                expected,
+                line,
+                column,
+                suggestion,
+            } => {
+                let mut msg = format!(
+                    "Line {}, column {}: Unexpected end of file, expected {}",
+                    line, column, expected
+                );
                 if let Some(sug) = suggestion {
                     msg.push_str(&format!(". Suggestion: {}", sug));
                 }
@@ -269,8 +302,19 @@ impl ParseErrorBuilder {
     }
     #[allow(dead_code)]
     /// Build an unexpected token error with suggestion
-    pub fn unexpected_token_with_suggestion(&self, expected: &str, found: TokenType, suggestion: &str) -> ParseError {
-        ParseError::unexpected_token_with_suggestion(expected, found, self.line, self.column, suggestion)
+    pub fn unexpected_token_with_suggestion(
+        &self,
+        expected: &str,
+        found: TokenType,
+        suggestion: &str,
+    ) -> ParseError {
+        ParseError::unexpected_token_with_suggestion(
+            expected,
+            found,
+            self.line,
+            self.column,
+            suggestion,
+        )
     }
     #[allow(dead_code)]
     /// Build an invalid syntax error

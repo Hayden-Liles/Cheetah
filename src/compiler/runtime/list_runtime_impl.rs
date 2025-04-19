@@ -1,8 +1,8 @@
-use std::ffi::c_void;
-use std::ptr;
-use libc::{malloc, calloc, realloc, free};
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
+use libc::{calloc, free, malloc, realloc};
+use std::ffi::c_void;
+use std::ptr;
 
 /// C-compatible raw list struct
 #[repr(C)]
@@ -14,7 +14,6 @@ pub struct RawList {
 
 #[no_mangle]
 pub extern "C" fn list_new() -> *mut RawList {
-    // Allocate the RawList struct
     let ptr = unsafe { malloc(std::mem::size_of::<RawList>()) } as *mut RawList;
     if ptr.is_null() {
         return ptr;
@@ -45,7 +44,6 @@ pub extern "C" fn list_append(list_ptr: *mut RawList, value: *mut c_void) {
     unsafe {
         let rl = &mut *list_ptr;
         if rl.length == rl.capacity {
-            // grow capacity
             let new_cap = if rl.capacity == 0 { 4 } else { rl.capacity * 2 };
             let size = (new_cap as usize) * std::mem::size_of::<*mut c_void>();
             let new_data = if rl.data.is_null() {
@@ -56,7 +54,6 @@ pub extern "C" fn list_append(list_ptr: *mut RawList, value: *mut c_void) {
             rl.data = new_data;
             rl.capacity = new_cap;
         }
-        // store the element
         *rl.data.add(rl.length as usize) = value;
         rl.length += 1;
     }
@@ -153,54 +150,44 @@ pub extern "C" fn list_len(list_ptr: *mut RawList) -> i64 {
 /// Register list runtime functions with the JIT execution engine
 pub fn register_list_runtime_functions(
     engine: &ExecutionEngine<'_>,
-    module: &Module<'_>
+    module: &Module<'_>,
 ) -> Result<(), String> {
-    // Map list_new function
     if let Some(function) = module.get_function("list_new") {
         engine.add_global_mapping(&function, list_new as usize);
     }
 
-    // Map list_with_capacity function
     if let Some(function) = module.get_function("list_with_capacity") {
         engine.add_global_mapping(&function, list_with_capacity as usize);
     }
 
-    // Map list_append function
     if let Some(function) = module.get_function("list_append") {
         engine.add_global_mapping(&function, list_append as usize);
     }
 
-    // Map list_get function
     if let Some(function) = module.get_function("list_get") {
         engine.add_global_mapping(&function, list_get as usize);
     }
 
-    // Map list_set function
     if let Some(function) = module.get_function("list_set") {
         engine.add_global_mapping(&function, list_set as usize);
     }
 
-    // Map list_concat function
     if let Some(function) = module.get_function("list_concat") {
         engine.add_global_mapping(&function, list_concat as usize);
     }
 
-    // Map list_repeat function
     if let Some(function) = module.get_function("list_repeat") {
         engine.add_global_mapping(&function, list_repeat as usize);
     }
 
-    // Map list_slice function
     if let Some(function) = module.get_function("list_slice") {
         engine.add_global_mapping(&function, list_slice as usize);
     }
 
-    // Map list_free function
     if let Some(function) = module.get_function("list_free") {
         engine.add_global_mapping(&function, list_free as usize);
     }
 
-    // Map list_len function
     if let Some(function) = module.get_function("list_len") {
         engine.add_global_mapping(&function, list_len as usize);
     }

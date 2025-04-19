@@ -11,7 +11,11 @@ pub struct LexerError {
 
 impl fmt::Display for LexerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Line {}, Column {}: {}", self.line, self.column, self.message)?;
+        write!(
+            f,
+            "Line {}, Column {}: {}",
+            self.line, self.column, self.message
+        )?;
         if let Some(suggestion) = &self.suggestion {
             write!(f, " - Suggestion: {}", suggestion)?;
         }

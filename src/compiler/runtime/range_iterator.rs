@@ -1,18 +1,18 @@
 // range_iterator.rs - Optimized range iterator implementation
 // This file implements a generator-style range iterator that doesn't allocate the entire sequence
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread_local;
 
 // Constants for range optimization
-const RANGE_SIZE_LIMIT: i64 = 100_000_000; // Absolute maximum range size to prevent segfaults
-const ITERATOR_POOL_SIZE: usize = 8; // Number of iterators to keep in the pool (reduced from 32)
+const RANGE_SIZE_LIMIT: i64 = 100_000_000;
+const ITERATOR_POOL_SIZE: usize = 8;
 // Chunk sizes for different range sizes
-const CHUNK_SIZE_MEDIUM: i64 = 10_000; // Chunk size for medium ranges
-const CHUNK_SIZE_LARGE: i64 = 100_000; // Chunk size for large ranges
-const RANGE_SIZE_MEDIUM: i64 = 1_000_000; // Threshold for medium ranges
-const RANGE_SIZE_LARGE: i64 = 10_000_000; // Threshold for large ranges
+const CHUNK_SIZE_MEDIUM: i64 = 10_000;
+const CHUNK_SIZE_LARGE: i64 = 100_000;
+const RANGE_SIZE_MEDIUM: i64 = 1_000_000;
+const RANGE_SIZE_LARGE: i64 = 10_000_000;
 
 // Global counters for range iterator statistics
 static ACTIVE_ITERATORS: AtomicUsize = AtomicUsize::new(0);
@@ -32,7 +32,6 @@ struct ChunkState {
     current_chunk_end: i64,
     chunk_size: i64,
     overall_end: i64,
-
 }
 
 /// Range iterator that generates values on demand
@@ -44,21 +43,17 @@ pub struct RangeIterator {
     current: i64,
     size: i64,
     is_active: bool,
-    // Chunking for large ranges
     chunking: Option<ChunkState>,
 }
 
 impl RangeIterator {
     /// Create a new range iterator
     pub fn new(start: i64, stop: i64, step: i64) -> Self {
-        // Calculate the range size
         let size = calculate_range_size(start, stop, step);
 
-        // Track statistics
         ACTIVE_ITERATORS.fetch_add(1, Ordering::Relaxed);
         TOTAL_ITERATORS_CREATED.fetch_add(1, Ordering::Relaxed);
 
-        // Determine if we need chunking for large ranges
         let chunking = if size > RANGE_SIZE_MEDIUM {
             let chunk_size = if size > RANGE_SIZE_LARGE {
                 CHUNK_SIZE_LARGE
@@ -71,7 +66,6 @@ impl RangeIterator {
                 current_chunk_end: std::cmp::min(start + chunk_size * step, stop),
                 chunk_size,
                 overall_end: stop,
-
             })
         } else {
             None
@@ -90,19 +84,16 @@ impl RangeIterator {
 
     /// Get an iterator from the pool or create a new one
     pub fn get_from_pool(start: i64, stop: i64, step: i64) -> Self {
-        // Try to get an iterator from the pool
         let iter_opt = ITERATOR_POOL.with(|pool| {
             let mut pool = pool.borrow_mut();
             pool.pop()
         });
 
         if let Some(mut iter) = iter_opt {
-            // Reset the iterator with new values
             iter.reset(start, stop, step);
             POOL_HITS.fetch_add(1, Ordering::Relaxed);
             iter
         } else {
-            // If no iterator is available in the pool, create a new one
             Self::new(start, stop, step)
         }
     }
@@ -116,7 +107,6 @@ impl RangeIterator {
         self.size = calculate_range_size(start, stop, step);
         self.is_active = true;
 
-        // Determine if we need chunking for large ranges
         self.chunking = if self.size > RANGE_SIZE_MEDIUM {
             let chunk_size = if self.size > RANGE_SIZE_LARGE {
                 CHUNK_SIZE_LARGE
@@ -129,13 +119,11 @@ impl RangeIterator {
                 current_chunk_end: std::cmp::min(start + chunk_size * step, stop),
                 chunk_size,
                 overall_end: stop,
-
             })
         } else {
             None
         };
 
-        // Track active iterators
         ACTIVE_ITERATORS.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -145,12 +133,9 @@ impl RangeIterator {
             return None;
         }
 
-        // Track iterations
         TOTAL_ITERATIONS.fetch_add(1, Ordering::Relaxed);
 
-        // Handle chunked ranges
         if let Some(ref mut chunk) = self.chunking {
-            // Check if we've reached the end of the current chunk
             let reached_chunk_end = if self.step > 0 {
                 self.current >= chunk.current_chunk_end
             } else {
@@ -158,15 +143,19 @@ impl RangeIterator {
             };
 
             if reached_chunk_end {
-                // Move to the next chunk
                 chunk.current_chunk_start = chunk.current_chunk_end;
                 chunk.current_chunk_end = if self.step > 0 {
-                    std::cmp::min(chunk.current_chunk_start + chunk.chunk_size * self.step, chunk.overall_end)
+                    std::cmp::min(
+                        chunk.current_chunk_start + chunk.chunk_size * self.step,
+                        chunk.overall_end,
+                    )
                 } else {
-                    std::cmp::max(chunk.current_chunk_start + chunk.chunk_size * self.step, chunk.overall_end)
+                    std::cmp::max(
+                        chunk.current_chunk_start + chunk.chunk_size * self.step,
+                        chunk.overall_end,
+                    )
                 };
 
-                // Check if we've reached the end of all chunks
                 let reached_end = if self.step > 0 {
                     chunk.current_chunk_start >= chunk.overall_end
                 } else {
@@ -177,12 +166,9 @@ impl RangeIterator {
                     return None;
                 }
 
-                // Start at the beginning of the new chunk
                 self.current = chunk.current_chunk_start;
             }
         } else {
-            // Regular non-chunked range
-            // Check if we've reached the end
             let reached_end = if self.step > 0 {
                 self.current >= self.stop
             } else {
@@ -194,10 +180,8 @@ impl RangeIterator {
             }
         }
 
-        // Get the current value
         let value = self.current;
 
-        // Increment the current value
         self.current += self.step;
 
         Some(value)
@@ -205,13 +189,10 @@ impl RangeIterator {
 
     /// Return the iterator to the pool
     pub fn return_to_pool(mut self) {
-        // Reset the iterator
         self.is_active = false;
 
-        // Track active iterators
         ACTIVE_ITERATORS.fetch_sub(1, Ordering::Relaxed);
 
-        // Add the iterator to the pool if there's space
         ITERATOR_POOL.with(|pool| {
             let mut pool = pool.borrow_mut();
             if pool.len() < ITERATOR_POOL_SIZE {
@@ -229,7 +210,6 @@ impl RangeIterator {
 impl Drop for RangeIterator {
     fn drop(&mut self) {
         if self.is_active {
-            // Track active iterators
             ACTIVE_ITERATORS.fetch_sub(1, Ordering::Relaxed);
             self.is_active = false;
         }
@@ -238,21 +218,21 @@ impl Drop for RangeIterator {
 
 /// Calculate range size with safety limits
 pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
-    // Calculate the range size
     let mut size = if step == 0 {
-        0 // Avoid division by zero
+        0
     } else if step == 1 && start < stop {
-        stop - start // Optimize for common case
+        stop - start
     } else if (step > 0 && start < stop) || (step < 0 && start > stop) {
         (stop - start) / step + ((stop - start) % step != 0) as i64
     } else {
-        0 // Invalid range
+        0
     };
 
-    // Safety check: limit the maximum range size to prevent segfaults
     if size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            size, RANGE_SIZE_LIMIT
+        );
         size = RANGE_SIZE_LIMIT;
     }
 
@@ -261,18 +241,15 @@ pub fn calculate_range_size(start: i64, stop: i64, step: i64) -> i64 {
 
 /// Initialize the range iterator system
 pub fn init() {
-    // Reset counters
     ACTIVE_ITERATORS.store(0, Ordering::Relaxed);
     TOTAL_ITERATORS_CREATED.store(0, Ordering::Relaxed);
     TOTAL_ITERATIONS.store(0, Ordering::Relaxed);
     POOL_HITS.store(0, Ordering::Relaxed);
 
-    // Pre-populate the iterator pool
     ITERATOR_POOL.with(|pool| {
         let mut pool = pool.borrow_mut();
         pool.clear();
 
-        // Create just one iterator for the pool to reduce initial memory usage
         pool.push(RangeIterator {
             start: 0,
             stop: 0,
@@ -287,90 +264,91 @@ pub fn init() {
 
 /// Clean up the range iterator system
 pub fn cleanup() {
-    // Clear the iterator pool
     ITERATOR_POOL.with(|pool| {
         let mut pool = pool.borrow_mut();
         pool.clear();
     });
 
-    // Log statistics
     let active = ACTIVE_ITERATORS.load(Ordering::Relaxed);
     let total = TOTAL_ITERATORS_CREATED.load(Ordering::Relaxed);
     let iterations = TOTAL_ITERATIONS.load(Ordering::Relaxed);
     let pool_hits = POOL_HITS.load(Ordering::Relaxed);
 
     if active > 0 {
-        eprintln!("[RANGE WARNING] {} active iterators not properly returned to pool", active);
+        eprintln!(
+            "[RANGE WARNING] {} active iterators not properly returned to pool",
+            active
+        );
     }
 
     if total > 0 {
-        eprintln!("[RANGE INFO] Created {} iterators, {} pool hits ({:.1}%), {} iterations",
-                 total, pool_hits, (pool_hits as f64 / total as f64) * 100.0, iterations);
+        eprintln!(
+            "[RANGE INFO] Created {} iterators, {} pool hits ({:.1}%), {} iterations",
+            total,
+            pool_hits,
+            (pool_hits as f64 / total as f64) * 100.0,
+            iterations
+        );
     }
 }
 
 /// Create a new range iterator with one argument (stop)
 #[unsafe(no_mangle)]
 pub extern "C" fn range_iterator_1(stop: i64) -> *mut RangeIterator {
-    // Safety check: ensure stop is reasonable
     let safe_stop = if stop > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
-                 stop, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range stop value {} exceeds limit {}. Limiting to prevent segfault.",
+            stop, RANGE_SIZE_LIMIT
+        );
         RANGE_SIZE_LIMIT
     } else {
         stop
     };
 
-    // Get an iterator from the pool
     let iter = RangeIterator::get_from_pool(0, safe_stop, 1);
 
-    // Allocate memory for the iterator
     let iter_box = Box::new(iter);
 
-    // Convert to raw pointer
     Box::into_raw(iter_box)
 }
 
 /// Create a new range iterator with two arguments (start, stop)
 #[unsafe(no_mangle)]
 pub extern "C" fn range_iterator_2(start: i64, stop: i64) -> *mut RangeIterator {
-    // Safety check: ensure range is reasonable
     let range_size = if start < stop { stop - start } else { 0 };
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 range_size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            range_size, RANGE_SIZE_LIMIT
+        );
         (start, start + RANGE_SIZE_LIMIT)
     } else {
         (start, stop)
     };
 
-    // Get an iterator from the pool
     let iter = RangeIterator::get_from_pool(safe_start, safe_stop, 1);
 
-    // Allocate memory for the iterator
     let iter_box = Box::new(iter);
 
-    // Convert to raw pointer
     Box::into_raw(iter_box)
 }
 
 /// Create a new range iterator with three arguments (start, stop, step)
 #[unsafe(no_mangle)]
 pub extern "C" fn range_iterator_3(start: i64, stop: i64, step: i64) -> *mut RangeIterator {
-    // Safety check for step
     let safe_step = if step == 0 { 1 } else { step };
 
-    // Calculate the theoretical range size
     let range_size = if (safe_step > 0 && start < stop) || (safe_step < 0 && start > stop) {
         ((stop - start) / safe_step).abs() + (((stop - start) % safe_step) != 0) as i64
     } else {
         0
     };
 
-    // Apply safety limits
     let (safe_start, safe_stop) = if range_size > RANGE_SIZE_LIMIT {
-        eprintln!("[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
-                 range_size, RANGE_SIZE_LIMIT);
+        eprintln!(
+            "[RANGE WARNING] Range size {} exceeds limit {}. Limiting to prevent segfault.",
+            range_size, RANGE_SIZE_LIMIT
+        );
         if safe_step > 0 {
             (start, start + (RANGE_SIZE_LIMIT * safe_step))
         } else {
@@ -380,13 +358,10 @@ pub extern "C" fn range_iterator_3(start: i64, stop: i64, step: i64) -> *mut Ran
         (start, stop)
     };
 
-    // Get an iterator from the pool
     let iter = RangeIterator::get_from_pool(safe_start, safe_stop, safe_step);
 
-    // Allocate memory for the iterator
     let iter_box = Box::new(iter);
 
-    // Convert to raw pointer
     Box::into_raw(iter_box)
 }
 
@@ -429,67 +404,56 @@ pub extern "C" fn range_iterator_free(iter_ptr: *mut RangeIterator) {
     }
 
     unsafe {
-        // Convert back to Box and drop
         let iter = Box::from_raw(iter_ptr);
 
-        // Return to pool instead of dropping
         iter.return_to_pool();
     }
 }
 
 /// Register range iterator functions in the module
-pub fn register_range_iterator_functions<'ctx>(context: &'ctx inkwell::context::Context, module: &mut inkwell::module::Module<'ctx>) {
+pub fn register_range_iterator_functions<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    module: &mut inkwell::module::Module<'ctx>,
+) {
     use inkwell::AddressSpace;
 
-    // Create range_iterator_1 function
-    let range_iterator_1_type = context.ptr_type(AddressSpace::default()).fn_type(
-        &[context.i64_type().into()], // stop
-        false,
-    );
+    let range_iterator_1_type = context
+        .ptr_type(AddressSpace::default())
+        .fn_type(&[context.i64_type().into()], false);
     module.add_function("range_iterator_1", range_iterator_1_type, None);
 
-    // Create range_iterator_2 function
     let range_iterator_2_type = context.ptr_type(AddressSpace::default()).fn_type(
-        &[
-            context.i64_type().into(), // start
-            context.i64_type().into(), // stop
-        ],
+        &[context.i64_type().into(), context.i64_type().into()],
         false,
     );
     module.add_function("range_iterator_2", range_iterator_2_type, None);
 
-    // Create range_iterator_3 function
     let range_iterator_3_type = context.ptr_type(AddressSpace::default()).fn_type(
         &[
-            context.i64_type().into(), // start
-            context.i64_type().into(), // stop
-            context.i64_type().into(), // step
+            context.i64_type().into(),
+            context.i64_type().into(),
+            context.i64_type().into(),
         ],
         false,
     );
     module.add_function("range_iterator_3", range_iterator_3_type, None);
 
-    // Create range_iterator_next function
     let range_iterator_next_type = context.bool_type().fn_type(
         &[
-            context.ptr_type(AddressSpace::default()).into(), // iterator
-            context.ptr_type(AddressSpace::default()).into(), // value
+            context.ptr_type(AddressSpace::default()).into(),
+            context.ptr_type(AddressSpace::default()).into(),
         ],
         false,
     );
     module.add_function("range_iterator_next", range_iterator_next_type, None);
 
-    // Create range_iterator_size function
-    let range_iterator_size_type = context.i64_type().fn_type(
-        &[context.ptr_type(AddressSpace::default()).into()], // iterator
-        false,
-    );
+    let range_iterator_size_type = context
+        .i64_type()
+        .fn_type(&[context.ptr_type(AddressSpace::default()).into()], false);
     module.add_function("range_iterator_size", range_iterator_size_type, None);
 
-    // Create range_iterator_free function
-    let range_iterator_free_type = context.void_type().fn_type(
-        &[context.ptr_type(AddressSpace::default()).into()], // iterator
-        false,
-    );
+    let range_iterator_free_type = context
+        .void_type()
+        .fn_type(&[context.ptr_type(AddressSpace::default()).into()], false);
     module.add_function("range_iterator_free", range_iterator_free_type, None);
 }

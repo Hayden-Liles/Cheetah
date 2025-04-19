@@ -72,21 +72,17 @@ pub unsafe extern "C" fn dict_keys(dict: *mut Dict) -> *mut List {
         let count = (*dict).count;
         let entries = (*dict).entries;
 
-        // Create a new list to hold the keys
         let keys_list = list_with_capacity(count);
 
-        // Add each key to the list
         let mut added = 0;
         for i in 0..(*dict).capacity {
             let entry = entries.add(i as usize);
             if !(*entry).key.is_null() {
-                // Add the key to the list
                 (*(*keys_list).data.add(added as usize)) = (*entry).key;
                 added += 1;
             }
         }
 
-        // Set the list length
         (*keys_list).length = added;
 
         keys_list
@@ -104,21 +100,17 @@ pub unsafe extern "C" fn dict_values(dict: *mut Dict) -> *mut List {
         let count = (*dict).count;
         let entries = (*dict).entries;
 
-        // Create a new list to hold the values
         let values_list = list_with_capacity(count);
 
-        // Add each value to the list
         let mut added = 0;
         for i in 0..(*dict).capacity {
             let entry = entries.add(i as usize);
             if !(*entry).key.is_null() {
-                // Add the value to the list
                 (*(*values_list).data.add(added as usize)) = (*entry).value;
                 added += 1;
             }
         }
 
-        // Set the list length
         (*values_list).length = added;
 
         values_list
@@ -136,28 +128,22 @@ pub unsafe extern "C" fn dict_items(dict: *mut Dict) -> *mut List {
         let count = (*dict).count;
         let entries = (*dict).entries;
 
-        // Create a new list to hold the items
         let items_list = list_with_capacity(count);
 
-        // Add each key-value pair to the list as a tuple
         let mut added = 0;
         for i in 0..(*dict).capacity {
             let entry = entries.add(i as usize);
             if !(*entry).key.is_null() {
-                // Create a tuple for the key-value pair
                 let tuple = tuple_new(2);
 
-                // Set the key and value in the tuple
                 (*(*tuple).data.add(0)) = (*entry).key;
                 (*(*tuple).data.add(1)) = (*entry).value;
 
-                // Add the tuple to the list
                 (*(*items_list).data.add(added as usize)) = tuple as *mut CVoid;
                 added += 1;
             }
         }
 
-        // Set the list length
         (*items_list).length = added;
 
         items_list

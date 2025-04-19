@@ -1,12 +1,12 @@
 use crate::ast::Module;
 use crate::compiler::types::TypeError;
 
+mod checker;
 mod environment;
 mod inference;
-mod checker;
 
-pub use environment::TypeEnvironment;
 pub use checker::TypeChecker;
+pub use environment::TypeEnvironment;
 
 /// Result type for type checking operations
 pub type TypeResult<T> = Result<T, TypeError>;

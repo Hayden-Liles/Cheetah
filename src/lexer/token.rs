@@ -40,7 +40,7 @@ pub enum TokenType {
     Is,
     Match,
     Case,
-    
+
     // Identifiers and literals
     Identifier(String),
     IntLiteral(i64),
@@ -52,49 +52,49 @@ pub enum TokenType {
     BinaryLiteral(i64),
     OctalLiteral(i64),
     HexLiteral(i64),
-    
+
     // Operators
-    Plus,         // +
-    Minus,        // -
-    Multiply,     // *
-    Divide,       // /
-    FloorDivide,  // //
-    Modulo,       // %
-    Power,        // **
-    BackSlash,    // \ (for line continuations and other uses)
-    
-    Assign,       // =
-    PlusAssign,   // +=
-    MinusAssign,  // -=
-    MulAssign,    // *=
-    DivAssign,    // /=
-    ModAssign,    // %=
-    PowAssign,    // **=
-    MatrixMulAssign, // @=
-    FloorDivAssign,  // //=
+    Plus,        // +
+    Minus,       // -
+    Multiply,    // *
+    Divide,      // /
+    FloorDivide, // //
+    Modulo,      // %
+    Power,       // **
+    BackSlash,   // \ (for line continuations and other uses)
+
+    Assign,           // =
+    PlusAssign,       // +=
+    MinusAssign,      // -=
+    MulAssign,        // *=
+    DivAssign,        // /=
+    ModAssign,        // %=
+    PowAssign,        // **=
+    MatrixMulAssign,  // @=
+    FloorDivAssign,   // //=
     BitwiseAndAssign, // &=
     BitwiseOrAssign,  // |=
     BitwiseXorAssign, // ^=
     ShiftLeftAssign,  // <<=
     ShiftRightAssign, // >>=
-    
+
     Equal,        // ==
     NotEqual,     // !=
     LessThan,     // <
     LessEqual,    // <=
     GreaterThan,  // >
     GreaterEqual, // >=
-    
-    BitwiseAnd,   // &
-    BitwiseOr,    // |
-    BitwiseXor,   // ^
-    BitwiseNot,   // ~
-    ShiftLeft,    // <<
-    ShiftRight,   // >>
-    
-    Walrus,       // :=
-    Ellipsis,     // ...
-    
+
+    BitwiseAnd, // &
+    BitwiseOr,  // |
+    BitwiseXor, // ^
+    BitwiseNot, // ~
+    ShiftLeft,  // <<
+    ShiftRight, // >>
+
+    Walrus,   // :=
+    Ellipsis, // ...
+
     // Delimiters
     LeftParen,    // (
     RightParen,   // )
@@ -108,15 +108,15 @@ pub enum TokenType {
     SemiColon,    // ;
     Arrow,        // ->
     At,           // @ (for decorators)
-    
+
     // Indentation (special in Python-like syntax)
     Indent,
     Dedent,
     Newline,
-    
+
     // End of file
     EOF,
-    
+
     // Invalid token
     Invalid(String),
 }
@@ -131,16 +131,30 @@ pub struct Token {
 
 impl Token {
     pub fn new(token_type: TokenType, line: usize, column: usize, lexeme: String) -> Self {
-        Token { token_type, line, column, lexeme }
+        Token {
+            token_type,
+            line,
+            column,
+            lexeme,
+        }
     }
 
     pub fn error(message: &str, line: usize, column: usize, lexeme: &str) -> Self {
-        Token::new(TokenType::Invalid(message.to_string()), line, column, lexeme.to_owned())
+        Token::new(
+            TokenType::Invalid(message.to_string()),
+            line,
+            column,
+            lexeme.to_owned(),
+        )
     }
 }
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} '{}' at {}:{}", self.token_type, self.lexeme, self.line, self.column)
+        write!(
+            f,
+            "{:?} '{}' at {}:{}",
+            self.token_type, self.lexeme, self.line, self.column
+        )
     }
 }

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use inkwell::values::PointerValue;
 use crate::compiler::types::Type;
+use inkwell::values::PointerValue;
+use std::collections::HashMap;
 
 /// Represents a scope in the compilation context
 #[derive(Debug, Clone)]
@@ -139,11 +139,8 @@ pub struct ScopeStack<'ctx> {
 impl<'ctx> ScopeStack<'ctx> {
     /// Create a new empty scope stack
     pub fn new() -> Self {
-        let mut stack = Self {
-            scopes: Vec::new(),
-        };
+        let mut stack = Self { scopes: Vec::new() };
 
-        // Add global scope
         stack.push_scope(false, false, false);
 
         stack
@@ -171,7 +168,6 @@ impl<'ctx> ScopeStack<'ctx> {
 
     /// Get a variable's storage location
     pub fn get_variable(&self, name: &str) -> Option<&PointerValue<'ctx>> {
-        // Search from innermost to outermost scope
         for scope in self.scopes.iter().rev() {
             if let Some(ptr) = scope.get_variable(name) {
                 return Some(ptr);
@@ -182,7 +178,6 @@ impl<'ctx> ScopeStack<'ctx> {
 
     /// Get a variable's type
     pub fn get_type(&self, name: &str) -> Option<&Type> {
-        // Search from innermost to outermost scope
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get_type(name) {
                 return Some(ty);
@@ -255,15 +250,12 @@ impl<'ctx> ScopeStack<'ctx> {
     /// Capture a variable from an outer scope for use in the current scope
     /// Returns true if the variable was found and captured, false otherwise
     pub fn capture_variable(&mut self, name: &str) -> bool {
-        // Get the current scope index
         let current_index = self.scopes.len() - 1;
 
-        // Look for the variable in outer scopes
         let mut found_ptr = None;
         let mut found_type = None;
         let mut found_scope_index = 0;
 
-        // Skip the current scope and look in all outer scopes
         for i in (0..current_index).rev() {
             if let Some(ptr) = self.scopes[i].get_variable(name) {
                 found_ptr = Some(*ptr);
@@ -273,16 +265,12 @@ impl<'ctx> ScopeStack<'ctx> {
             }
         }
 
-        // If we found the variable, capture it in the current scope
         if let (Some(ptr), Some(var_type)) = (found_ptr, found_type) {
             if let Some(current_scope) = self.current_scope_mut() {
-                // Add the variable to the captured variables
                 current_scope.add_captured_variable(name.to_string(), ptr);
 
-                // Also add the type information
                 current_scope.add_type(name.to_string(), var_type);
 
-                // Mark the variable as needing heap allocation in its original scope
                 self.scopes[found_scope_index].mark_as_heap_var(name.to_string());
 
                 return true;
@@ -310,78 +298,65 @@ impl<'ctx> ScopeStack<'ctx> {
 
     /// Get a variable's storage location, respecting global and nonlocal declarations
     pub fn get_variable_respecting_declarations(&self, name: &str) -> Option<&PointerValue<'ctx>> {
-        // Check if the variable is declared as global in the current scope
         if let Some(current_scope) = self.current_scope() {
             if current_scope.is_global(name) {
-                // If it's declared as global, look it up in the global scope
                 if let Some(global_scope) = self.global_scope() {
                     return global_scope.get_variable(name);
                 }
             }
 
-            // Check if the variable is declared as nonlocal
             if current_scope.is_nonlocal(name) {
-                // First check if it's a captured variable in the current scope
                 if let Some(ptr) = current_scope.get_captured_variable(name) {
                     return Some(ptr);
                 }
 
-                // Check if there's a mapping for this nonlocal variable
                 if let Some(unique_name) = current_scope.get_nonlocal_mapping(name) {
-                    // Look up the unique name in the current scope
                     if let Some(ptr) = current_scope.get_variable(unique_name) {
                         return Some(ptr);
                     }
                 }
 
-                // If it's declared as nonlocal, look it up in outer scopes (not just function scopes)
-                // Start from the current scope's index - 1 (the outer scope)
                 let current_index = self.scopes.len() - 1;
 
-                // First check the immediate outer scope
                 if current_index > 0 {
                     let parent_scope_index = current_index - 1;
 
-                    // Check if the variable exists directly in the parent scope
                     if let Some(ptr) = self.scopes[parent_scope_index].get_variable(name) {
                         return Some(ptr);
                     }
 
-                    // If not found directly, check if it's a nonlocal variable in the parent scope too
                     if self.scopes[parent_scope_index].is_nonlocal(name) {
-                        // Check if there's a mapping for this nonlocal variable in the parent scope
-                        if let Some(parent_unique_name) = self.scopes[parent_scope_index].get_nonlocal_mapping(name) {
-                            // Use the unique name to get the variable
-                            if let Some(ptr) = self.scopes[parent_scope_index].get_variable(parent_unique_name) {
+                        if let Some(parent_unique_name) =
+                            self.scopes[parent_scope_index].get_nonlocal_mapping(name)
+                        {
+                            if let Some(ptr) =
+                                self.scopes[parent_scope_index].get_variable(parent_unique_name)
+                            {
                                 return Some(ptr);
                             }
                         }
 
-                        // If not found through mapping, try the parent scope's nonlocal lookup
-                        // This recursively handles multiple levels of nonlocal declarations
-                        // Instead of creating a temporary ScopeStack, we'll just check the parent's parent directly
                         if parent_scope_index > 0 {
                             let grandparent_scope_index = parent_scope_index - 1;
-                            if let Some(ptr) = self.scopes[grandparent_scope_index].get_variable(name) {
+                            if let Some(ptr) =
+                                self.scopes[grandparent_scope_index].get_variable(name)
+                            {
                                 return Some(ptr);
                             }
                         }
                     }
                 }
 
-                // If still not found, look in all outer scopes
-                for i in (0..current_index-1).rev() {
+                for i in (0..current_index - 1).rev() {
                     if let Some(ptr) = self.scopes[i].get_variable(name) {
                         return Some(ptr);
                     }
                 }
 
-                // If we get here, the nonlocal variable wasn't found
                 return None;
             }
         }
 
-        // If not declared as global or nonlocal, use normal variable lookup
         self.get_variable(name)
     }
 
@@ -403,72 +378,61 @@ impl<'ctx> ScopeStack<'ctx> {
 
     /// Get a variable's type from the scope stack, respecting nonlocal declarations
     pub fn get_type_respecting_declarations(&self, name: &str) -> Option<Type> {
-        // Check if the variable is declared as global in the current scope
         if let Some(current_scope) = self.current_scope() {
             if current_scope.is_global(name) {
-                // If it's declared as global, look it up in the global scope
                 if let Some(global_scope) = self.global_scope() {
                     return global_scope.get_type(name).cloned();
                 }
             }
 
-            // Check if the variable is declared as nonlocal
             if current_scope.is_nonlocal(name) {
-                // Check if there's a mapping for this nonlocal variable
                 if let Some(unique_name) = current_scope.get_nonlocal_mapping(name) {
-                    // Look up the unique name in the current scope
                     if let Some(var_type) = current_scope.get_type(unique_name) {
                         return Some(var_type.clone());
                     }
                 }
 
-                // If it's declared as nonlocal, look it up in outer scopes (not just function scopes)
-                // Start from the current scope's index - 1 (the outer scope)
                 let current_index = self.scopes.len() - 1;
 
-                // First check the immediate outer scope
                 if current_index > 0 {
                     let parent_scope_index = current_index - 1;
 
-                    // Check if the variable exists directly in the parent scope
                     if let Some(var_type) = self.scopes[parent_scope_index].get_type(name) {
                         return Some(var_type.clone());
                     }
 
-                    // If not found directly, check if it's a nonlocal variable in the parent scope too
                     if self.scopes[parent_scope_index].is_nonlocal(name) {
-                        // Check if there's a mapping for this nonlocal variable in the parent scope
-                        if let Some(parent_unique_name) = self.scopes[parent_scope_index].get_nonlocal_mapping(name) {
-                            // Use the unique name to get the variable type
-                            if let Some(var_type) = self.scopes[parent_scope_index].get_type(parent_unique_name) {
+                        if let Some(parent_unique_name) =
+                            self.scopes[parent_scope_index].get_nonlocal_mapping(name)
+                        {
+                            if let Some(var_type) =
+                                self.scopes[parent_scope_index].get_type(parent_unique_name)
+                            {
                                 return Some(var_type.clone());
                             }
                         }
 
-                        // If not found through mapping, try the parent scope's nonlocal lookup
-                        // This recursively handles multiple levels of nonlocal declarations
                         if parent_scope_index > 0 {
                             let grandparent_scope_index = parent_scope_index - 1;
-                            if let Some(var_type) = self.scopes[grandparent_scope_index].get_type(name) {
+                            if let Some(var_type) =
+                                self.scopes[grandparent_scope_index].get_type(name)
+                            {
                                 return Some(var_type.clone());
                             }
                         }
                     }
                 }
 
-                // If still not found, look in all outer scopes
-                for i in (0..current_index-1).rev() {
+                for i in (0..current_index - 1).rev() {
                     if let Some(var_type) = self.scopes[i].get_type(name) {
                         return Some(var_type.clone());
                     }
                 }
 
-                // If we get here, the nonlocal variable wasn't found
                 return None;
             }
         }
 
-        // If not declared as global or nonlocal, use normal variable lookup
         self.get_type(name).cloned()
     }
 }

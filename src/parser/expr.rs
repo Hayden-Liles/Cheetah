@@ -1,13 +1,12 @@
 use crate::ast::{
-    BoolOperator, CmpOperator, Comprehension, Expr, ExprContext, NameConstant,
-    Number, Operator, UnaryOperator,
+    BoolOperator, CmpOperator, Comprehension, Expr, ExprContext, NameConstant, Number, Operator,
+    UnaryOperator,
 };
 use crate::lexer::TokenType;
-use crate::parser::{Parser, ParseError};
 use crate::parser::helpers::TokenMatching;
-use crate::parser::types::{ParserContext, GetLocation};
 use crate::parser::stmt::StmtParser;
-
+use crate::parser::types::{GetLocation, ParserContext};
+use crate::parser::{ParseError, Parser};
 
 /// Parser methods for expressions
 pub trait ExprParser {
@@ -27,7 +26,7 @@ pub trait ExprParser {
     fn parse_comparison(&mut self) -> Result<Expr, ParseError>;
 
     /// Check if the current token is a comparison operator
-    fn is_comparison_operator(&self) -> bool;  // Added this method to the trait
+    fn is_comparison_operator(&self) -> bool;
 
     /// Parse a comparison operator
     fn parse_comparison_operator(&mut self) -> Result<CmpOperator, ParseError>;
@@ -87,7 +86,9 @@ pub trait ExprParser {
     fn parse_dict_literal(&mut self, line: usize, column: usize) -> Result<Expr, ParseError>;
 
     /// Parse function arguments
-    fn parse_more_arguments(&mut self) -> Result<(Vec<Box<Expr>>, Vec<(Option<String>, Box<Expr>)>), ParseError>;
+    fn parse_more_arguments(
+        &mut self,
+    ) -> Result<(Vec<Box<Expr>>, Vec<(Option<String>, Box<Expr>)>), ParseError>;
 
     fn parse_comprehension_target(&mut self) -> Result<Box<Expr>, ParseError>;
 }
@@ -185,7 +186,7 @@ impl ExprParser for Parser {
                         message: "Expected expression after comma".to_string(),
                         line: self.current.as_ref().map_or(line, |t| t.line),
                         column: self.current.as_ref().map_or(column, |t| t.column),
-                        suggestion: None
+                        suggestion: None,
                     });
                 }
 
@@ -226,7 +227,11 @@ impl ExprParser for Parser {
 
             while !self.check(TokenType::In) {
                 if self.check(TokenType::Comma) {
-                    return Err(ParseError::invalid_syntax("Expected identifier after comma", self.current.as_ref().unwrap().line, self.current.as_ref().unwrap().column));
+                    return Err(ParseError::invalid_syntax(
+                        "Expected identifier after comma",
+                        self.current.as_ref().unwrap().line,
+                        self.current.as_ref().unwrap().column,
+                    ));
                 }
 
                 if self.check_identifier() {
@@ -245,7 +250,11 @@ impl ExprParser for Parser {
                     let nested_expr_with_store = self.with_store_context(nested_expr)?;
                     elts.push(Box::new(nested_expr_with_store));
                 } else {
-                    return Err(ParseError::invalid_syntax("Expected identifier or nested tuple in comprehension target", self.current.as_ref().unwrap().line, self.current.as_ref().unwrap().column));
+                    return Err(ParseError::invalid_syntax(
+                        "Expected identifier or nested tuple in comprehension target",
+                        self.current.as_ref().unwrap().line,
+                        self.current.as_ref().unwrap().column,
+                    ));
                 }
 
                 if !self.match_token(TokenType::Comma) {
@@ -304,7 +313,7 @@ impl ExprParser for Parser {
                         message: "Invalid target for walrus operator".to_string(),
                         line,
                         column,
-                        suggestion: None
+                        suggestion: None,
                     });
                 }
             }
@@ -475,7 +484,7 @@ impl ExprParser for Parser {
                         "Expected 'in' after 'not' in comparison",
                         line,
                         column,
-                        "'not' in a comparison should be followed by 'in' to form 'not in'"
+                        "'not' in a comparison should be followed by 'in' to form 'not in'",
                     ))
                 }
             }
@@ -483,7 +492,7 @@ impl ExprParser for Parser {
                 "Expected comparison operator",
                 line,
                 column,
-                "Valid comparison operators are: <, >, <=, >=, ==, !=, in, not in, is, is not"
+                "Valid comparison operators are: <, >, <=, >=, ==, !=, in, not in, is, is not",
             )),
         }
     }
@@ -580,7 +589,6 @@ impl ExprParser for Parser {
         while self.match_token(TokenType::Plus) || self.match_token(TokenType::Minus) {
             let token = self.previous_token();
 
-            // Check for consecutive operators - this will catch "1 + + 2"
             if (token.token_type == TokenType::Plus && self.check(TokenType::Plus))
                 || (token.token_type == TokenType::Minus && self.check(TokenType::Minus))
                 || self.check(TokenType::Multiply)
@@ -589,7 +597,11 @@ impl ExprParser for Parser {
                 || self.check(TokenType::Modulo)
                 || self.check(TokenType::At)
             {
-                return Err(ParseError::invalid_syntax("Invalid syntax: consecutive operators", token.line, token.column));
+                return Err(ParseError::invalid_syntax(
+                    "Invalid syntax: consecutive operators",
+                    token.line,
+                    token.column,
+                ));
             }
 
             let op = match token.token_type {
@@ -600,7 +612,7 @@ impl ExprParser for Parser {
                         &format!("Unexpected token in arithmetic: {:?}", token.token_type),
                         token.line,
                         token.column,
-                        "Only '+' and '-' operators are valid here"
+                        "Only '+' and '-' operators are valid here",
                     ));
                 }
             };
@@ -629,7 +641,6 @@ impl ExprParser for Parser {
         {
             let token = self.previous_token();
 
-            // Check for consecutive operators - this will catch "1 + * 2"
             if self.check(TokenType::Multiply)
                 || self.check(TokenType::Divide)
                 || self.check(TokenType::FloorDivide)
@@ -646,17 +657,15 @@ impl ExprParser for Parser {
                 ));
             }
 
-            // Also check for EOF or newline
             if self.check(TokenType::EOF) || self.check_newline() {
                 return Err(ParseError::invalid_syntax_with_suggestion(
                     "Incomplete expression",
                     token.line,
                     token.column + 1,
-                    "This operator is missing its right operand. Add a value after the operator."
+                    "This operator is missing its right operand. Add a value after the operator.",
                 ));
             }
 
-            // Rest of the method unchanged...
             let op = match token.token_type {
                 TokenType::Multiply => Operator::Mult,
                 TokenType::Divide => Operator::Div,
@@ -668,7 +677,7 @@ impl ExprParser for Parser {
                         &format!("Unexpected token in term: {:?}", token.token_type),
                         token.line,
                         token.column,
-                        "Only '*', '/', '//', '%', and '@' operators are valid here"
+                        "Only '*', '/', '//', '%', and '@' operators are valid here",
                     ));
                 }
             };
@@ -762,7 +771,7 @@ impl ExprParser for Parser {
                     "Yield statement outside of function",
                     line,
                     column,
-                    "'yield' can only be used inside a function definition"
+                    "'yield' can only be used inside a function definition",
                 ));
             }
 
@@ -797,7 +806,7 @@ impl ExprParser for Parser {
                 "Expected 'yield' keyword",
                 self.current.as_ref().map_or(0, |t| t.line),
                 self.current.as_ref().map_or(0, |t| t.column),
-                "A yield expression must start with the 'yield' keyword"
+                "A yield expression must start with the 'yield' keyword",
             ))
         }
     }
@@ -854,12 +863,20 @@ impl ExprParser for Parser {
 
                     args.push(Box::new(name_expr));
                 } else {
-                    return Err(ParseError::invalid_syntax("Positional argument after keyword argument", id_line, id_column));
+                    return Err(ParseError::invalid_syntax(
+                        "Positional argument after keyword argument",
+                        id_line,
+                        id_column,
+                    ));
                 }
             } else if !saw_keyword {
                 args.push(Box::new(self.parse_or_test()?));
             } else {
-                return Err(ParseError::invalid_syntax("Positional argument after keyword argument", self.current.as_ref().unwrap().line, self.current.as_ref().unwrap().column));
+                return Err(ParseError::invalid_syntax(
+                    "Positional argument after keyword argument",
+                    self.current.as_ref().unwrap().line,
+                    self.current.as_ref().unwrap().column,
+                ));
             }
 
             if !self.match_token(TokenType::Comma) {
@@ -872,7 +889,11 @@ impl ExprParser for Parser {
 
             if self.check(TokenType::Comma) {
                 let token = self.current.clone().unwrap();
-                return Err(ParseError::invalid_syntax("Expected expression between commas", token.line, token.column));
+                return Err(ParseError::invalid_syntax(
+                    "Expected expression between commas",
+                    token.line,
+                    token.column,
+                ));
             }
         }
 
@@ -953,47 +974,21 @@ impl ExprParser for Parser {
                 } else {
                     let first_arg = self.parse_or_test()?;
 
-                    if self.check(TokenType::For) || (self.check(TokenType::Async) && self.peek_matches(TokenType::For)) {
+                    if self.check(TokenType::For)
+                        || (self.check(TokenType::Async) && self.peek_matches(TokenType::For))
+                    {
                         let elt = first_arg;
 
-                        let generator_expr = self.with_context(ParserContext::Comprehension, |this| {
-                            let mut generators = Vec::new();
+                        let generator_expr =
+                            self.with_context(ParserContext::Comprehension, |this| {
+                                let mut generators = Vec::new();
 
-                            let is_async = if this.check(TokenType::Async) {
-                                this.advance();
-                                this.consume(TokenType::For, "for")?;
-                                true
-                            } else {
-                                this.advance();
-                                false
-                            };
-
-                            let target = this.parse_comprehension_target()?;
-                            this.consume(TokenType::In, "in")?;
-
-                            let iter = Box::new(this.parse_or_test()?);
-
-                            let mut ifs = Vec::new();
-                            while this.match_token(TokenType::If) {
-                                ifs.push(Box::new(this.parse_or_test()?));
-                            }
-
-                            generators.push(Comprehension {
-                                target,
-                                iter,
-                                ifs,
-                                is_async,
-                            });
-
-                            while this.match_token(TokenType::For)
-                                || (this.check(TokenType::Async)
-                                    && this.peek_matches(TokenType::For))
-                            {
                                 let is_async = if this.check(TokenType::Async) {
                                     this.advance();
                                     this.consume(TokenType::For, "for")?;
                                     true
                                 } else {
+                                    this.advance();
                                     false
                                 };
 
@@ -1013,16 +1008,44 @@ impl ExprParser for Parser {
                                     ifs,
                                     is_async,
                                 });
-                            }
 
+                                while this.match_token(TokenType::For)
+                                    || (this.check(TokenType::Async)
+                                        && this.peek_matches(TokenType::For))
+                                {
+                                    let is_async = if this.check(TokenType::Async) {
+                                        this.advance();
+                                        this.consume(TokenType::For, "for")?;
+                                        true
+                                    } else {
+                                        false
+                                    };
 
-                            Ok(Expr::GeneratorExp {
-                                elt: Box::new(elt),
-                                generators,
-                                line,
-                                column,
-                            })
-                        })?;
+                                    let target = this.parse_comprehension_target()?;
+                                    this.consume(TokenType::In, "in")?;
+
+                                    let iter = Box::new(this.parse_or_test()?);
+
+                                    let mut ifs = Vec::new();
+                                    while this.match_token(TokenType::If) {
+                                        ifs.push(Box::new(this.parse_or_test()?));
+                                    }
+
+                                    generators.push(Comprehension {
+                                        target,
+                                        iter,
+                                        ifs,
+                                        is_async,
+                                    });
+                                }
+
+                                Ok(Expr::GeneratorExp {
+                                    elt: Box::new(elt),
+                                    generators,
+                                    line,
+                                    column,
+                                })
+                            })?;
 
                         self.consume(TokenType::RightParen, ")")?;
 
@@ -1033,7 +1056,9 @@ impl ExprParser for Parser {
                             line,
                             column,
                         };
-                    } else if self.check(TokenType::Assign) && matches!(&first_arg, Expr::Name { .. }) {
+                    } else if self.check(TokenType::Assign)
+                        && matches!(&first_arg, Expr::Name { .. })
+                    {
                         if let Expr::Name { id, .. } = first_arg {
                             self.advance();
                             let value = Box::new(self.parse_or_test()?);
@@ -1121,7 +1146,6 @@ impl ExprParser for Parser {
         let line = self.current.as_ref().map_or(0, |t| t.line);
         let column = self.current.as_ref().map_or(0, |t| t.column);
 
-        // Handle the ellipsis case
         if self.match_token(TokenType::Ellipsis) {
             let ellipsis_expr = Expr::Ellipsis { line, column };
 
@@ -1150,23 +1174,22 @@ impl ExprParser for Parser {
             return Ok(ellipsis_expr);
         }
 
-        // Parse the lower bound (start) if present
         let lower = if !self.check(TokenType::Colon) && !self.check(TokenType::RightBracket) {
             Some(Box::new(self.parse_expression()?))
         } else {
             None
         };
 
-        // Check if this is a slice (contains a colon)
         if self.match_token(TokenType::Colon) {
-            // Parse the upper bound (stop) if present
-            let upper = if !self.check(TokenType::Colon) && !self.check(TokenType::RightBracket) && !self.check(TokenType::Comma) {
+            let upper = if !self.check(TokenType::Colon)
+                && !self.check(TokenType::RightBracket)
+                && !self.check(TokenType::Comma)
+            {
                 Some(Box::new(self.parse_expression()?))
             } else {
                 None
             };
 
-            // Parse the step if present
             let step = if self.match_token(TokenType::Colon) {
                 if !self.check(TokenType::RightBracket) && !self.check(TokenType::Comma) {
                     Some(Box::new(self.parse_expression()?))
@@ -1177,7 +1200,6 @@ impl ExprParser for Parser {
                 None
             };
 
-            // Create a Slice expression
             let slice = Expr::Slice {
                 lower,
                 upper,
@@ -1186,7 +1208,6 @@ impl ExprParser for Parser {
                 column,
             };
 
-            // Handle tuple of slices if there's a comma
             if self.match_token(TokenType::Comma) {
                 let mut indices = vec![Box::new(slice)];
 
@@ -1211,10 +1232,8 @@ impl ExprParser for Parser {
 
             Ok(slice)
         } else if self.match_token(TokenType::Comma) {
-            // Handle tuple of expressions
             let mut indices = Vec::new();
 
-            // Add the lower bound as the first element of the tuple
             if let Some(expr) = lower {
                 indices.push(expr);
             } else {
@@ -1222,7 +1241,7 @@ impl ExprParser for Parser {
                     "Expected expression before comma in subscription",
                     line,
                     column,
-                    "Subscript operations with commas require expressions between the commas"
+                    "Subscript operations with commas require expressions between the commas",
                 ));
             }
 
@@ -1244,7 +1263,6 @@ impl ExprParser for Parser {
                 column,
             })
         } else {
-            // Single index case
             if let Some(expr) = lower {
                 Ok(*expr)
             } else {
@@ -1252,7 +1270,7 @@ impl ExprParser for Parser {
                     "Expected expression in subscription",
                     line,
                     column,
-                    "Subscript operations require an index expression between the brackets"
+                    "Subscript operations require an index expression between the brackets",
                 ))
             }
         }
@@ -1349,7 +1367,7 @@ impl ExprParser for Parser {
                 "Expected parameter name",
                 self.current.as_ref().map_or(0, |t| t.line),
                 self.current.as_ref().map_or(0, |t| t.column),
-                "Function parameters must be valid identifiers"
+                "Function parameters must be valid identifiers",
             ));
         }
 
@@ -1359,7 +1377,7 @@ impl ExprParser for Parser {
                     "Expected parameter after comma",
                     self.current.as_ref().map_or(0, |t| t.line),
                     self.current.as_ref().map_or(0, |t| t.column),
-                    "A comma in a parameter list must be followed by another parameter"
+                    "A comma in a parameter list must be followed by another parameter",
                 ));
             }
 
@@ -1415,7 +1433,7 @@ impl ExprParser for Parser {
                     "Expected parameter name",
                     self.current.as_ref().map_or(0, |t| t.line),
                     self.current.as_ref().map_or(0, |t| t.column),
-                    "Function parameters must be valid identifiers"
+                    "Function parameters must be valid identifiers",
                 ));
             }
         }
@@ -1454,7 +1472,7 @@ impl ExprParser for Parser {
                         "Unclosed parenthesis",
                         line,
                         column,
-                        "Add a closing parenthesis ')' to match the opening one"
+                        "Add a closing parenthesis ')' to match the opening one",
                     ));
                 }
 
@@ -1628,7 +1646,7 @@ impl ExprParser for Parser {
                         "Unclosed bracket",
                         line,
                         column,
-                        "Add a closing bracket ']' to match the opening one"
+                        "Add a closing bracket ']' to match the opening one",
                     ));
                 }
 
@@ -1738,7 +1756,8 @@ impl ExprParser for Parser {
                                     column,
                                 })
                             });
-                        } else if self.check(TokenType::Async) && self.peek_matches(TokenType::For) {
+                        } else if self.check(TokenType::Async) && self.peek_matches(TokenType::For)
+                        {
                             return self.with_context(ParserContext::Comprehension, |this| {
                                 let mut generators = Vec::new();
 
@@ -1825,7 +1844,7 @@ impl ExprParser for Parser {
                         "Unclosed brace",
                         line,
                         column,
-                        "Add a closing brace '}' to match the opening one"
+                        "Add a closing brace '}' to match the opening one",
                     ));
                 }
 
@@ -1930,7 +1949,7 @@ impl ExprParser for Parser {
                 found: token.token_type.clone(),
                 line,
                 column,
-                suggestion: None
+                suggestion: None,
             }),
         }
     }
@@ -1981,7 +2000,7 @@ impl ExprParser for Parser {
                     "Expected expression after comma",
                     self.current.as_ref().map_or(0, |t| t.line),
                     self.current.as_ref().map_or(0, |t| t.column),
-                    "Consecutive commas are not allowed. Add an expression between commas."
+                    "Consecutive commas are not allowed. Add an expression between commas.",
                 ));
             }
 
@@ -2304,7 +2323,7 @@ impl ExprParser for Parser {
                                         message: "Expected ':' after dictionary key".to_string(),
                                         line: self.current.as_ref().map_or(line, |t| t.line),
                                         column: self.current.as_ref().map_or(column, |t| t.column),
-                                        suggestion: None
+                                        suggestion: None,
                                     });
                                 }
 

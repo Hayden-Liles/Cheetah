@@ -1,23 +1,23 @@
 // Runtime support module for the Cheetah compiler
 
+pub mod buffered_output;
+pub mod circular_buffer;
+pub mod debug_utils;
+pub mod dict_methods;
+pub mod dict_ops;
+pub mod exception_ops;
+pub mod exception_runtime;
+pub mod exception_state;
+pub mod int_ops;
 pub mod list_ops;
 pub mod list_runtime_impl;
-pub mod string_ops;
-pub mod string_ops_register;
-pub mod dict_ops;
-pub mod dict_methods;
-pub mod int_ops;
-pub mod exception_ops;
-pub mod exception_state;
-pub mod exception_runtime;
-pub mod print_ops;
-pub mod buffered_output;
-pub mod debug_utils;
-pub mod range_ops;
-pub mod range_iterator;
-pub mod circular_buffer;
 pub mod memory_profiler;
 pub mod parallel_ops;
+pub mod print_ops;
+pub mod range_iterator;
+pub mod range_ops;
+pub mod string_ops;
+pub mod string_ops_register;
 
 use inkwell::context::Context;
 use inkwell::module::Module;

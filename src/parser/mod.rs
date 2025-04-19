@@ -1,13 +1,13 @@
 mod error;
 mod expr;
+mod helpers;
 mod stmt;
 mod types;
-mod helpers;
 
 pub use error::{ParseError, ParseErrorFormatter};
+use helpers::TokenMatching;
 use stmt::StmtParser;
 use types::ParserContext;
-use helpers::TokenMatching;
 
 use crate::ast::Module;
 use crate::lexer::{Token, TokenType};
@@ -63,7 +63,6 @@ impl Parser {
                 break;
             }
 
-            // Skip newlines
             while self.match_token(TokenType::Newline) {}
 
             if self.current.is_none() {
@@ -74,10 +73,10 @@ impl Parser {
                 Ok(stmt) => body.push(Box::new(stmt)),
                 Err(e) => {
                     self.errors.push(e);
-                    // Instead of breaking, try to synchronize and continue parsing
                     self.synchronize();
-                    // If we've reached EOF after synchronizing, break out of the loop
-                    if self.current.is_none() || matches!(self.current.as_ref().unwrap().token_type, TokenType::EOF) {
+                    if self.current.is_none()
+                        || matches!(self.current.as_ref().unwrap().token_type, TokenType::EOF)
+                    {
                         break;
                     }
                 }
@@ -101,7 +100,6 @@ impl Parser {
         if self.context_stack.len() > 1 {
             self.context_stack.pop()
         } else {
-            // Ensure we always have at least one context (Normal)
             None
         }
     }
@@ -146,7 +144,6 @@ impl Parser {
         }
         self.current = self.tokens.pop_front();
 
-        // Update indentation level if we encounter an INDENT or DEDENT token
         if let Some(token) = &self.current {
             match token.token_type {
                 TokenType::Indent => {
@@ -191,10 +188,6 @@ impl Parser {
     /// This method skips tokens until it finds a synchronization point,
     /// which is typically the start of a new statement or the end of a block.
     fn synchronize(&mut self) {
-        // For the test_cascading_errors test, we need to be more conservative
-        // and only skip to the end of the current statement
-
-        // If we're already at a newline or EOF, just return
         if let Some(token) = &self.current {
             if matches!(token.token_type, TokenType::EOF | TokenType::Newline) {
                 return;
@@ -203,20 +196,15 @@ impl Parser {
             return;
         }
 
-        // Skip to the next newline or EOF
         while let Some(token) = &self.current {
-            // If we've reached the end of the file, stop
             if matches!(token.token_type, TokenType::EOF) {
                 break;
             }
 
-            // If we've reached a newline, consume it and stop
             if matches!(token.token_type, TokenType::Newline) {
-                self.advance(); // Consume the newline
                 break;
             }
 
-            // Otherwise, skip this token and continue
             self.advance();
         }
     }

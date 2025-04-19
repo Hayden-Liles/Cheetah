@@ -2,7 +2,6 @@ use crate::lexer::{Token, TokenType};
 use crate::parser::error::ParseError;
 use crate::parser::Parser;
 
-
 /// Common error messages
 #[allow(dead_code)]
 pub const ERR_EXPECTED_IDENTIFIER: &str = "Expected identifier";
@@ -43,14 +42,22 @@ pub trait TokenMatching {
 
     /// Expect and consume a token of the given type, or return an error
     #[allow(dead_code)]
-    fn expect(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError>;
+    fn expect(
+        &mut self,
+        expected_type: TokenType,
+        error_message: &str,
+    ) -> Result<Token, ParseError>;
 
     fn consume_attribute_name(&mut self, expected: &str) -> Result<String, ParseError>;
 
     fn get_keyword_name(&self, token_type: &TokenType) -> String;
 
     /// Consume a token of the given type, or return an error
-    fn consume(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError>;
+    fn consume(
+        &mut self,
+        expected_type: TokenType,
+        error_message: &str,
+    ) -> Result<Token, ParseError>;
 
     /// Consume a newline token
     fn consume_newline(&mut self) -> Result<(), ParseError>;
@@ -105,7 +112,11 @@ impl TokenMatching for Parser {
         }
     }
 
-    fn expect(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError> {
+    fn expect(
+        &mut self,
+        expected_type: TokenType,
+        error_message: &str,
+    ) -> Result<Token, ParseError> {
         if self.check(expected_type) {
             Ok(self.advance().unwrap())
         } else {
@@ -152,37 +163,45 @@ impl TokenMatching for Parser {
             TokenType::Case => "case".to_string(),
             TokenType::True => "True".to_string(),
             TokenType::False => "False".to_string(),
-            _ => "unknown_keyword".to_string(), // Fallback
+            _ => "unknown_keyword".to_string(),
         }
     }
 
     fn consume_attribute_name(&mut self, expected: &str) -> Result<String, ParseError> {
         match &self.current {
-            Some(token) => {
-                match &token.token_type {
-                    TokenType::Identifier(name) => {
-                        let result = name.clone();
-                        self.advance();
-                        Ok(result)
-                    },
-                    // Handle keywords as attribute names
-                    _ if self.is_keyword_token() => {
-                        // Convert the keyword token to a string representation
-                        let keyword_name = self.get_keyword_name(&token.token_type);
-                        self.advance();
-                        Ok(keyword_name)
-                    },
-                    _ => Err(ParseError::unexpected_token(expected, token.token_type.clone(), token.line, token.column)),
+            Some(token) => match &token.token_type {
+                TokenType::Identifier(name) => {
+                    let result = name.clone();
+                    self.advance();
+                    Ok(result)
                 }
+                _ if self.is_keyword_token() => {
+                    let keyword_name = self.get_keyword_name(&token.token_type);
+                    self.advance();
+                    Ok(keyword_name)
+                }
+                _ => Err(ParseError::unexpected_token(
+                    expected,
+                    token.token_type.clone(),
+                    token.line,
+                    token.column,
+                )),
             },
-            None => Err(ParseError::eof(expected, self.last_position().0, self.last_position().1)),
+            None => Err(ParseError::eof(
+                expected,
+                self.last_position().0,
+                self.last_position().1,
+            )),
         }
     }
 
-    fn consume(&mut self, expected_type: TokenType, error_message: &str) -> Result<Token, ParseError> {
+    fn consume(
+        &mut self,
+        expected_type: TokenType,
+        error_message: &str,
+    ) -> Result<Token, ParseError> {
         match &self.current {
             Some(token) => {
-                // Special case for function calls with keyword arguments
                 if matches!(expected_type, TokenType::RightParen)
                     && matches!(token.token_type, TokenType::Assign)
                     && self
@@ -205,12 +224,15 @@ impl TokenMatching for Parser {
                         _ => error_message,
                     };
 
-                    Err(ParseError::unexpected_token(expected_str, token.token_type.clone(), token.line, token.column))
+                    Err(ParseError::unexpected_token(
+                        expected_str,
+                        token.token_type.clone(),
+                        token.line,
+                        token.column,
+                    ))
                 }
             }
-            None => {
-                self.unexpected_eof(error_message)
-            }
+            None => self.unexpected_eof(error_message),
         }
     }
 
@@ -218,15 +240,41 @@ impl TokenMatching for Parser {
         match &self.current {
             Some(token) => matches!(
                 token.token_type,
-                TokenType::And | TokenType::As | TokenType::Assert | TokenType::Async |
-                TokenType::Await | TokenType::Break | TokenType::Class | TokenType::Continue |
-                TokenType::Def | TokenType::Del | TokenType::Elif | TokenType::Else |
-                TokenType::Except | TokenType::Finally | TokenType::For | TokenType::From |
-                TokenType::Global | TokenType::If | TokenType::Import | TokenType::In |
-                TokenType::Is | TokenType::Lambda | TokenType::None | TokenType::Nonlocal |
-                TokenType::Not | TokenType::Or | TokenType::Pass | TokenType::Raise |
-                TokenType::Return | TokenType::Try | TokenType::While | TokenType::With |
-                TokenType::Yield | TokenType::Match | TokenType::Case
+                TokenType::And
+                    | TokenType::As
+                    | TokenType::Assert
+                    | TokenType::Async
+                    | TokenType::Await
+                    | TokenType::Break
+                    | TokenType::Class
+                    | TokenType::Continue
+                    | TokenType::Def
+                    | TokenType::Del
+                    | TokenType::Elif
+                    | TokenType::Else
+                    | TokenType::Except
+                    | TokenType::Finally
+                    | TokenType::For
+                    | TokenType::From
+                    | TokenType::Global
+                    | TokenType::If
+                    | TokenType::Import
+                    | TokenType::In
+                    | TokenType::Is
+                    | TokenType::Lambda
+                    | TokenType::None
+                    | TokenType::Nonlocal
+                    | TokenType::Not
+                    | TokenType::Or
+                    | TokenType::Pass
+                    | TokenType::Raise
+                    | TokenType::Return
+                    | TokenType::Try
+                    | TokenType::While
+                    | TokenType::With
+                    | TokenType::Yield
+                    | TokenType::Match
+                    | TokenType::Case
             ),
             None => false,
         }
@@ -234,25 +282,39 @@ impl TokenMatching for Parser {
 
     fn consume_newline(&mut self) -> Result<(), ParseError> {
         if self.match_token(TokenType::SemiColon) {
-            // After consuming a semicolon, check if there are more statements on the same line
-            if !self.check_newline() && !self.check(TokenType::EOF) && !self.check(TokenType::Dedent) {
-                return Ok(()); // Allow continuing to parse more statements on the same line
-            }
+            if !self.check_newline()
+                && !self.check(TokenType::EOF)
+                && !self.check(TokenType::Dedent)
+            {}
         }
 
         if !self.check_newline() && !self.check(TokenType::EOF) && !self.check(TokenType::Dedent) {
-            // Check for unexpected delimiters and provide a more specific error message
             if let Some(token) = &self.current {
                 match token.token_type {
                     TokenType::RightParen => {
-                        return Err(ParseError::unexpected_token("newline", TokenType::RightParen, token.line, token.column));
-                    },
+                        return Err(ParseError::unexpected_token(
+                            "newline",
+                            TokenType::RightParen,
+                            token.line,
+                            token.column,
+                        ));
+                    }
                     TokenType::RightBracket => {
-                        return Err(ParseError::unexpected_token("newline", TokenType::RightBracket, token.line, token.column));
-                    },
+                        return Err(ParseError::unexpected_token(
+                            "newline",
+                            TokenType::RightBracket,
+                            token.line,
+                            token.column,
+                        ));
+                    }
                     TokenType::RightBrace => {
-                        return Err(ParseError::unexpected_token("newline", TokenType::RightBrace, token.line, token.column));
-                    },
+                        return Err(ParseError::unexpected_token(
+                            "newline",
+                            TokenType::RightBrace,
+                            token.line,
+                            token.column,
+                        ));
+                    }
                     _ => {}
                 }
             }
@@ -261,7 +323,7 @@ impl TokenMatching for Parser {
                 message: "Expected newline after statement".to_string(),
                 line: self.current.as_ref().map_or(0, |t| t.line),
                 column: self.current.as_ref().map_or(0, |t| t.column),
-                suggestion: None
+                suggestion: None,
             });
         }
 
@@ -285,9 +347,18 @@ impl TokenMatching for Parser {
                     self.advance();
                     Ok(result)
                 }
-                _ => Err(ParseError::unexpected_token(expected, token.token_type.clone(), token.line, token.column)),
+                _ => Err(ParseError::unexpected_token(
+                    expected,
+                    token.token_type.clone(),
+                    token.line,
+                    token.column,
+                )),
             },
-            None => Err(ParseError::eof(expected, self.last_position().0, self.last_position().1)),
+            None => Err(ParseError::eof(
+                expected,
+                self.last_position().0,
+                self.last_position().1,
+            )),
         }
     }
 
@@ -309,7 +380,7 @@ impl TokenMatching for Parser {
             message: message.to_string(),
             line,
             column,
-            suggestion: None
+            suggestion: None,
         })
     }
 
@@ -320,13 +391,12 @@ impl TokenMatching for Parser {
             expected: expected.to_string(),
             line,
             column,
-            suggestion: None
+            suggestion: None,
         })
     }
 
     fn token_matches(&self, actual: &TokenType, expected: &TokenType) -> bool {
         match (actual, expected) {
-            // Handle token types with values
             (TokenType::Identifier(_), TokenType::Identifier(_)) => true,
             (TokenType::IntLiteral(_), TokenType::IntLiteral(_)) => true,
             (TokenType::FloatLiteral(_), TokenType::FloatLiteral(_)) => true,
@@ -335,7 +405,6 @@ impl TokenMatching for Parser {
             (TokenType::RawString(_), TokenType::RawString(_)) => true,
             (TokenType::BytesLiteral(_), TokenType::BytesLiteral(_)) => true,
 
-            // For all other token types, compare the discriminant
             _ => std::mem::discriminant(actual) == std::mem::discriminant(expected),
         }
     }
