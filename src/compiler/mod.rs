@@ -59,7 +59,7 @@ impl<'ctx> Compiler<'ctx> {
                 &triple,
                 &TargetMachine::get_host_cpu_name().to_string(),
                 &TargetMachine::get_host_cpu_features().to_string(),
-                inkwell::OptimizationLevel::Default,
+                inkwell::OptimizationLevel::Aggressive,
                 RelocMode::Default,
                 CodeModel::Default,
             )

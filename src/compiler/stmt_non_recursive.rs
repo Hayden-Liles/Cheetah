@@ -16,6 +16,20 @@ pub trait StmtNonRecursive<'ctx> {
     fn compile_stmt_fallback(&mut self, stmt: &Stmt) -> Result<(), String>;
 
     fn convert_to_bool(&self, value: BasicValueEnum<'ctx>) -> inkwell::values::IntValue<'ctx>;
+
+    /// Detect if an expression is a range call and extract its parameters
+    fn detect_range_call(&mut self, expr: &Expr) -> Result<Option<(inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>)>, String>;
+
+    /// Generate an optimized LLVM loop for range iterables
+    fn generate_optimized_range_loop(
+        &mut self,
+        target: &Expr,
+        body: &[Box<Stmt>],
+        orelse: &[Box<Stmt>],
+        start_val: inkwell::values::IntValue<'ctx>,
+        stop_val: inkwell::values::IntValue<'ctx>,
+        step_val: inkwell::values::IntValue<'ctx>
+    ) -> Result<(), String>;
 }
 
 // Task for the work stack
@@ -71,6 +85,307 @@ enum StmtTask<'a, 'ctx> {
 }
 
 impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
+    /// Detect if an expression is a range call and extract its parameters
+    fn detect_range_call(&mut self, expr: &Expr) -> Result<Option<(inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>)>, String> {
+        if let Expr::Call { func, args, .. } = expr {
+            if let Expr::Name { id, .. } = func.as_ref() {
+                if id == "range" {
+                    let i64_type = self.llvm_context.i64_type();
+
+                    match args.len() {
+                        1 => {
+                            // range(stop)
+                            let (stop_val, stop_type) = self.compile_expr(&args[0])?;
+                            let start_val = i64_type.const_int(0, false); // start = 0
+                            let step_val = i64_type.const_int(1, false);  // step = 1
+
+                            let stop_val = if stop_type != Type::Int {
+                                self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
+                            } else if stop_val.is_pointer_value() {
+                                self.builder
+                                    .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
+                                    .unwrap()
+                                    .into_int_value()
+                            } else {
+                                stop_val.into_int_value()
+                            };
+
+                            return Ok(Some((start_val, stop_val, step_val)));
+                        },
+                        2 => {
+                            // range(start, stop)
+                            let (start_val, start_type) = self.compile_expr(&args[0])?;
+                            let (stop_val, stop_type) = self.compile_expr(&args[1])?;
+                            let step_val = i64_type.const_int(1, false);  // step = 1
+
+                            let start_val = if start_type != Type::Int {
+                                self.convert_type(start_val, &start_type, &Type::Int)?.into_int_value()
+                            } else if start_val.is_pointer_value() {
+                                self.builder
+                                    .build_load(i64_type, start_val.into_pointer_value(), "range_start")
+                                    .unwrap()
+                                    .into_int_value()
+                            } else {
+                                start_val.into_int_value()
+                            };
+
+                            let stop_val = if stop_type != Type::Int {
+                                self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
+                            } else if stop_val.is_pointer_value() {
+                                self.builder
+                                    .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
+                                    .unwrap()
+                                    .into_int_value()
+                            } else {
+                                stop_val.into_int_value()
+                            };
+
+                            return Ok(Some((start_val, stop_val, step_val)));
+                        },
+                        3 => {
+                            // range(start, stop, step)
+                            let (start_val, start_type) = self.compile_expr(&args[0])?;
+                            let (stop_val, stop_type) = self.compile_expr(&args[1])?;
+                            let (step_val, step_type) = self.compile_expr(&args[2])?;
+
+                            let start_val = if start_type != Type::Int {
+                                self.convert_type(start_val, &start_type, &Type::Int)?.into_int_value()
+                            } else if start_val.is_pointer_value() {
+                                self.builder
+                                    .build_load(i64_type, start_val.into_pointer_value(), "range_start")
+                                    .unwrap()
+                                    .into_int_value()
+                            } else {
+                                start_val.into_int_value()
+                            };
+
+                            let stop_val = if stop_type != Type::Int {
+                                self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
+                            } else if stop_val.is_pointer_value() {
+                                self.builder
+                                    .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
+                                    .unwrap()
+                                    .into_int_value()
+                            } else {
+                                stop_val.into_int_value()
+                            };
+
+                            let step_val = if step_type != Type::Int {
+                                self.convert_type(step_val, &step_type, &Type::Int)?.into_int_value()
+                            } else if step_val.is_pointer_value() {
+                                self.builder
+                                    .build_load(i64_type, step_val.into_pointer_value(), "range_step")
+                                    .unwrap()
+                                    .into_int_value()
+                            } else {
+                                step_val.into_int_value()
+                            };
+
+                            return Ok(Some((start_val, stop_val, step_val)));
+                        },
+                        _ => {
+                            return Err(format!("Invalid number of arguments for range: expected 1, 2, or 3, got {}", args.len()));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Generate an optimized LLVM loop for range iterables
+    fn generate_optimized_range_loop(
+        &mut self,
+        target: &Expr,
+        body: &[Box<Stmt>],
+        orelse: &[Box<Stmt>],
+        start_val: inkwell::values::IntValue<'ctx>,
+        stop_val: inkwell::values::IntValue<'ctx>,
+        step_val: inkwell::values::IntValue<'ctx>
+    ) -> Result<(), String> {
+        let current_function = self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+
+        // Create the basic blocks for the loop
+        let entry_block = self.llvm_context.append_basic_block(current_function, "range.entry");
+        let cond_block = self.llvm_context.append_basic_block(current_function, "range.cond");
+        let body_block = self.llvm_context.append_basic_block(current_function, "range.body");
+        let inc_block = self.llvm_context.append_basic_block(current_function, "range.inc");
+        let else_block = self.llvm_context.append_basic_block(current_function, "range.else");
+        let exit_block = self.llvm_context.append_basic_block(current_function, "range.exit");
+
+        // Register the loop for break/continue statements
+        self.push_loop(inc_block, exit_block);
+
+        // Branch to the entry block
+        self.builder.build_unconditional_branch(entry_block).unwrap();
+
+        // Entry block: initialize the loop variable
+        self.builder.position_at_end(entry_block);
+        let i64_type = self.llvm_context.i64_type();
+
+        // Create the loop variable
+        let var_ptr = if let Expr::Name { id, .. } = target {
+            let ptr = self.builder.build_alloca(i64_type, id).unwrap();
+            self.scope_stack.add_variable(id.clone(), ptr, Type::Int);
+            ptr
+        } else {
+            return Err("Unsupported loop target".to_string());
+        };
+
+        // Store the initial value
+        self.builder.build_store(var_ptr, start_val).unwrap();
+
+        // Branch to the condition block
+        self.builder.build_unconditional_branch(cond_block).unwrap();
+
+        // Condition block: check if we should continue looping
+        self.builder.position_at_end(cond_block);
+
+        // Load the current value of the loop variable
+        let current_val = self.builder
+            .build_load(i64_type, var_ptr, "current")
+            .unwrap()
+            .into_int_value();
+
+        // Determine the comparison predicate based on the step direction
+        let step_positive = self.builder
+            .build_int_compare(
+                inkwell::IntPredicate::SGT,
+                step_val,
+                i64_type.const_int(0, true),
+                "step_positive"
+            )
+            .unwrap();
+
+        let cond_pos = self.builder
+            .build_int_compare(
+                inkwell::IntPredicate::SLT,
+                current_val,
+                stop_val,
+                "cond_pos"
+            )
+            .unwrap();
+
+        let cond_neg = self.builder
+            .build_int_compare(
+                inkwell::IntPredicate::SGT,
+                current_val,
+                stop_val,
+                "cond_neg"
+            )
+            .unwrap();
+
+        // Select the appropriate condition based on step direction
+        let condition = self.builder
+            .build_select(
+                step_positive,
+                cond_pos,
+                cond_neg,
+                "loop_condition"
+            )
+            .unwrap()
+            .into_int_value();
+
+        // Branch based on the condition
+        self.builder
+            .build_conditional_branch(condition, body_block, else_block)
+            .unwrap();
+
+        // Body block: execute the loop body
+        self.builder.position_at_end(body_block);
+        self.push_scope(false, true, false);
+
+        // Execute the body statements
+        for stmt in body {
+            if self
+                .builder
+                .get_insert_block()
+                .unwrap()
+                .get_terminator()
+                .is_some()
+            {
+                break;
+            }
+            self.compile_stmt_non_recursive(stmt)?;
+        }
+
+        // If the block doesn't have a terminator, branch to the increment block
+        if self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_terminator()
+            .is_none()
+        {
+            self.builder.build_unconditional_branch(inc_block).unwrap();
+        }
+
+        self.pop_scope();
+
+        // Increment block: update the loop variable
+        self.builder.position_at_end(inc_block);
+
+        // Load the current value
+        let current_val = self.builder
+            .build_load(i64_type, var_ptr, "current_inc")
+            .unwrap()
+            .into_int_value();
+
+        // Add the step value
+        let next_val = self.builder
+            .build_int_add(current_val, step_val, "next")
+            .unwrap();
+
+        // Store the updated value
+        self.builder.build_store(var_ptr, next_val).unwrap();
+
+        // Branch back to the condition block
+        self.builder.build_unconditional_branch(cond_block).unwrap();
+
+        // Else block: execute the else clause if the loop condition is initially false
+        self.builder.position_at_end(else_block);
+        self.push_scope(false, false, false);
+
+        if !orelse.is_empty() {
+            for stmt in orelse {
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_some()
+                {
+                    break;
+                }
+                self.compile_stmt_non_recursive(stmt)?;
+            }
+        }
+
+        // If the block doesn't have a terminator, branch to the exit block
+        if self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_terminator()
+            .is_none()
+        {
+            self.builder.build_unconditional_branch(exit_block).unwrap();
+        }
+
+        self.pop_scope();
+
+        // Exit block: continue execution after the loop
+        self.builder.position_at_end(exit_block);
+        self.pop_loop();
+
+        Ok(())
+    }
     fn convert_to_bool(&self, value: BasicValueEnum<'ctx>) -> inkwell::values::IntValue<'ctx> {
         match value {
             BasicValueEnum::IntValue(int_val) => {
@@ -543,155 +858,119 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                     orelse,
                     iter,
                 } => {
-                    let current_function = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-
-                    let init_block = self
-                        .llvm_context
-                        .append_basic_block(current_function, "for.init");
-                    let cond_block = self
-                        .llvm_context
-                        .append_basic_block(current_function, "for.cond");
-                    let body_block = self
-                        .llvm_context
-                        .append_basic_block(current_function, "for.body");
-                    let increment_block = self
-                        .llvm_context
-                        .append_basic_block(current_function, "for.inc");
-                    let else_block = self
-                        .llvm_context
-                        .append_basic_block(current_function, "for.else");
-                    let end_block = self
-                        .llvm_context
-                        .append_basic_block(current_function, "for.end");
-
-                    self.push_loop(increment_block, end_block);
-
-                    self.builder.build_unconditional_branch(init_block).unwrap();
-
-                    self.builder.position_at_end(init_block);
-                    let i64_type = self.llvm_context.i64_type();
-
-                    let index_ptr = self.builder.build_alloca(i64_type, "for.index").unwrap();
-                    self.builder
-                        .build_store(index_ptr, i64_type.const_int(0, false))
-                        .unwrap();
-
-                    let var_ptr = if let Expr::Name { id, .. } = target {
-                        let ptr = self.builder.build_alloca(i64_type, id).unwrap();
-                        self.scope_stack.add_variable(id.clone(), ptr, Type::Int);
-                        ptr
+                    // Check if this is a range-based for loop that we can optimize
+                    if let Ok(Some((start_val, stop_val, step_val))) = self.detect_range_call(iter) {
+                        // This is a range-based for loop, use our optimized implementation
+                        self.generate_optimized_range_loop(target, body, orelse, start_val, stop_val, step_val)?;
                     } else {
-                        return Err("Unsupported loop target".to_string());
-                    };
-
-                    let (iter_val, iter_type) = self.compile_expr(iter)?;
-
-                    let len_val = match iter_type {
-                        Type::List(_) => {
-                            let list_len_fn = self
-                                .module
-                                .get_function("list_len")
-                                .ok_or("list_len function not found".to_string())?;
-                            let call = self
-                                .builder
-                                .build_call(
-                                    list_len_fn,
-                                    &[iter_val.into_pointer_value().into()],
-                                    "list_len_result",
-                                )
-                                .unwrap();
-                            call.try_as_basic_value().left().unwrap()
-                        }
-                        Type::Int => {
-                            if iter_val.is_pointer_value() {
-                                self.builder
-                                    .build_load(
-                                        i64_type,
-                                        iter_val.into_pointer_value(),
-                                        "range_len",
-                                    )
-                                    .unwrap()
-                            } else {
-                                iter_val
-                            }
-                        }
-                        _ => iter_val,
-                    };
-
-                    self.builder.build_unconditional_branch(cond_block).unwrap();
-
-                    self.builder.position_at_end(cond_block);
-                    let index_val = self
-                        .builder
-                        .build_load(i64_type, index_ptr, "index")
-                        .unwrap()
-                        .into_int_value();
-                    let cond = self
-                        .builder
-                        .build_int_compare(
-                            inkwell::IntPredicate::SLT,
-                            index_val,
-                            len_val.into_int_value(),
-                            "loop.cond",
-                        )
-                        .unwrap();
-                    self.builder
-                        .build_conditional_branch(cond, body_block, else_block)
-                        .unwrap();
-
-                    self.builder.position_at_end(body_block);
-                    self.push_scope(false, true, false);
-
-                    self.builder.build_store(var_ptr, index_val).unwrap();
-
-                    for stmt in body {
-                        if self
+                        // This is a regular for loop, use the original implementation
+                        let current_function = self
                             .builder
                             .get_insert_block()
                             .unwrap()
-                            .get_terminator()
-                            .is_some()
-                        {
-                            break;
-                        }
-                        self.compile_stmt_non_recursive(stmt)?;
-                    }
-
-                    if self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_terminator()
-                        .is_none()
-                    {
-                        self.builder
-                            .build_unconditional_branch(increment_block)
+                            .get_parent()
                             .unwrap();
-                    }
-                    self.pop_scope();
 
-                    self.builder.position_at_end(increment_block);
-                    let prev_index = self
-                        .builder
-                        .build_load(i64_type, index_ptr, "index")
-                        .unwrap()
-                        .into_int_value();
-                    let next_index = self
-                        .builder
-                        .build_int_add(prev_index, i64_type.const_int(1, false), "next_index")
-                        .unwrap();
-                    self.builder.build_store(index_ptr, next_index).unwrap();
-                    self.builder.build_unconditional_branch(cond_block).unwrap();
+                        let init_block = self
+                            .llvm_context
+                            .append_basic_block(current_function, "for.init");
+                        let cond_block = self
+                            .llvm_context
+                            .append_basic_block(current_function, "for.cond");
+                        let body_block = self
+                            .llvm_context
+                            .append_basic_block(current_function, "for.body");
+                        let increment_block = self
+                            .llvm_context
+                            .append_basic_block(current_function, "for.inc");
+                        let else_block = self
+                            .llvm_context
+                            .append_basic_block(current_function, "for.else");
+                        let end_block = self
+                            .llvm_context
+                            .append_basic_block(current_function, "for.end");
 
-                    self.builder.position_at_end(else_block);
-                    self.push_scope(false, false, false);
-                    if !orelse.is_empty() {
-                        for stmt in orelse {
+                        self.push_loop(increment_block, end_block);
+
+                        self.builder.build_unconditional_branch(init_block).unwrap();
+
+                        self.builder.position_at_end(init_block);
+                        let i64_type = self.llvm_context.i64_type();
+
+                        let index_ptr = self.builder.build_alloca(i64_type, "for.index").unwrap();
+                        self.builder
+                            .build_store(index_ptr, i64_type.const_int(0, false))
+                            .unwrap();
+
+                        let var_ptr = if let Expr::Name { id, .. } = target {
+                            let ptr = self.builder.build_alloca(i64_type, id).unwrap();
+                            self.scope_stack.add_variable(id.clone(), ptr, Type::Int);
+                            ptr
+                        } else {
+                            return Err("Unsupported loop target".to_string());
+                        };
+
+                        let (iter_val, iter_type) = self.compile_expr(iter)?;
+
+                        let len_val = match iter_type {
+                            Type::List(_) => {
+                                let list_len_fn = self
+                                    .module
+                                    .get_function("list_len")
+                                    .ok_or("list_len function not found".to_string())?;
+                                let call = self
+                                    .builder
+                                    .build_call(
+                                        list_len_fn,
+                                        &[iter_val.into_pointer_value().into()],
+                                        "list_len_result",
+                                    )
+                                    .unwrap();
+                                call.try_as_basic_value().left().unwrap()
+                            }
+                            Type::Int => {
+                                if iter_val.is_pointer_value() {
+                                    self.builder
+                                        .build_load(
+                                            i64_type,
+                                            iter_val.into_pointer_value(),
+                                            "range_len",
+                                        )
+                                        .unwrap()
+                                } else {
+                                    iter_val
+                                }
+                            }
+                            _ => iter_val,
+                        };
+
+                        self.builder.build_unconditional_branch(cond_block).unwrap();
+
+                        self.builder.position_at_end(cond_block);
+                        let index_val = self
+                            .builder
+                            .build_load(i64_type, index_ptr, "index")
+                            .unwrap()
+                            .into_int_value();
+                        let cond = self
+                            .builder
+                            .build_int_compare(
+                                inkwell::IntPredicate::SLT,
+                                index_val,
+                                len_val.into_int_value(),
+                                "loop.cond",
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_conditional_branch(cond, body_block, else_block)
+                            .unwrap();
+
+                        self.builder.position_at_end(body_block);
+                        self.push_scope(false, true, false);
+
+                        self.builder.build_store(var_ptr, index_val).unwrap();
+
+                        for stmt in body {
                             if self
                                 .builder
                                 .get_insert_block()
@@ -703,20 +982,63 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             }
                             self.compile_stmt_non_recursive(stmt)?;
                         }
-                    }
-                    if self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_terminator()
-                        .is_none()
-                    {
-                        self.builder.build_unconditional_branch(end_block).unwrap();
-                    }
-                    self.pop_scope();
 
-                    self.builder.position_at_end(end_block);
-                    self.pop_loop();
+                        if self
+                            .builder
+                            .get_insert_block()
+                            .unwrap()
+                            .get_terminator()
+                            .is_none()
+                        {
+                            self.builder
+                                .build_unconditional_branch(increment_block)
+                                .unwrap();
+                        }
+                        self.pop_scope();
+
+                        self.builder.position_at_end(increment_block);
+                        let prev_index = self
+                            .builder
+                            .build_load(i64_type, index_ptr, "index")
+                            .unwrap()
+                            .into_int_value();
+                        let next_index = self
+                            .builder
+                            .build_int_add(prev_index, i64_type.const_int(1, false), "next_index")
+                            .unwrap();
+                        self.builder.build_store(index_ptr, next_index).unwrap();
+                        self.builder.build_unconditional_branch(cond_block).unwrap();
+
+                        self.builder.position_at_end(else_block);
+                        self.push_scope(false, false, false);
+                        if !orelse.is_empty() {
+                            for stmt in orelse {
+                                if self
+                                    .builder
+                                    .get_insert_block()
+                                    .unwrap()
+                                    .get_terminator()
+                                    .is_some()
+                                {
+                                    break;
+                                }
+                                self.compile_stmt_non_recursive(stmt)?;
+                            }
+                        }
+                        if self
+                            .builder
+                            .get_insert_block()
+                            .unwrap()
+                            .get_terminator()
+                            .is_none()
+                        {
+                            self.builder.build_unconditional_branch(end_block).unwrap();
+                        }
+                        self.pop_scope();
+
+                        self.builder.position_at_end(end_block);
+                        self.pop_loop();
+                    }
                 }
 
                 StmtTask::ProcessWhile { test, body, orelse } => {

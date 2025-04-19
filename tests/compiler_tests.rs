@@ -202,3 +202,7 @@ mod stmt_non_recursive_test;
 // Include the list comprehension with tuple tests
 #[path = "more_tests/compiler/list_comprehension_tuple_test.rs"]
 mod list_comprehension_tuple_test;
+
+// Include the range optimization tests
+#[path = "more_tests/compiler/range_optimization_test.rs"]
+mod range_optimization_test;

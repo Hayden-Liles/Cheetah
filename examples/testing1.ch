@@ -1,3 +1,10 @@
-for _ in range(100_000_000):
-    pass
-print("✅ range ok")
+def fibonacci(n):
+    seq = []
+    a, b = 0, 1
+    for _ in range(n):
+        seq.append(a)
+        a, b = b, a + b
+    return seq
+
+test = fibonacci(100)
+print(test)
