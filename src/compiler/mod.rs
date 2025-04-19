@@ -19,12 +19,15 @@ pub mod tail_call_optimizer;
 pub mod parallel_loop_optimizer;
 
 use crate::compiler::context::CompilationContext;
-use inkwell::context::Context;
 use inkwell::passes::PassManager;
 use stmt::StmtCompiler;
 use types::Type;
 use std::path::Path;
 use std::collections::HashMap;
+use inkwell::{
+    targets::TargetMachine,
+    context::Context,
+};
 
 // No need to import builtins modules directly as they're already available through the module system
 
@@ -41,6 +44,82 @@ impl<'ctx> Compiler<'ctx> {
             context: CompilationContext::new(context, module_name),
             optimize: true,
         }
+    }
+
+    pub fn emit_to_aot(&mut self, filename: &str) -> Result<(), String> {
+        use inkwell::targets::{InitializationConfig, Target, RelocMode, CodeModel, FileType};
+        use std::process::Command;
+        use std::path::Path;
+
+        // 1) Initialize all LLVM targets & asm printers
+        Target::initialize_all(&InitializationConfig::default());
+
+        // 2) Pick the host triple
+        let triple = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&triple)
+            .map_err(|e| format!("No target for {}: {}", triple, e))?;
+
+        // 3) Build the TargetMachine
+        let tm = target.create_target_machine(
+            &triple,
+            &TargetMachine::get_host_cpu_name().to_string(),
+            &TargetMachine::get_host_cpu_features().to_string(),
+            inkwell::OptimizationLevel::Default,
+            RelocMode::Default,
+            CodeModel::Default,
+        ).ok_or("Failed to create TargetMachine")?;
+
+        // 4) Tell the module its triple
+        let module = &mut self.context.module;
+        module.set_triple(&triple);
+
+        // 5) Emit the .o file
+        let obj_path = format!("{}.o", filename);
+        tm.write_to_file(module, FileType::Object, Path::new(&obj_path))
+            .map_err(|e| format!("Failed to write object file: {:?}", e))?;
+
+        // 6) Locate our Rust‐compiled runtime (libcheetah.a)
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .map_err(|_| "CARGO_MANIFEST_DIR not set".to_string())?;
+        let runtime_lib_dir = format!("{}/target/release", manifest_dir);
+
+        // 7) Grab LLVM’s link flags via llvm-config
+        let llvm_config = std::env::var("LLVM_CONFIG").unwrap_or_else(|_| "llvm-config".into());
+        let llvm_output = Command::new(&llvm_config)
+            .arg("--libs")
+            .arg("--system-libs")
+            .output()
+            .map_err(|e| format!("Failed to run {}: {}", llvm_config, e))?;
+        if !llvm_output.status.success() {
+            return Err(format!(
+                "llvm-config failed: {}",
+                String::from_utf8_lossy(&llvm_output.stderr)
+            ));
+        }
+        let llvm_flags = String::from_utf8(llvm_output.stdout)
+            .map_err(|e| format!("Invalid UTF-8 from llvm-config: {}", e))?;
+
+        // 8) Invoke the system linker
+        let mut cmd = Command::new("cc");
+        cmd.arg(&obj_path)
+           .arg("-L").arg(&runtime_lib_dir)
+           .arg("-lcheetah");
+
+        // append each llvm-config flag (e.g. -lLLVM -lstdc++ -lpthread -ldl ...)
+        for token in llvm_flags.split_whitespace() {
+            cmd.arg(token);
+        }
+
+        cmd.arg("-o").arg(filename);
+
+        let status = cmd.status()
+            .map_err(|e| format!("Failed to spawn linker: {}", e))?;
+        if !status.success() {
+            return Err(format!("Linker exited with: {}", status));
+        }
+
+        println!("✅ AOT build → ./{}", filename);
+        Ok(())
     }
 
     /// Compile an AST module to LLVM IR

@@ -29,6 +29,7 @@ rayon = "1.10.0"
 
 [lib]
 name = "cheetah"
+crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [[bin]]

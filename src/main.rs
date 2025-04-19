@@ -908,11 +908,14 @@ fn compile_file(
     output: Option<String>,
     opt_level: u8,
     output_object: bool,
-    target_triple: Option<String>
+    target_triple: Option<String>,
 ) -> Result<()> {
     let _ = target_triple;
     let filename = ensure_ch_extension(filename);
-    println!("{}", format!("Compiling {} with optimization level {}", filename, opt_level).bright_green());
+    println!(
+        "{}",
+        format!("Compiling {} with optimization level {}", filename, opt_level).bright_green()
+    );
 
     let source = fs::read_to_string(&filename)
         .with_context(|| format!("Failed to read file: {}", filename))?;
@@ -924,47 +927,55 @@ fn compile_file(
             let context = context::Context::create();
             let mut compiler = Compiler::new(&context, &filename);
 
-            // Set optimization level based on user input
-            let opt_level = match opt_level {
+            // Select optimization level
+            let llvm_opt = match opt_level {
                 0 => inkwell::OptimizationLevel::None,
                 1 => inkwell::OptimizationLevel::Less,
                 2 => inkwell::OptimizationLevel::Default,
                 _ => inkwell::OptimizationLevel::Aggressive,
             };
-            println!("{}", format!("Using optimization level: {:?}", opt_level).bright_green());
+            println!(
+                "{}",
+                format!("Using optimization level: {:?}", llvm_opt).bright_green()
+            );
 
             // Compile the AST
             match compiler.compile_module(&module) {
                 Ok(_) => {
-                    // Determine output path and extension
-                    let mut output_path = match output {
+                    // Determine output path / stem
+                    let output_path = match output {
                         Some(path) => PathBuf::from(path),
                         None => {
-                            let mut path = PathBuf::from(filename);
-                            path.set_extension(if output_object { "o" } else { "ll" });
-                            path
+                            let mut p = PathBuf::from(&filename);
+                            p.set_extension(if output_object { "o" } else { "ll" });
+                            p
                         }
                     };
 
-                    // If output_object is true, we would compile to an object file
-                    // For now, we'll just write the LLVM IR
                     if output_object {
-                        println!("{}", "Object file output not yet implemented, defaulting to LLVM IR".bright_yellow());
-                        if output_path.extension().unwrap_or_default() == "o" {
-                            output_path.set_extension("ll");
-                        }
+                        // AOT path: strip extension to get executable name
+                        let exe_name = output_path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .ok_or_else(|| anyhow::anyhow!("Invalid output filename"))?;
+
+                        // Emit native object + link to exe
+                        compiler
+                            .emit_to_aot(exe_name)
+                            .map_err(|e| anyhow::anyhow!("AOT compilation failed: {}", e))?;
+                    } else {
+                        // Emit LLVM IR
+                        compiler
+                            .write_to_file(&output_path)
+                            .map_err(|e| anyhow::anyhow!("Failed to write IR to file: {}", e))?;
+                        println!("✅ Wrote LLVM IR to {}", output_path.display());
                     }
 
-                    // Write LLVM IR to file
-                    compiler.write_to_file(&output_path)
-                        .map_err(|e| anyhow::anyhow!("Failed to write IR to file: {}", e))?;
-
-                    println!("Successfully compiled to {}", output_path.display());
                     Ok(())
-                },
+                }
                 Err(e) => Err(anyhow::anyhow!("Compilation failed: {}", e)),
             }
-        },
+        }
         Err(errors) => {
             for error in &errors {
                 let formatter = ParseErrorFormatter::new(error, Some(&source), true);
