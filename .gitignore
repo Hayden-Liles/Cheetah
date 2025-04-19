@@ -1,1 +1,38 @@
-/target
+# Rust build artifacts
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Debug files
+*.pdb
+
+# Generated LLVM IR files
+*.ll
+
+# Object files
+*.o
+
+# Generated executables
+*.exe
+*.out
+
+# Test coverage
+coverage/
+*.profraw
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+
+# Cheetah build directory
+.cheetah_build/
