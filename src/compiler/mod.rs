@@ -78,10 +78,24 @@ impl<'ctx> Compiler<'ctx> {
         tm.write_to_file(module, FileType::Object, Path::new(&obj_path))
             .map_err(|e| format!("Failed to write object file: {:?}", e))?;
 
-        // 6) Locate our Rust‐compiled runtime (libcheetah.a)
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-            .map_err(|_| "CARGO_MANIFEST_DIR not set".to_string())?;
-        let runtime_lib_dir = format!("{}/target/release", manifest_dir);
+        // 6) Locate our Rust‐compiled runtime (libcheetah.a):
+        //    • In dev (cargo run) we still honor CARGO_MANIFEST_DIR
+        //    • Otherwise, assume libcheetah.a lives alongside this binary in a `lib` folder
+        let runtime_lib_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+            Ok(manifest) => format!("{}/target/release", manifest),
+            Err(_) => {
+                // get the absolute path to our own executable
+                let mut exe = std::env::current_exe()
+                    .map_err(|e| format!("Failed to locate current exe: {}", e))?;
+                // go up to the install prefix (e.g. /usr/local/bin → /usr/local)
+                exe.pop(); // drop the executable name
+                exe.pop(); // go up from bin to prefix
+                // assume libraries are in $PREFIX/lib/cheetah
+                exe.push("lib");
+                exe.push("cheetah");
+                exe.to_string_lossy().into_owned()
+            }
+        };
 
         // 7) Grab LLVM’s link flags via llvm-config
         let llvm_config = std::env::var("LLVM_CONFIG").unwrap_or_else(|_| "llvm-config".into());

@@ -6,6 +6,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::os::raw::c_char;
 use std::path::PathBuf;
+use std::os::unix::process::CommandExt;
+
 
 // For stack size control
 use libc;
@@ -205,6 +207,8 @@ fn init_locale() {
 }
 
 fn main() -> Result<()> {
+    let cli = Cli::parse();
+    
     // Initialize locale to C for consistent output
     init_locale();
 
@@ -214,44 +218,115 @@ fn main() -> Result<()> {
     // Initialize LLVM targets for cross-compilation support
     initialize_llvm_targets();
 
-    let cli = Cli::parse();
 
-    // Handle direct `cheetah foo.ch` → compile to native and exec
-    if let Some(file) = cli.file {
+    // If they passed a bare FILE (no subcommand), we do build‑if‑needed, then exec
+    if let (None, Some(raw)) = (&cli.command, &cli.file) {
         if cli.jit {
-            run_file_jit(&file)?;
+            run_file_jit(raw)?;
         } else {
-            let src = ensure_ch_extension(&file);
-            let path = PathBuf::from(&src);
-            let file_stem = path.file_stem().unwrap();
-            let exe_stem = file_stem.to_string_lossy();
-            // build with default opt=0
-            compile_file(&src, Some(exe_stem.to_string()), 0, true, None)?;
-            println!("▶️  Running {}", exe_stem);
-            std::process::Command::new(exe_stem.as_ref())
-                .status()
-                .expect("failed to run executable");
+            // 1) Normalize & absolutize the source path
+            let src = ensure_ch_extension(raw);
+            let abs_src = std::fs::canonicalize(&src)
+                .map_err(|e| anyhow::anyhow!("Cannot find {}: {}", src, e))?;
+
+            // 2) Prepare build dir
+            let cwd = std::env::current_dir()?;
+            let build_dir = cwd.join(".cheetah_build");
+            std::fs::create_dir_all(&build_dir)?;
+
+            // 3) Figure out the exe's stem & path
+            let exe_stem = abs_src
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
+            let exe_path = build_dir.join(exe_stem);
+
+            if !exe_path.exists() {
+                println!("⚙️  No existing build for `{}`, compiling…", exe_stem);
+                // temporarily cd into the build dir so compile_file spits artifacts here
+                std::env::set_current_dir(&build_dir)?;
+                compile_file(
+                    abs_src.to_string_lossy().as_ref(),
+                    Some(exe_stem.to_string()),
+                    0,
+                    true,
+                    None,
+                )?;
+                // go back so our exec (& anything else) sees the original cwd again
+                std::env::set_current_dir(&cwd)?;
+                println!("⚙️ Built {}", exe_path.display());
+            } else {
+                println!("⏩ Found existing build: {}", exe_path.display());
+            }
+
+            // 4) Exec the AOT binary
+            println!("▶️  Running {}", exe_path.display());
+            let err = std::process::Command::new(&exe_path).exec();
+            eprintln!("❌ failed to exec `{}`: {}", exe_path.display(), err);
+            std::process::exit(1);
         }
         return Ok(());
     }
 
     // Handle subcommands
     match cli.command {
+        // `cheetah run file.ch` → only exec, never recompile
         Some(Commands::Run { file, jit }) => {
             if jit {
                 run_file_jit(&file)?;
             } else {
-                run_file(&file)?;
+                // mirror the same logic: look for ./.cheetah_build/<stem>
+                let src = ensure_ch_extension(&file);
+                let cwd = std::env::current_dir()?;
+                let build_dir = cwd.join(".cheetah_build");
+                let src_path = PathBuf::from(&src);
+                let stem = src_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
+                let exe_path = build_dir.join(stem);
+                if !exe_path.is_file() {
+                    return Err(anyhow::anyhow!(
+                        "No build found for `{}`. Please run `cheetah build {}` first.",
+                        file, file
+                    ));
+                }
+                println!("▶️  Exec'ing {}", exe_path.display());
+                let err = std::process::Command::new(&exe_path).exec();
+                eprintln!("❌ failed to exec `{}`: {}", exe_path.display(), err);
+                std::process::exit(1);
             }
         }
         Some(Commands::Build { file, opt }) => {
-            // 1) Ensure we have .ch
+            // 1) Normalize & absolutize
             let src = ensure_ch_extension(&file);
-            // 2) pick output exe name
-            let exe = PathBuf::from(src.trim_end_matches(".ch"));
-            // 3) compile to object/exe in-place
-            compile_file(&src, Some(exe.to_string_lossy().into()), opt, true, None)?;
-            println!("✅ Built executable: {}", exe.display());
+            let abs_src = std::fs::canonicalize(&src)
+                .map_err(|e| anyhow::anyhow!("Cannot find {}: {}", src, e))?;
+
+            // 2) Prepare build dir
+            let cwd = std::env::current_dir()?;
+            let build_dir = cwd.join(".cheetah_build");
+            std::fs::create_dir_all(&build_dir)?;
+
+            // 3) Decide on exe name & path
+            let exe_stem = abs_src
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
+            let exe_path = build_dir.join(exe_stem);
+
+            // 4) Actually build into .cheetah_build
+            println!("🔨 Building {} → {}", file, exe_path.display());
+            std::env::set_current_dir(&build_dir)?;
+            compile_file(
+                abs_src.to_string_lossy().as_ref(),
+                Some(exe_stem.to_string()),
+                opt,
+                true,
+                None,
+            )?;
+            std::env::set_current_dir(&cwd)?;
+            println!("✅ Built {}", exe_path.display());
         }
 
         Some(Commands::Repl { jit }) => {
@@ -326,43 +401,6 @@ fn ensure_ch_extension(filename: &str) -> String {
     let mut path_with_ext = path.clone();
     path_with_ext.set_extension("ch");
     path_with_ext.to_string_lossy().to_string()
-}
-
-fn run_file(filename: &str) -> Result<()> {
-    let filename = ensure_ch_extension(filename);
-    let source = fs::read_to_string(&filename)
-        .with_context(|| format!("Failed to read file: {}", filename))?;
-
-    // First, lex the file
-    let mut lexer = Lexer::new(&source);
-    let tokens = lexer.tokenize();
-
-    let lexer_errors = lexer.get_errors();
-    if !lexer_errors.is_empty() {
-        eprintln!("Lexical errors found in '{}':", filename);
-        for error in lexer_errors {
-            eprintln!("{}", error);
-        }
-        return Ok(());
-    }
-
-    // Then, parse the tokens with the new parser interface
-    match parser::parse(tokens) {
-        Ok(module) => {
-            println!("Successfully parsed file: {}", filename);
-            println!("AST contains {} top-level statements", module.body.len());
-            // Here you would execute the parsed code in a future interpreter
-        }
-        Err(errors) => {
-            eprintln!("Syntax errors found in '{}':", filename);
-            for error in errors {
-                let formatter = ParseErrorFormatter::new(&error, Some(&source), true);
-                eprintln!("  {}", formatter);
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn run_file_jit(filename: &str) -> Result<()> {
