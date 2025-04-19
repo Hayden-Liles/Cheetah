@@ -131,7 +131,6 @@ impl TypeEnvironment {
     /// Add a variable to the innermost scope
     pub fn add_variable(&mut self, name: String, ty: Type) {
         if let Some(scope) = self.scopes.last_mut() {
-            println!("Adding variable '{}' with type {:?}", name, ty);
             scope.variables.insert(name, ty);
         }
     }
