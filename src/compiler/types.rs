@@ -1286,6 +1286,24 @@ impl Type {
                     })
                 }
             }
+            Type::List(_element_type) => match member {
+                "append" => {
+                    // append takes one argument of any type and returns None
+                    println!("List append method return type: None");
+                    Ok(Type::Function {
+                        param_types: vec![Type::Any],
+                        param_names: vec!["item".to_string()],
+                        has_varargs: false,
+                        has_kwargs: false,
+                        default_values: vec![false],
+                        return_type: Box::new(Type::None),
+                    })
+                }
+                _ => Err(TypeError::NotAClass {
+                    expr_type: self.clone(),
+                    member: member.to_string(),
+                }),
+            },
             Type::Dict(key_type, value_type) => match member {
                 "keys" => {
                     let return_type = Type::List(key_type.clone());
