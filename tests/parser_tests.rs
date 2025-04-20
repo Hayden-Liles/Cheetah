@@ -19,3 +19,11 @@ mod error_recovery_comprehensive;
 // Include the simple error tests
 #[path = "more_tests/parser/simple_error_test.rs"]
 mod simple_error_test;
+
+// Include the print expression tests
+#[path = "more_tests/parser/print_expression_tests.rs"]
+mod print_expression_tests;
+
+// Include the function argument expression tests
+#[path = "more_tests/parser/function_argument_expression_tests.rs"]
+mod function_argument_expression_tests;
