@@ -26,8 +26,16 @@ pub extern "C" fn print_string(value: *const c_char) {
                         super::buffered_output::flush_output_buffer();
                         return;
                     }
+                    "" => {
+                        // Empty string - just print a newline
+                        super::buffered_output::write_newline();
+                        super::buffered_output::flush_output_buffer();
+                        return;
+                    }
                     "Hello World" | "Hello" => {
                         super::buffered_output::write_to_buffer(str_slice);
+                        super::buffered_output::write_newline();
+                        super::buffered_output::flush_output_buffer();
                         return;
                     }
                     _ => {
@@ -38,11 +46,15 @@ pub extern "C" fn print_string(value: *const c_char) {
 
                         if is_repeat {
                             super::buffered_output::write_to_buffer(str_slice);
+                            super::buffered_output::write_newline();
+                            super::buffered_output::flush_output_buffer();
                             return;
                         }
 
                         if !str_slice.contains('\n') {
                             super::buffered_output::write_to_buffer(str_slice);
+                            super::buffered_output::write_newline();
+                            super::buffered_output::flush_output_buffer();
 
                             LAST_PRINTED.with(|last| {
                                 *last.borrow_mut() = str_slice.to_string();
@@ -52,6 +64,8 @@ pub extern "C" fn print_string(value: *const c_char) {
 
                         if let Some(first_line) = str_slice.split('\n').next() {
                             super::buffered_output::write_to_buffer(first_line);
+                            super::buffered_output::write_newline();
+                            super::buffered_output::flush_output_buffer();
 
                             LAST_PRINTED.with(|last| {
                                 *last.borrow_mut() = first_line.to_string();
@@ -123,7 +137,9 @@ pub extern "C" fn println_string(value: *const c_char) {
 #[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn print_int(value: i64) {
-    println!("{}", value);
+    super::buffered_output::write_int_to_buffer(value);
+    super::buffered_output::write_newline();
+    super::buffered_output::flush_output_buffer();
 }
 
 /// Print a float to stdout (C-compatible wrapper)
@@ -131,6 +147,8 @@ pub extern "C" fn print_int(value: i64) {
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn print_float(value: f64) {
     super::buffered_output::write_float_to_buffer(value);
+    super::buffered_output::write_newline();
+    super::buffered_output::flush_output_buffer();
 }
 
 /// Print a boolean to stdout (C-compatible wrapper)
@@ -138,6 +156,8 @@ pub extern "C" fn print_float(value: f64) {
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn print_bool(value: bool) {
     super::buffered_output::write_bool_to_buffer(value);
+    super::buffered_output::write_newline();
+    super::buffered_output::flush_output_buffer();
 }
 
 /// Register print operation functions in the module
