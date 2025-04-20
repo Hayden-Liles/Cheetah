@@ -3,22 +3,19 @@
 pub mod buffered_output;
 pub mod circular_buffer;
 pub mod debug_utils;
-pub mod dict_methods;
-pub mod dict_ops;
+pub mod dict;
 pub mod exception_ops;
 pub mod exception_runtime;
 pub mod exception_state;
 pub mod int_ops;
-pub mod list_ops;
-pub mod list_runtime_impl;
+pub mod list;
 pub mod memory_profiler;
 pub mod min_max_ops;
 pub mod parallel_ops;
 pub mod print_ops;
 pub mod range_iterator;
 pub mod range_ops;
-pub mod string_ops;
-pub mod string_ops_register;
+pub mod string;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -26,13 +23,13 @@ use inkwell::module::Module;
 /// Register all runtime functions in the module
 pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
     // Register list operation functions
-    list_ops::register_list_functions(context, module);
+    list::register_list_functions(context, module);
 
     // Register string operation functions
-    string_ops_register::register_string_functions(context, module);
+    string::register_string_functions(context, module);
 
     // Register dictionary operation functions
-    dict_ops::register_dict_functions(context, module);
+    dict::register_dict_functions(context, module);
 
     // Register integer operation functions
     int_ops::register_int_functions(context, module);

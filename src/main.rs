@@ -1193,7 +1193,7 @@ fn register_runtime_functions(
     engine: &inkwell::execution_engine::ExecutionEngine<'_>,
     module: &inkwell::module::Module<'_>,
 ) -> Result<(), String> {
-    if let Err(e) = cheetah::compiler::runtime::list_runtime_impl::register_list_runtime_functions(
+    if let Err(e) = cheetah::compiler::runtime::list::register_list_runtime_functions(
         engine, module,
     ) {
         println!(
