@@ -94,6 +94,16 @@ impl TypeEnvironment {
             "bool".to_string(),
             Type::function(vec![Type::Any], Type::Bool),
         );
+
+        self.add_function(
+            "min".to_string(),
+            Type::function(vec![Type::Any, Type::Any], Type::Any),
+        );
+
+        self.add_function(
+            "max".to_string(),
+            Type::function(vec![Type::Any, Type::Any], Type::Any),
+        );
     }
 
     /// Push a new scope onto the stack

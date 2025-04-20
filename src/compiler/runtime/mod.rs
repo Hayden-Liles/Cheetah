@@ -12,6 +12,7 @@ pub mod int_ops;
 pub mod list_ops;
 pub mod list_runtime_impl;
 pub mod memory_profiler;
+pub mod min_max_ops;
 pub mod parallel_ops;
 pub mod print_ops;
 pub mod range_iterator;
@@ -53,4 +54,7 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register memory profiler functions
     memory_profiler::register_memory_functions(context, module);
+
+    // Register min and max functions
+    min_max_ops::register_min_max_functions(context, module);
 }

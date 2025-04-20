@@ -2,3 +2,4 @@
 
 pub mod len_function;
 pub mod print_function;
+pub mod min_max_functions;

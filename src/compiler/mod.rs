@@ -9,6 +9,7 @@ pub mod expr_non_recursive;
 pub mod len_call;
 pub mod loop_flattener;
 pub mod loop_optimizer;
+pub mod min_max_call;
 pub mod parallel_loop_optimizer;
 pub mod print_call;
 pub mod runtime;
@@ -296,6 +297,8 @@ impl<'ctx> Compiler<'ctx> {
 
         self.context.register_len_function();
         self.context.register_print_function();
+        self.context.register_min_function();
+        self.context.register_max_function();
     }
 
     fn create_conversion_functions(&mut self) {

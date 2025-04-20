@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use cheetah::compiler::runtime::{
     buffered_output, circular_buffer, parallel_ops,
     print_ops::{print_bool, print_float, print_int, print_string, println_string},
-    range_iterator, range_ops,
+    range_iterator, range_ops, min_max_ops,
 };
 use cheetah::compiler::Compiler;
 use cheetah::formatter::CodeFormatter;
@@ -1337,6 +1337,30 @@ fn register_runtime_functions(
     if let Some(function) = module.get_function("string_length") {
         {
             engine.add_global_mapping(&function, jit_string_length as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("min_int") {
+        {
+            engine.add_global_mapping(&function, min_max_ops::min_int as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("min_float") {
+        {
+            engine.add_global_mapping(&function, min_max_ops::min_float as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("max_int") {
+        {
+            engine.add_global_mapping(&function, min_max_ops::max_int as usize);
+        }
+    }
+
+    if let Some(function) = module.get_function("max_float") {
+        {
+            engine.add_global_mapping(&function, min_max_ops::max_float as usize);
         }
     }
 

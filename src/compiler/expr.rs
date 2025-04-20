@@ -1101,6 +1101,18 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             return self.compile_print_call(&args_slice);
                         }
 
+                        if id == "min" {
+                            let args_slice: Vec<Expr> =
+                                args.iter().map(|arg| (**arg).clone()).collect();
+                            return self.compile_min_call(&args_slice);
+                        }
+
+                        if id == "max" {
+                            let args_slice: Vec<Expr> =
+                                args.iter().map(|arg| (**arg).clone()).collect();
+                            return self.compile_max_call(&args_slice);
+                        }
+
                         if id == "str" && !arg_types.is_empty() {
                             if let Some(func_value) =
                                 self.get_polymorphic_function(id, &arg_types[0])
