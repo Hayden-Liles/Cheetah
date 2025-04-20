@@ -374,11 +374,18 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     }
 
                     Expr::Attribute { value, attr, .. } => {
-                        work_stack.push_front(ExprTask::ProcessAttribute { attr: attr.clone() });
-                        work_stack.push_front(ExprTask::Evaluate(value));
+                        // We'll handle all attribute access the same way
+                        if false {
+                            // This branch is never taken, just here to keep the code structure
+                        } else {
+                            work_stack.push_front(ExprTask::ProcessAttribute { attr: attr.clone() });
+                            work_stack.push_front(ExprTask::Evaluate(value));
+                        }
                     }
 
                     Expr::Call { .. } => {
+                        // We'll handle all calls the same way
+
                         let (call_val, call_type) = self.compile_expr_fallback(expr)?;
                         result_stack.push(ExprResult {
                             value: call_val,
@@ -908,11 +915,45 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                 return Err(format!("Unknown attribute '{}' for dictionary", attr))
                             }
                         },
-                        Type::List(_) => match attr.as_str() {
+                        Type::List(_) | Type::Unknown => match attr.as_str() {
                             "append" | "pop" | "clear" | "extend" | "insert" | "remove"
                             | "sort" => {
-                                let placeholder = self.llvm_context.i32_type().const_int(0, false);
-                                (placeholder.into(), Type::function(vec![], Type::Any))
+                                // Return a function that will be called with the argument
+                                let list_ptr = value_result.value.into_pointer_value();
+
+                                // Create a placeholder function value
+                                let i32_type = self.llvm_context.i32_type();
+                                let placeholder = i32_type.const_int(0, false);
+
+                                // The function type is (Any) -> None since we don't know the element type
+                                let fn_type = Type::function(vec![Type::Any], Type::None);
+
+                                // Get the element type
+                                let element_type_for_call = if let Type::List(element_type) = &value_result.ty {
+                                    if matches!(*element_type.as_ref(), Type::Unknown) {
+                                        Box::new(Type::Any)
+                                    } else {
+                                        element_type.clone()
+                                    }
+                                } else {
+                                    Box::new(Type::Any)
+                                };
+
+                                // Store the list pointer in a global variable so we can access it later
+                                let global_name = format!("list_for_append_{}", self.get_unique_id());
+                                let global = self.module.add_global(
+                                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                    None,
+                                    &global_name,
+                                );
+                                global.set_initializer(&self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null());
+                                global.set_linkage(inkwell::module::Linkage::Private);
+                                self.builder.build_store(global.as_pointer_value(), list_ptr).unwrap();
+
+                                // Store the method name in the context for later use
+                                self.set_pending_method_call(global_name, attr.clone(), element_type_for_call);
+
+                                (placeholder.into(), fn_type)
                             }
                             _ => return Err(format!("Unknown attribute '{}' for list", attr)),
                         },
@@ -932,6 +973,8 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                 (placeholder.into(), Type::Any)
                             }
                         }
+
+
                         _ => {
                             return Err(format!(
                                 "Cannot access attribute '{}' on value of type {:?}",
@@ -978,6 +1021,7 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
         expr: &crate::ast::Expr,
     ) -> Result<(BasicValueEnum<'ctx>, crate::compiler::types::Type), String> {
         match expr {
+
             Expr::ListComp {
                 elt, generators, ..
             } => self.compile_list_comprehension(elt, generators),

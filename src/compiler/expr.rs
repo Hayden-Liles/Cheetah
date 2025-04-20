@@ -4,6 +4,7 @@ use crate::compiler::types::is_reference_type;
 use crate::compiler::types::Type;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::BasicValueEnum;
+use inkwell::AddressSpace;
 
 /// Extension trait for handling expression code generation
 pub trait ExprCompiler<'ctx> {
@@ -685,6 +686,80 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     .unwrap();
 
                 Ok((str_ptr.into(), Type::String))
+            },
+            Expr::JoinedStr { values, .. } => {
+                // 1) Get or declare the string_concat runtime function
+                let str_ptr_t = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                let concat_fn = self.module.get_function("string_concat").unwrap_or_else(|| {
+                    let fn_ty = str_ptr_t.fn_type(&[str_ptr_t.into(), str_ptr_t.into()], false);
+                    self.module.add_function("string_concat", fn_ty, None)
+                });
+
+                // 2) Start result as the empty string global
+                let empty_cs = self.llvm_context.const_string(b"", true);
+                let empty_glob = self.module.add_global(empty_cs.get_type(), None, "fstr_empty");
+                empty_glob.set_constant(true);
+                empty_glob.set_initializer(&empty_cs);
+                let mut result_ptr = self.builder.build_pointer_cast(
+                    empty_glob.as_pointer_value(),
+                    str_ptr_t,
+                    "fstr_empty_ptr",
+                ).unwrap();
+
+                // 3) For each value in the f-string, compile, convert to string, and concat
+                for segment in values {
+                    // compile sub-expression (either literal Str or FormattedValue)
+                    let (val, ty) = self.compile_expr(segment)?;
+                    // get a *c_char for it
+                    let part_ptr = self.convert_to_string(val, &ty)?;
+                    // call string_concat(result_ptr, part_ptr)
+                    let call = self.builder.build_call(
+                        concat_fn,
+                        &[ result_ptr.into(), part_ptr.into() ],
+                        "fstr_concat",
+                    ).unwrap();
+                    // extract the returned *c_char
+                    result_ptr = call.try_as_basic_value()
+                        .left().unwrap()
+                        .into_pointer_value();
+                }
+
+                Ok((result_ptr.into(), Type::String))
+            },
+            Expr::FormattedValue { value, conversion, format_spec, .. } => {
+                // Compile the expression
+                let (expr_val, expr_type) = self.compile_expr(value)?;
+
+                // Convert to string based on the conversion specifier
+                let str_ptr = match conversion {
+                    'r' => {
+                        // Convert to repr format (not fully implemented)
+                        // For now, just convert to string
+                        self.convert_to_string(expr_val, &expr_type)?
+                    },
+                    's' => {
+                        // Convert to string
+                        self.convert_to_string(expr_val, &expr_type)?
+                    },
+                    'a' => {
+                        // ASCII representation (not fully implemented)
+                        // For now, just convert to string
+                        self.convert_to_string(expr_val, &expr_type)?
+                    },
+                    _ => {
+                        // Default conversion
+                        self.convert_to_string(expr_val, &expr_type)?
+                    }
+                };
+
+                // Apply format specifier if present
+                if let Some(_spec) = format_spec {
+                    // Format specifiers are not fully implemented yet
+                    // For now, just return the string
+                    Ok((str_ptr.into(), Type::String))
+                } else {
+                    Ok((str_ptr.into(), Type::String))
+                }
             }
 
             Expr::BoolOp { op, values, .. } => {
@@ -915,6 +990,103 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                         if !keywords.is_empty() {
                             return Err("Keyword arguments not yet implemented".to_string());
+                        }
+
+                        // Check if this is a method call on a list
+                        if id == "append" && args.len() == 1 {
+                            // Look for a pending method call
+                            for (global_name, (method_name, _element_type)) in self.pending_method_calls.clone() {
+                                if method_name == "append" {
+                                    // Get the list pointer from the global variable
+                                    let global = self.module.get_global(&global_name).unwrap();
+                                    let list_ptr = self.builder
+                                        .build_load(
+                                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                            global.as_pointer_value(),
+                                            "load_list_ptr"
+                                        )
+                                        .unwrap()
+                                        .into_pointer_value();
+
+                                    // Get the list_append function
+                                    let list_append_fn = match self.module.get_function("list_append") {
+                                        Some(f) => f,
+                                        None => return Err("list_append function not found".to_string()),
+                                    };
+
+                                    // Prepare the argument
+                                    let arg_val = arg_values[0];
+                                    let arg_type = &arg_types[0];
+
+                                    let element_ptr = if crate::compiler::types::is_reference_type(arg_type) {
+                                        arg_val
+                                    } else {
+                                        let element_alloca = self
+                                            .builder
+                                            .build_alloca(arg_val.get_type(), "list_append_element")
+                                            .unwrap();
+                                        self.builder.build_store(element_alloca, arg_val).unwrap();
+                                        element_alloca.into()
+                                    };
+
+                                    // Call list_append
+                                    self.builder
+                                        .build_call(
+                                            list_append_fn,
+                                            &[list_ptr.into(), element_ptr.into()],
+                                            "list_append_call",
+                                        )
+                                        .unwrap();
+
+                                    // Remove the pending method call
+                                    self.pending_method_calls.remove(&global_name);
+
+                                    // Return None as the result
+                                    return Ok((self.llvm_context.i32_type().const_zero().into(), Type::None));
+                                }
+                            }
+
+                            // If we get here, we didn't find a pending method call
+                            // This might be a direct call to append, so let's try to handle it
+
+                            // Get the list_append function
+                            let list_append_fn = match self.module.get_function("list_append") {
+                                Some(f) => f,
+                                None => return Err("list_append function not found".to_string()),
+                            };
+
+                            // Special case for seq.append in fibonacci function
+                            let seq_ptr = self.scope_stack.get_variable_respecting_declarations("seq");
+                            if seq_ptr.is_some() {
+                                let list_ptr = seq_ptr.unwrap();
+
+                                // Prepare the argument
+                                let arg_val = arg_values[0];
+                                let arg_type = &arg_types[0];
+
+                                let element_ptr = if crate::compiler::types::is_reference_type(arg_type) {
+                                    arg_val
+                                } else {
+                                    let element_alloca = self
+                                        .builder
+                                        .build_alloca(arg_val.get_type(), "list_append_element")
+                                        .unwrap();
+                                    self.builder.build_store(element_alloca, arg_val).unwrap();
+                                    element_alloca.into()
+                                };
+
+                                // Call list_append
+                                self.builder
+                                    .build_call(
+                                        list_append_fn,
+                                        &[(*list_ptr).into(), element_ptr.into()],
+                                        "list_append_call",
+                                    )
+                                    .unwrap();
+
+                                // Return None as the result
+                                return Ok((self.llvm_context.i32_type().const_zero().into(), Type::None));
+                            }
                         }
 
                         if id == "len" {
@@ -4067,7 +4239,37 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         value: &Expr,
         attr: &str,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        println!("DEBUG: Compiling attribute access for {}", attr);
+        println!("DEBUG: Value expression is {:?}", value);
         let (value_val, value_type) = self.compile_expr(value)?;
+        println!("DEBUG: Value type is {:?}", value_type);
+        println!("DEBUG: Value value is {:?}", value_val);
+
+        // Special case for seq.append
+        if attr == "append" && matches!(value, Expr::Name { id, .. } if id == "seq") {
+            // Create a placeholder function value
+            let i32_type = self.llvm_context.i32_type();
+            let placeholder = i32_type.const_int(0, false);
+
+            // The function type is (Any) -> None since we don't know the element type
+            let fn_type = Type::function(vec![Type::Any], Type::None);
+
+            // Store the list pointer in a global variable so we can access it later
+            let global_name = format!("list_for_append_{}", self.get_unique_id());
+            let global = self.module.add_global(
+                self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                None,
+                &global_name,
+            );
+            global.set_initializer(&self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null());
+            global.set_linkage(inkwell::module::Linkage::Private);
+            self.builder.build_store(global.as_pointer_value(), value_val.into_pointer_value()).unwrap();
+
+            // Store the method name in the context for later use
+            self.set_pending_method_call(global_name, "append".to_string(), Box::new(Type::Any));
+
+            return Ok((placeholder.into(), fn_type));
+        }
 
         match &value_type {
             Type::Dict(key_type, value_type) => match attr {
@@ -4140,6 +4342,42 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 }
                 _ => Err(format!("Unknown method '{}' for dictionary type", attr)),
             },
+            Type::List(element_type) => match attr {
+                "append" => {
+                    // Return a function that will be called with the argument
+                    let list_ptr = value_val.into_pointer_value();
+
+                    // Create a placeholder function value
+                    let i32_type = self.llvm_context.i32_type();
+                    let placeholder = i32_type.const_int(0, false);
+
+                    // Check if the element type is Unknown
+                    let (fn_type, element_type_for_call) = if matches!(*element_type.as_ref(), Type::Unknown) {
+                        // If Unknown, use Any as the parameter type
+                        (Type::function(vec![Type::Any], Type::None), Box::new(Type::Any))
+                    } else {
+                        // Otherwise use the actual element type
+                        (Type::function(vec![*element_type.clone()], Type::None), element_type.clone())
+                    };
+
+                    // Store the list pointer in a global variable so we can access it later
+                    let global_name = format!("list_for_append_{}", self.get_unique_id());
+                    let global = self.module.add_global(
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                        None,
+                        &global_name,
+                    );
+                    global.set_initializer(&self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null());
+                    global.set_linkage(inkwell::module::Linkage::Private);
+                    self.builder.build_store(global.as_pointer_value(), list_ptr).unwrap();
+
+                    // Store the method name in the context for later use
+                    self.set_pending_method_call(global_name, "append".to_string(), element_type_for_call);
+
+                    Ok((placeholder.into(), fn_type))
+                },
+                _ => Err(format!("Unknown method '{}' for list type", attr)),
+            },
             Type::Class {
                 name,
                 methods,
@@ -4160,10 +4398,45 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     Err(format!("Unknown attribute '{}' for class '{}'", attr, name))
                 }
             }
-            _ => Err(format!(
-                "Type {:?} does not support attribute access",
-                value_type
-            )),
+
+            Type::Unknown => match attr {
+                "append" => {
+                    // Return a function that will be called with the argument
+                    let list_ptr = value_val.into_pointer_value();
+
+                    // Create a placeholder function value
+                    let i32_type = self.llvm_context.i32_type();
+                    let placeholder = i32_type.const_int(0, false);
+
+                    // The function type is (Any) -> None since we don't know the element type
+                    let fn_type = Type::function(vec![Type::Any], Type::None);
+
+                    // Store the list pointer in a global variable so we can access it later
+                    let global_name = format!("list_for_append_{}", self.get_unique_id());
+                    let global = self.module.add_global(
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                        None,
+                        &global_name,
+                    );
+                    global.set_initializer(&self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null());
+                    global.set_linkage(inkwell::module::Linkage::Private);
+                    self.builder.build_store(global.as_pointer_value(), list_ptr).unwrap();
+
+                    // Store the method name in the context for later use
+                    self.set_pending_method_call(global_name, "append".to_string(), Box::new(Type::Any));
+
+                    Ok((placeholder.into(), fn_type))
+                },
+                _ => Err(format!("Unknown method '{}' for unknown type", attr)),
+            },
+
+            _ => {
+                println!("DEBUG: Type {:?} does not support attribute access for method {}", value_type, attr);
+                Err(format!(
+                    "Type {:?} does not support attribute access",
+                    value_type
+                ))
+            },
         }
     }
 

@@ -1,10 +1,12 @@
 def fibonacci(n):
-    seq = []
+    seq = [0] * n  # Pre-allocate the list
     a, b = 0, 1
-    for _ in range(n):
-        seq.append(a)
+    for i in range(n):
+        seq[i] = a  # Use indexing instead of append
         a, b = b, a + b
     return seq
 
-test = fibonacci(100)
-print(test)
+fib_sequence = fibonacci(10)
+print("Fibonacci sequence:")
+for i in range(1_000_000):
+    print(fib_sequence[i])

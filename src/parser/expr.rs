@@ -1886,8 +1886,149 @@ impl ExprParser for Parser {
             }
             TokenType::FString(value) => {
                 self.advance();
-                Ok(Expr::Str {
-                    value: value.clone(),
+                // Parse the f-string content
+                let mut values = Vec::new();
+                let mut current_text = String::new();
+                let mut i = 0;
+
+                while i < value.len() {
+                    if value[i..].starts_with('{') {
+                        // Check if it's an escaped brace
+                        if i + 1 < value.len() && value[i+1..].starts_with('{') {
+                            current_text.push('{');
+                            i += 2;
+                            continue;
+                        }
+
+                        // Add the text before the expression
+                        if !current_text.is_empty() {
+                            values.push(Box::new(Expr::Str {
+                                value: current_text,
+                                line,
+                                column,
+                            }));
+                            current_text = String::new();
+                        }
+
+                        // Find the closing brace
+                        let mut brace_depth = 1;
+                        let mut expr_start = i + 1;
+                        let mut expr_end = expr_start;
+                        let mut conversion = '\0';
+                        let mut format_spec = None;
+
+                        i += 1; // Skip the opening brace
+
+                        while i < value.len() && brace_depth > 0 {
+                            if value[i..].starts_with('{') {
+                                brace_depth += 1;
+                            } else if value[i..].starts_with('}') {
+                                brace_depth -= 1;
+                                if brace_depth == 0 {
+                                    expr_end = i;
+                                }
+                            } else if value[i..].starts_with('!') && brace_depth == 1 {
+                                // Handle conversion specifier
+                                if i + 1 < value.len() {
+                                    conversion = value.chars().nth(i + 1).unwrap_or('\0');
+                                    expr_end = i;
+                                    i += 2; // Skip '!' and the conversion char
+                                    continue;
+                                }
+                            } else if value[i..].starts_with(':') && brace_depth == 1 {
+                                // Handle format specifier
+                                expr_end = i;
+                                let format_start = i + 1;
+                                let mut format_end = format_start;
+                                i += 1; // Skip ':'
+
+                                while i < value.len() && brace_depth > 0 {
+                                    if value[i..].starts_with('{') {
+                                        brace_depth += 1;
+                                    } else if value[i..].starts_with('}') {
+                                        brace_depth -= 1;
+                                        if brace_depth == 0 {
+                                            format_end = i;
+                                        }
+                                    }
+                                    i += 1;
+                                }
+
+                                let format_str = value[format_start..format_end].to_string();
+                                format_spec = Some(Box::new(Expr::Str {
+                                    value: format_str,
+                                    line,
+                                    column,
+                                }));
+
+                                continue;
+                            }
+
+                            i += 1;
+                        }
+
+                        // Parse the expression
+                        let expr_str = value[expr_start..expr_end].to_string();
+                        let expr_tokens = crate::lexer::Lexer::new(&expr_str).tokenize();
+                        let mut expr_parser = crate::parser::Parser::new(expr_tokens);
+
+                        match expr_parser.parse_expression() {
+                            Ok(expr) => {
+                                values.push(Box::new(Expr::FormattedValue {
+                                    value: Box::new(expr),
+                                    conversion,
+                                    format_spec,
+                                    line,
+                                    column,
+                                }));
+                            },
+                            Err(e) => {
+                                return Err(e);
+                            }
+                        }
+                    } else if value[i..].starts_with('}') {
+                        // Check if it's an escaped brace
+                        if i + 1 < value.len() && value[i+1..].starts_with('}') {
+                            current_text.push('}');
+                            i += 2;
+                            continue;
+                        }
+
+                        // Unmatched closing brace is an error
+                        return Err(crate::parser::ParseError::invalid_syntax(
+                            "Unmatched closing brace in f-string",
+                            line,
+                            column + i,
+                        ));
+                    } else {
+                        current_text.push(value.chars().nth(i).unwrap());
+                        i += 1;
+                    }
+                }
+
+                // Add any remaining text
+                if !current_text.is_empty() {
+                    values.push(Box::new(Expr::Str {
+                        value: current_text,
+                        line,
+                        column,
+                    }));
+                }
+
+                // If there's only one string value, return it directly
+                if values.len() == 1 {
+                    if let Expr::Str { value, .. } = values[0].as_ref() {
+                        return Ok(Expr::Str {
+                            value: value.clone(),
+                            line,
+                            column,
+                        });
+                    }
+                }
+
+                // Otherwise return a JoinedStr
+                Ok(Expr::JoinedStr {
+                    values,
                     line,
                     column,
                 })

@@ -61,6 +61,12 @@ pub struct CompilationContext<'ctx> {
 
     /// Currently active closure environment (if any)
     pub current_environment: Option<String>,
+
+    /// Unique ID counter for generating unique names
+    pub unique_id_counter: usize,
+
+    /// Pending method calls (object_ptr, method_name, element_type)
+    pub pending_method_calls: HashMap<String, (String, Box<Type>)>,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -84,6 +90,8 @@ impl<'ctx> CompilationContext<'ctx> {
             scope_stack: ScopeStack::new(),
             closure_environments: HashMap::new(),
             current_environment: None,
+            unique_id_counter: 0,
+            pending_method_calls: HashMap::new(),
         }
     }
 
@@ -389,6 +397,18 @@ impl<'ctx> CompilationContext<'ctx> {
         self.loop_stack.last().map(|ctx| ctx.break_block)
     }
 
+    /// Get a unique ID for generating unique names
+    pub fn get_unique_id(&mut self) -> usize {
+        let id = self.unique_id_counter;
+        self.unique_id_counter += 1;
+        id
+    }
+
+    /// Set a pending method call for later processing
+    pub fn set_pending_method_call(&mut self, object_ptr: String, method_name: String, element_type: Box<Type>) {
+        self.pending_method_calls.insert(object_ptr, (method_name, element_type));
+    }
+
     /// Convert a value from one type to another
     pub fn convert_type(
         &self,
@@ -616,6 +636,152 @@ impl<'ctx> CompilationContext<'ctx> {
             Ok(ret_val)
         } else {
             Err("Failed to call float_to_string function".to_string())
+        }
+    }
+
+    /// Convert a value to a string
+    pub fn convert_to_string(
+        &self,
+        value: inkwell::values::BasicValueEnum<'ctx>,
+        value_type: &crate::compiler::types::Type,
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        match value_type {
+            crate::compiler::types::Type::String => {
+                if value.is_pointer_value() {
+                    Ok(value.into_pointer_value())
+                } else {
+                    Err("Expected pointer value for string".to_string())
+                }
+            },
+            crate::compiler::types::Type::Int => {
+                let int_to_string_fn = match self.module.get_function("int_to_string") {
+                    Some(f) => f,
+                    None => return Err("int_to_string function not found".to_string()),
+                };
+
+                let call_site_value = self
+                    .builder
+                    .build_call(
+                        int_to_string_fn,
+                        &[value.into()],
+                        "int_to_string_result",
+                    )
+                    .unwrap();
+
+                let result = call_site_value
+                    .try_as_basic_value()
+                    .left()
+                    .ok_or_else(|| "Failed to convert integer to string".to_string())?;
+
+                Ok(result.into_pointer_value())
+            },
+            crate::compiler::types::Type::Float => {
+                let float_to_string_fn = match self.module.get_function("float_to_string") {
+                    Some(f) => f,
+                    None => return Err("float_to_string function not found".to_string()),
+                };
+
+                let call_site_value = self
+                    .builder
+                    .build_call(
+                        float_to_string_fn,
+                        &[value.into()],
+                        "float_to_string_result",
+                    )
+                    .unwrap();
+
+                let result = call_site_value
+                    .try_as_basic_value()
+                    .left()
+                    .ok_or_else(|| "Failed to convert float to string".to_string())?;
+
+                Ok(result.into_pointer_value())
+            },
+            crate::compiler::types::Type::Bool => {
+                // Convert boolean to "True" or "False"
+                let bool_val = value.into_int_value();
+                let true_str = self.llvm_context.const_string("True".as_bytes(), true);
+                let false_str = self.llvm_context.const_string("False".as_bytes(), true);
+
+                let true_global = self.module.add_global(true_str.get_type(), None, "true_str");
+                true_global.set_constant(true);
+                true_global.set_initializer(&true_str);
+
+                let false_global = self.module.add_global(false_str.get_type(), None, "false_str");
+                false_global.set_constant(true);
+                false_global.set_initializer(&false_str);
+
+                let true_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        true_global.as_pointer_value(),
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                        "true_ptr",
+                    )
+                    .unwrap();
+
+                let false_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        false_global.as_pointer_value(),
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                        "false_ptr",
+                    )
+                    .unwrap();
+
+                let cond = self.builder.build_int_compare(
+                    inkwell::IntPredicate::NE,
+                    bool_val,
+                    self.llvm_context.bool_type().const_zero(),
+                    "bool_cmp",
+                ).unwrap();
+
+                let result = self.builder.build_select(
+                    cond,
+                    true_ptr,
+                    false_ptr,
+                    "bool_str",
+                ).unwrap();
+
+                Ok(result.into_pointer_value())
+            },
+            crate::compiler::types::Type::None => {
+                // Convert None to "None"
+                let none_str = self.llvm_context.const_string("None".as_bytes(), true);
+                let none_global = self.module.add_global(none_str.get_type(), None, "none_str");
+                none_global.set_constant(true);
+                none_global.set_initializer(&none_str);
+
+                let none_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        none_global.as_pointer_value(),
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                        "none_ptr",
+                    )
+                    .unwrap();
+
+                Ok(none_ptr)
+            },
+            _ => {
+                // For other types, use a placeholder string
+                let placeholder = format!("<{:?}>", value_type);
+                let placeholder_str = self.llvm_context.const_string(placeholder.as_bytes(), true);
+                let placeholder_global = self.module.add_global(placeholder_str.get_type(), None, "placeholder_str");
+                placeholder_global.set_constant(true);
+                placeholder_global.set_initializer(&placeholder_str);
+
+                let placeholder_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        placeholder_global.as_pointer_value(),
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                        "placeholder_ptr",
+                    )
+                    .unwrap();
+
+                Ok(placeholder_ptr)
+            }
         }
     }
 

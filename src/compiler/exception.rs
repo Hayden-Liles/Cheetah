@@ -348,7 +348,7 @@ impl<'ctx> CompilationContext<'ctx> {
             let (exc_val, _) = self.compile_expr(exc_expr)?;
 
             if !self.is_exception_type(exc_val) {
-                let exc_str = self.convert_to_string(exc_val)?;
+                let exc_str = self.convert_exception_to_string(exc_val)?;
 
                 self.create_exception("Exception", exc_str)
             } else {
@@ -483,12 +483,13 @@ impl<'ctx> CompilationContext<'ctx> {
         string_val.as_pointer_value()
     }
 
-    /// Convert a value to a string
-    fn convert_to_string(
+    /// Convert a value to a string for exception handling
+    fn convert_exception_to_string(
         &self,
-        _value: BasicValueEnum<'ctx>,
+        value: BasicValueEnum<'ctx>,
     ) -> Result<PointerValue<'ctx>, String> {
-        Ok(self.create_string_constant("dummy string"))
+        // Use the general convert_to_string method
+        self.convert_to_string(value, &crate::compiler::types::Type::Any)
     }
 
     /// Create a new exception
