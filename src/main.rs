@@ -1198,6 +1198,15 @@ fn register_runtime_functions(
         );
     }
 
+    if let Err(e) = cheetah::compiler::runtime::print_ops::register_print_runtime_functions(
+        engine, module,
+    ) {
+        println!(
+            "{}",
+            format!("Warning: Failed to register print runtime functions: {}", e).bright_yellow()
+        );
+    }
+
     if let Some(function) = module.get_function("int_to_string") {
         {
             engine.add_global_mapping(&function, jit_int_to_string as usize);
