@@ -1912,7 +1912,7 @@ impl ExprParser for Parser {
 
                         // Find the closing brace
                         let mut brace_depth = 1;
-                        let mut expr_start = i + 1;
+                        let expr_start = i + 1;
                         let mut expr_end = expr_start;
                         let mut conversion = '\0';
                         let mut format_spec = None;

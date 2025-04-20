@@ -4,7 +4,6 @@ use crate::compiler::types::is_reference_type;
 use crate::compiler::types::Type;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::BasicValueEnum;
-use inkwell::AddressSpace;
 
 /// Extension trait for handling expression code generation
 pub trait ExprCompiler<'ctx> {
