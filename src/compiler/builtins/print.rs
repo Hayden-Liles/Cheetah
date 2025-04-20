@@ -57,10 +57,8 @@ impl<'ctx> CompilationContext<'ctx> {
             m.add_function("print_any", t, None);
         }
 
-        // Bind the high‑level `print` to print_string (for overloading simplicity)
-        if let Some(f) = m.get_function("print_string") {
-            self.functions.insert("print".to_string(), f);
-        }
+        // We no longer bind print to a specific function
+        // The compile_print_call method will dispatch to the appropriate function based on type
     }
 
     /// Helper to create a global C string and return its pointer
@@ -280,19 +278,18 @@ impl<'ctx> CompilationContext<'ctx> {
             Type::List(inner) => {
                 self.print_list_value(val_ptr, &*inner, print_str_fn)?;
             }
-            Type::Dict(_k, _v) => {
-                let print_dict_fn = self.module.get_function("print_dict")
-                    .ok_or("print_dict not found".to_string())?;
-                let _ = self.builder.build_call(print_dict_fn, &[val_ptr.into()], "print_dict_val");
+            Type::Dict(k, v) => {
+                self.print_dict_value(val_ptr, &*k, &*v, print_str_fn)?;
             }
             Type::None => {
                 let none_str = self.make_cstr("none_literal_val", b"None\0");
                 let _ = self.builder.build_call(print_str_fn, &[none_str.into()], "print_none_val");
             }
             _ => {
-                // fallback placeholder
-                let ph = self.make_cstr("ph_val", format!("<{:?}>\0", value_type).as_bytes());
-                let _ = self.builder.build_call(print_str_fn, &[ph.into()], "print_ph_val");
+                // For Any or other dynamic types, call the generic runtime catch-all
+                let print_any_fn = self.module.get_function("print_any")
+                    .ok_or("print_any not found".to_string())?;
+                let _ = self.builder.build_call(print_any_fn, &[val_ptr.into()], "print_any_val");
             }
         }
 
@@ -324,172 +321,118 @@ impl<'ctx> CompilationContext<'ctx> {
         element_type: &Type,
         print_str_fn: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
-        // Get list_len function
+        // Helpers
         let list_len_fn = self.module.get_function("list_len")
-            .ok_or("list_len function not found".to_string())?;
-
-        // Get list_get function
+            .ok_or("list_len not found".to_string())?;
         let list_get_fn = self.module.get_function("list_get")
-            .ok_or("list_get function not found".to_string())?;
+            .ok_or("list_get not found".to_string())?;
 
-        // Print opening bracket
-        let open_bracket = self.make_cstr("open_bracket", b"[\0");
-        let _ = self.builder.build_call(print_str_fn, &[open_bracket.into()], "print_open_bracket");
+        // Print "["
+        let open = self.make_cstr("open_bracket", b"[\0");
+        let _ = self.builder.build_call(print_str_fn, &[open.into()], "print_open_bracket");
 
-        // Get list length
-        let len_call = self.builder.build_call(
-            list_len_fn,
-            &[list_ptr.into()],
-            "list_len_call"
-        ).unwrap();
+        // len = list_len(list_ptr)
+        let len_call = self.builder
+            .build_call(list_len_fn, &[list_ptr.into()], "list_len_call")
+            .unwrap();
+        let len_val = len_call.try_as_basic_value().left()
+            .ok_or("Failed to get list length".to_string())?
+            .into_int_value();
 
-        let list_len = len_call.try_as_basic_value().left()
-            .ok_or("Failed to get list length".to_string())?;
+        // Set up loop
+        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let cond_bb = self.llvm_context.append_basic_block(current_fn, "list_print_cond");
+        let body_bb = self.llvm_context.append_basic_block(current_fn, "list_print_body");
+        let exit_bb = self.llvm_context.append_basic_block(current_fn, "list_print_exit");
 
-        let list_len_int = list_len.into_int_value();
+        let idx_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "idx").unwrap();
+        self.builder.build_store(idx_ptr, self.llvm_context.i64_type().const_zero()).unwrap();
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
 
-        // Create basic blocks for the loop
-        let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-        let loop_cond_block = self.llvm_context.append_basic_block(current_function, "list_print_cond");
-        let loop_body_block = self.llvm_context.append_basic_block(current_function, "list_print_body");
-        let loop_exit_block = self.llvm_context.append_basic_block(current_function, "list_print_exit");
-
-        // Create index variable
-        let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "list_print_index").unwrap();
-        self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_zero()).unwrap();
-
-        // Jump to loop condition
-        self.builder.build_unconditional_branch(loop_cond_block).unwrap();
-
-        // Loop condition block
-        self.builder.position_at_end(loop_cond_block);
-        let index = self.builder.build_load(self.llvm_context.i64_type(), index_ptr, "list_index").unwrap();
-        let index_int = index.into_int_value();
-        let cond = self.builder.build_int_compare(
+        // cond block
+        self.builder.position_at_end(cond_bb);
+        let idx = self.builder
+            .build_load(self.llvm_context.i64_type(), idx_ptr, "idx")
+            .unwrap()
+            .into_int_value();
+        let cmp = self.builder.build_int_compare(
             inkwell::IntPredicate::SLT,
-            index_int,
-            list_len_int,
-            "list_index_cond"
+            idx,
+            len_val,
+            "cmp"
         ).unwrap();
-        self.builder.build_conditional_branch(cond, loop_body_block, loop_exit_block).unwrap();
+        self.builder.build_conditional_branch(cmp, body_bb, exit_bb).unwrap();
 
-        // Loop body block
-        self.builder.position_at_end(loop_body_block);
+        // body block
+        self.builder.position_at_end(body_bb);
+        let get_call = self.builder
+            .build_call(list_get_fn, &[list_ptr.into(), idx.into()], "get_elem")
+            .unwrap();
+        let elem_ptr = get_call.try_as_basic_value().left()
+            .ok_or("Failed to get list element".to_string())?
+            .into_pointer_value();
 
-        // Print comma if not the first element
-        let is_first = self.builder.build_int_compare(
-            inkwell::IntPredicate::EQ,
-            index_int,
-            self.llvm_context.i64_type().const_zero(),
-            "is_first_element"
-        ).unwrap();
-
-        let comma_block = self.llvm_context.append_basic_block(current_function, "print_comma");
-        let element_block = self.llvm_context.append_basic_block(current_function, "print_element");
-
-        self.builder.build_conditional_branch(is_first, element_block, comma_block).unwrap();
-
-        // Print comma block
-        self.builder.position_at_end(comma_block);
-        let comma_space = self.make_cstr("comma_space", b", \0");
-        let _ = self.builder.build_call(print_str_fn, &[comma_space.into()], "print_comma_space");
-        self.builder.build_unconditional_branch(element_block).unwrap();
-
-        // Print element block
-        self.builder.position_at_end(element_block);
-
-        // Get list element
-        let get_call = self.builder.build_call(
-            list_get_fn,
-            &[list_ptr.into(), index_int.into()],
-            "list_get_call"
-        ).unwrap();
-
-        // --- real element printing based on element_type ---
-        let elem_val = get_call.try_as_basic_value().left()
-            .ok_or("Failed to get list element".to_string())?;
+        // Print element based on static type
         match element_type {
             Type::Int => {
-                // maybe boxed or direct integer
-                let int_val = if elem_val.is_pointer_value() {
-                    let ptr = elem_val.into_pointer_value();
-                    self.builder.build_load(self.llvm_context.i64_type(), ptr, "load_int_elem")
-                        .unwrap().into_int_value()
-                } else {
-                    elem_val.into_int_value()
-                };
+                let int_val = self.builder.build_load(self.llvm_context.i64_type(), elem_ptr, "load_int")
+                    .unwrap()
+                    .into_int_value();
                 let print_int_fn = self.module.get_function("print_int")
                     .ok_or("print_int not found".to_string())?;
-                let _ = self.builder.build_call(print_int_fn, &[int_val.into()], "print_int_elem");
+                let _ = self.builder.build_call(print_int_fn, &[int_val.into()], "print_int");
             }
             Type::Float => {
-                let float_val = if elem_val.is_pointer_value() {
-                    let ptr = elem_val.into_pointer_value();
-                    self.builder.build_load(self.llvm_context.f64_type(), ptr, "load_float_elem")
-                        .unwrap().into_float_value()
-                } else {
-                    elem_val.into_float_value()
-                };
+                let flt_val = self.builder.build_load(self.llvm_context.f64_type(), elem_ptr, "load_flt")
+                    .unwrap()
+                    .into_float_value();
                 let print_flt_fn = self.module.get_function("print_float")
                     .ok_or("print_float not found".to_string())?;
-                let _ = self.builder.build_call(print_flt_fn, &[float_val.into()], "print_float_elem");
+                let _ = self.builder.build_call(print_flt_fn, &[flt_val.into()], "print_flt");
             }
             Type::Bool => {
-                let bool_val = if elem_val.is_pointer_value() {
-                    let ptr = elem_val.into_pointer_value();
-                    self.builder.build_load(self.llvm_context.bool_type(), ptr, "load_bool_elem")
-                        .unwrap().into_int_value()
-                } else {
-                    elem_val.into_int_value() // 0 or 1
-                };
+                let bool_val = self.builder.build_load(self.llvm_context.bool_type(), elem_ptr, "load_bool")
+                    .unwrap()
+                    .into_int_value();
                 let print_bool_fn = self.module.get_function("print_bool")
                     .ok_or("print_bool not found".to_string())?;
-                let _ = self.builder.build_call(print_bool_fn, &[bool_val.into()], "print_bool_elem");
+                let _ = self.builder.build_call(print_bool_fn, &[bool_val.into()], "print_bool");
             }
             Type::String => {
-                let str_ptr = elem_val.into_pointer_value();
-                let _ = self.builder.build_call(print_str_fn, &[str_ptr.into()], "print_str_elem");
+                // elem_ptr is already a PointerValue
+                let _ = self.builder.build_call(print_str_fn, &[elem_ptr.into()], "print_str");
             }
-            Type::List(_) => {
-                let print_list_fn = self.module.get_function("print_list")
-                    .ok_or("print_list not found".to_string())?;
-                let list_ptr = elem_val.into_pointer_value();
-                let _ = self.builder.build_call(print_list_fn, &[list_ptr.into()], "print_list_elem");
+            Type::List(inner) => {
+                self.print_list_value(elem_ptr, &*inner, print_str_fn)?;
             }
-            Type::Dict(_, _) => {
-                let print_dict_fn = self.module.get_function("print_dict")
-                    .ok_or("print_dict not found".to_string())?;
-                let dict_ptr = elem_val.into_pointer_value();
-                let _ = self.builder.build_call(print_dict_fn, &[dict_ptr.into()], "print_dict_elem");
-            }
-            Type::None => {
-                let none_str = self.make_cstr("none_literal", b"None\0");
-                let _ = self.builder.build_call(print_str_fn, &[none_str.into()], "print_none_elem");
+            Type::Dict(k, v) => {
+                self.print_dict_value(elem_ptr, &*k, &*v, print_str_fn)?;
             }
             _ => {
-                // fallback placeholder
-                let ph = self.make_cstr("ph", format!("<{:?}>\0", element_type).as_bytes());
-                let _ = self.builder.build_call(print_str_fn, &[ph.into()], "print_ph_elem");
+                // dynamic fallback
+                let print_any_fn = self.module.get_function("print_any")
+                    .ok_or("print_any not found".to_string())?;
+                let _ = self.builder.build_call(print_any_fn, &[elem_ptr.into()], "print_any");
             }
         }
 
-        // Increment index
-        let next_index = self.builder.build_int_add(
-            index_int,
+        // comma
+        let comma = self.make_cstr("comma", b", \0");
+        let _ = self.builder.build_call(print_str_fn, &[comma.into()], "print_comma");
+
+        // idx += 1
+        let next_idx = self.builder.build_int_add(
+            idx,
             self.llvm_context.i64_type().const_int(1, false),
-            "next_index"
+            "next_idx"
         ).unwrap();
-        self.builder.build_store(index_ptr, next_index).unwrap();
+        self.builder.build_store(idx_ptr, next_idx).unwrap();
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
 
-        // Jump back to condition
-        self.builder.build_unconditional_branch(loop_cond_block).unwrap();
-
-        // Exit block
-        self.builder.position_at_end(loop_exit_block);
-
-        // Print closing bracket
-        let close_bracket = self.make_cstr("close_bracket", b"]\0");
-        let _ = self.builder.build_call(print_str_fn, &[close_bracket.into()], "print_close_bracket");
+        // exit block: "]"
+        self.builder.position_at_end(exit_bb);
+        let close = self.make_cstr("close_bracket", b"]\0");
+        let _ = self.builder.build_call(print_str_fn, &[close.into()], "print_close_bracket");
 
         Ok(())
     }
@@ -499,19 +442,22 @@ impl<'ctx> CompilationContext<'ctx> {
         &mut self,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        let print_str_fn   = self.module.get_function("print_string")
+        let print_str_fn  = self.module.get_function("print_string")
             .ok_or("print_string not found".to_string())?;
-        let print_int_fn   = self.module.get_function("print_int")
+        let print_int_fn  = self.module.get_function("print_int")
             .ok_or("print_int not found".to_string())?;
-        let print_flt_fn   = self.module.get_function("print_float")
+        let print_flt_fn  = self.module.get_function("print_float")
             .ok_or("print_float not found".to_string())?;
-        let print_bool_fn  = self.module.get_function("print_bool")
+        let print_bool_fn = self.module.get_function("print_bool")
             .ok_or("print_bool not found".to_string())?;
-        let println_fn     = self.module.get_function("println_string")
+        let print_any_fn  = self.module.get_function("print_any")
+            .ok_or("print_any not found".to_string())?;
+        let println_fn    = self.module.get_function("println_string")
             .ok_or("println_string not found".to_string())?;
 
         for (i, arg) in args.iter().enumerate() {
             let (val, ty) = self.compile_expr(arg)?;
+
             match ty {
                 Type::String => {
                     let ptr = val.into_pointer_value();
@@ -527,28 +473,19 @@ impl<'ctx> CompilationContext<'ctx> {
                     let _ = self.builder.build_call(print_bool_fn, &[val.into()], "print_bool");
                 }
                 Type::List(inner) => {
-                    // inline compile‑time list printing
-                    self.print_list_value(
-                        val.into_pointer_value(),
-                        &*inner,
-                        print_str_fn,
-                    )?;
+                    // inline IR recursion
+                    self.print_list_value(val.into_pointer_value(), &*inner, print_str_fn)?;
                 }
-                Type::Dict(key_t, value_t) => {
-                    // inline compile‑time dict printing
-                    self.print_dict_value(
-                        val.into_pointer_value(),
-                        &*key_t,
-                        &*value_t,
-                        print_str_fn,
-                    )?;
+                Type::Dict(k, v) => {
+                    // inline IR recursion
+                    self.print_dict_value(val.into_pointer_value(), &*k, &*v, print_str_fn)?;
                 }
                 Type::None => {
                     let none_str = self.make_cstr("none_literal", b"None\0");
                     let _ = self.builder.build_call(print_str_fn, &[none_str.into()], "print_none");
                 }
                 other => {
-                    // Fallback: print a placeholder for unsupported types
+                    // fallback for truly dynamic
                     let placeholder = format!("<{:?}>\0", other);
                     let ptr = self.make_cstr("ph", placeholder.as_bytes());
                     let _ = self.builder.build_call(print_str_fn, &[ptr.into()], "print_ph");
@@ -557,8 +494,8 @@ impl<'ctx> CompilationContext<'ctx> {
 
             // space between args
             if i + 1 < args.len() {
-                let ptr = self.make_cstr("sp", b" \0");
-                let _ = self.builder.build_call(print_str_fn, &[ptr.into()], "print_sp");
+                let sp = self.make_cstr("sp", b" \0");
+                let _ = self.builder.build_call(print_str_fn, &[sp.into()], "print_sp");
             }
         }
 
@@ -568,4 +505,5 @@ impl<'ctx> CompilationContext<'ctx> {
 
         Ok((self.llvm_context.i64_type().const_zero().into(), Type::None))
     }
+
 }
