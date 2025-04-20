@@ -115,13 +115,21 @@ impl TypeInference {
                     let key_type = if key_types.is_empty() {
                         Type::Any
                     } else {
-                        Self::find_common_type(&key_types)?
+                        // if heterogeneous, just treat keys as Any
+                        match Self::find_common_type(&key_types) {
+                            Ok(kt) => kt,
+                            Err(_) => Type::Any,
+                        }
                     };
 
                     let value_type = if value_types.is_empty() {
                         Type::Any
                     } else {
-                        Self::find_common_type(&value_types)?
+                        // allow mixed‑type dict values by falling back to Any
+                        match Self::find_common_type(&value_types) {
+                            Ok(vt) => vt,
+                            Err(_) => Type::Any,
+                        }
                     };
 
                     Ok(Type::Dict(Box::new(key_type), Box::new(value_type)))
