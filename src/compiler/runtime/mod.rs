@@ -3,9 +3,7 @@
 pub mod buffer;
 pub mod debug_utils;
 pub mod dict;
-pub mod exception_ops;
-pub mod exception_runtime;
-pub mod exception_state;
+pub mod exception;
 pub mod int_ops;
 pub mod list;
 pub mod memory_profiler;
@@ -33,10 +31,10 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
     int_ops::register_int_functions(context, module);
 
     // Register exception handling functions
-    exception_ops::register_exception_functions(context, module);
+    exception::register_exception_functions(context, module);
 
     // Register exception state functions
-    exception_state::register_exception_state_functions(context, module);
+    exception::register_exception_state(context, module);
 
     // Register print functions
     print_ops::register_print_functions(context, module);
