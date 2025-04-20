@@ -7,6 +7,7 @@ use inkwell::AddressSpace;
 
 use std::ptr;
 use std::ffi::c_void;
+use super::list::RawList;
 
 /// C-compatible dict struct
 #[repr(C)]
@@ -24,27 +25,9 @@ pub struct DictEntry {
 }
 
 #[repr(C)]
-pub struct List {
-    length: i64,
-    capacity: i64,
-    data: *mut *mut c_void,
-}
-
-#[repr(C)]
 pub struct Tuple {
     length: i64,
     data: *mut *mut c_void,
-}
-
-/// Create a new list with given capacity (used by dict methods)
-unsafe fn list_with_capacity(capacity: i64) -> *mut List {
-    let list = std::alloc::alloc(std::alloc::Layout::new::<List>()) as *mut List;
-    (*list).length = 0;
-    (*list).capacity = capacity;
-    let layout = std::alloc::Layout::array::<*mut c_void>(capacity as usize).unwrap();
-    (*list).data = std::alloc::alloc(layout) as *mut *mut c_void;
-    std::ptr::write_bytes((*list).data as *mut u8, 0, layout.size());
-    list
 }
 
 unsafe fn tuple_new(length: i64) -> *mut Tuple {
@@ -180,12 +163,15 @@ pub unsafe extern "C" fn dict_free(dict: *mut Dict) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dict_keys(dict: *mut Dict) -> *mut List {
+pub unsafe extern "C" fn dict_keys(dict: *mut Dict) -> *mut RawList {
     if dict.is_null() { return ptr::null_mut(); }
     let count = (*dict).count;
     let entries = (*dict).entries;
-    let keys_list = list_with_capacity(count);
+
+    // Use the list_with_capacity function from list.rs
+    let keys_list = super::list::list_with_capacity(count);
     let mut added = 0;
+
     for i in 0..(*dict).capacity {
         let entry = entries.add(i as usize);
         if !(*entry).key.is_null() {
@@ -193,17 +179,21 @@ pub unsafe extern "C" fn dict_keys(dict: *mut Dict) -> *mut List {
             added += 1;
         }
     }
+
     (*keys_list).length = added;
     keys_list
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dict_values(dict: *mut Dict) -> *mut List {
+pub unsafe extern "C" fn dict_values(dict: *mut Dict) -> *mut RawList {
     if dict.is_null() { return ptr::null_mut(); }
     let count = (*dict).count;
     let entries = (*dict).entries;
-    let values_list = list_with_capacity(count);
+
+    // Use the list_with_capacity function from list.rs
+    let values_list = super::list::list_with_capacity(count);
     let mut added = 0;
+
     for i in 0..(*dict).capacity {
         let entry = entries.add(i as usize);
         if !(*entry).key.is_null() {
@@ -211,17 +201,21 @@ pub unsafe extern "C" fn dict_values(dict: *mut Dict) -> *mut List {
             added += 1;
         }
     }
+
     (*values_list).length = added;
     values_list
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dict_items(dict: *mut Dict) -> *mut List {
+pub unsafe extern "C" fn dict_items(dict: *mut Dict) -> *mut RawList {
     if dict.is_null() { return ptr::null_mut(); }
     let count = (*dict).count;
     let entries = (*dict).entries;
-    let items_list = list_with_capacity(count);
+
+    // Use the list_with_capacity function from list.rs
+    let items_list = super::list::list_with_capacity(count);
     let mut added = 0;
+
     for i in 0..(*dict).capacity {
         let entry = entries.add(i as usize);
         if !(*entry).key.is_null() {
@@ -232,6 +226,7 @@ pub unsafe extern "C" fn dict_items(dict: *mut Dict) -> *mut List {
             added += 1;
         }
     }
+
     (*items_list).length = added;
     items_list
 }

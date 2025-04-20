@@ -39,6 +39,24 @@ impl<'ctx> CompilationContext<'ctx> {
             m.add_function("println_string", t, None);
         }
 
+        // print_list
+        if m.get_function("print_list").is_none() {
+            let t = ctx.void_type().fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
+            m.add_function("print_list", t, None);
+        }
+
+        // print_dict
+        if m.get_function("print_dict").is_none() {
+            let t = ctx.void_type().fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
+            m.add_function("print_dict", t, None);
+        }
+
+        // print_any
+        if m.get_function("print_any").is_none() {
+            let t = ctx.void_type().fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
+            m.add_function("print_any", t, None);
+        }
+
         // Bind the high‑level `print` to print_string (for overloading simplicity)
         if let Some(f) = m.get_function("print_string") {
             self.functions.insert("print".to_string(), f);
