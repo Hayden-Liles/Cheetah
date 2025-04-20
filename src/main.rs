@@ -9,9 +9,9 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 
 use cheetah::compiler::runtime::{
-    buffered_output, circular_buffer, parallel_ops,
+    buffer, parallel_ops,
     print_ops::{print_bool, print_float, print_int, print_string, println_string},
-    range_iterator, range_ops, min_max_ops,
+    range, min_max_ops,
 };
 use cheetah::compiler::Compiler;
 use cheetah::formatter::CodeFormatter;
@@ -377,13 +377,9 @@ fn ensure_ch_extension(filename: &str) -> String {
 }
 
 fn run_file_jit(filename: &str) -> Result<()> {
-    buffered_output::init();
+    buffer::init();
 
-    range_ops::init();
-
-    range_iterator::init();
-
-    circular_buffer::init();
+    range::init();
 
     parallel_ops::init();
 
@@ -438,13 +434,9 @@ fn run_file_jit(filename: &str) -> Result<()> {
                                 main_fn.call();
                                 let elapsed = start_time.elapsed();
 
-                                cheetah::compiler::runtime::buffered_output::flush_output_buffer();
+                                cheetah::compiler::runtime::buffer::flush();
 
-                                cheetah::compiler::runtime::range_ops::cleanup();
-
-                                cheetah::compiler::runtime::range_iterator::cleanup();
-
-                                cheetah::compiler::runtime::circular_buffer::cleanup();
+                                cheetah::compiler::runtime::range::cleanup();
 
                                 cheetah::compiler::runtime::memory_profiler::cleanup();
 
@@ -677,14 +669,9 @@ fn run_repl_jit() -> Result<()> {
                                                         "Executing main function...".bright_green()
                                                     );
                                                     main_fn.call();
-                                                    cheetah::compiler::runtime::buffered_output::flush_output_buffer();
+                                                    cheetah::compiler::runtime::buffer::flush();
 
-                                                    cheetah::compiler::runtime::range_ops::cleanup(
-                                                    );
-
-                                                    cheetah::compiler::runtime::range_iterator::cleanup();
-
-                                                    cheetah::compiler::runtime::circular_buffer::cleanup();
+                                                    cheetah::compiler::runtime::range::cleanup();
 
                                                     cheetah::compiler::runtime::memory_profiler::cleanup();
 
@@ -1222,25 +1209,25 @@ fn register_runtime_functions(
 
     if let Some(function) = module.get_function("range_1") {
         {
-            engine.add_global_mapping(&function, range_ops::range_1 as usize);
+            engine.add_global_mapping(&function, range::range_1 as usize);
         }
     }
 
     if let Some(function) = module.get_function("range_2") {
         {
-            engine.add_global_mapping(&function, range_ops::range_2 as usize);
+            engine.add_global_mapping(&function, range::range_2 as usize);
         }
     }
 
     if let Some(function) = module.get_function("range_3") {
         {
-            engine.add_global_mapping(&function, range_ops::range_3 as usize);
+            engine.add_global_mapping(&function, range::range_3 as usize);
         }
     }
 
     if let Some(function) = module.get_function("range_cleanup") {
         {
-            engine.add_global_mapping(&function, range_ops::range_cleanup as usize);
+            engine.add_global_mapping(&function, range::range_cleanup as usize);
         }
     }
 

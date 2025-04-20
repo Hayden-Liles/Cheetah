@@ -1,7 +1,6 @@
 // Runtime support module for the Cheetah compiler
 
-pub mod buffered_output;
-pub mod circular_buffer;
+pub mod buffer;
 pub mod debug_utils;
 pub mod dict;
 pub mod exception_ops;
@@ -13,8 +12,7 @@ pub mod memory_profiler;
 pub mod min_max_ops;
 pub mod parallel_ops;
 pub mod print_ops;
-pub mod range_iterator;
-pub mod range_ops;
+pub mod range;
 pub mod string;
 
 use inkwell::context::Context;
@@ -44,10 +42,7 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
     print_ops::register_print_functions(context, module);
 
     // Register range functions
-    range_ops::register_range_functions(context, module);
-
-    // Register range iterator functions
-    range_iterator::register_range_iterator_functions(context, module);
+    range::register_range_functions(context, module);
 
     // Register memory profiler functions
     memory_profiler::register_memory_functions(context, module);
