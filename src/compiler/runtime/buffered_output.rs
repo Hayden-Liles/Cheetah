@@ -219,10 +219,20 @@ pub fn write_int_to_buffer(value: i64) {
     }
 
     let formatter_idx = INT_FORMATTER_INDEX.fetch_add(1, Ordering::Relaxed) % 10;
+
+    // Check if formatters are initialized, if not initialize them
+    unsafe {
+        if INT_FORMATTERS[formatter_idx].is_none() {
+            for i in 0..10 {
+                INT_FORMATTERS[i] = Some(itoa::Buffer::new());
+            }
+        }
+    }
+
     let s = unsafe {
         INT_FORMATTERS[formatter_idx]
             .as_mut()
-            .expect("Formatter not initialized")
+            .unwrap()
             .format(value)
     };
 
