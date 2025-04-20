@@ -834,43 +834,21 @@ impl ExprParser for Parser {
                 let arg = Box::new(self.parse_or_test()?);
                 keywords.push((None, arg));
                 saw_keyword = true;
-            } else if self.check_identifier() {
+            } else if self.check_identifier() && self.peek_matches(TokenType::Assign) {
+                // keyword argument:  name = expr
                 let id_token = self.current.clone().unwrap();
-                let id_line = id_token.line;
-                let id_column = id_token.column;
-                let id_name = match &id_token.token_type {
-                    TokenType::Identifier(name) => name.clone(),
-                    _ => unreachable!(),
-                };
+                let id_name = if let TokenType::Identifier(n) = &id_token.token_type { n.clone() } else { unreachable!() };
 
-                self.advance();
-
-                let is_keyword = self.check(TokenType::Assign);
-
-                if is_keyword {
-                    self.advance();
-
-                    let value = Box::new(self.parse_or_test()?);
-                    keywords.push((Some(id_name), value));
-                    saw_keyword = true;
-                } else if !saw_keyword {
-                    let name_expr = Expr::Name {
-                        id: id_name,
-                        ctx: ExprContext::Load,
-                        line: id_line,
-                        column: id_column,
-                    };
-
-                    args.push(Box::new(name_expr));
-                } else {
-                    return Err(ParseError::invalid_syntax(
-                        "Positional argument after keyword argument",
-                        id_line,
-                        id_column,
-                    ));
-                }
+                self.advance();             // consume the name
+                self.advance();             // consume the '='
+                let value = Box::new(self.parse_or_test()?);
+                keywords.push((Some(id_name), value));
+                saw_keyword = true;
             } else if !saw_keyword {
-                args.push(Box::new(self.parse_or_test()?));
+                // everything else (including identifiers, binary ops, comparisons,
+                // string‑concats, etc.) is a full expression
+                let expr = self.parse_or_test()?;
+                args.push(Box::new(expr));
             } else {
                 return Err(ParseError::invalid_syntax(
                     "Positional argument after keyword argument",
