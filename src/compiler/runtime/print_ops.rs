@@ -5,6 +5,7 @@ use std::os::raw::c_char;
 use crate::compiler::runtime::list;
 use crate::compiler::runtime::list::RawList;
 use crate::compiler::runtime::dict::Dict;
+use crate::compiler::runtime::value::{Value, ValueTag};
 
 // Cache for the most recently printed string to optimize repeated prints
 thread_local! {
@@ -111,9 +112,9 @@ pub unsafe extern "C" fn print_list(lst: *mut RawList) {
     for i in 0..len {
         // get element pointer
         let elem = list::list_get(lst, i);
-        // here we assume value is a pointer tagged to indicate its true type;
-        // for simplicity, call a generic print_any(elem)
-        print_any(elem as *const c_char);
+        // here we assume value is a pointer tagged to indicate its true type
+        let elem_value = elem as *const Value;
+        print_any(elem_value);
         if i + 1 < len {
             super::buffer::write_str(", ");
         }
@@ -131,9 +132,11 @@ pub unsafe extern "C" fn print_dict(dict: *mut Dict) {
     for i in 0..len {
         let key = list::list_get(keys, i);
         let val = super::dict::dict_get(dict, key);
-        print_any(key as *const c_char);
+        let key_value = key as *const Value;
+        let val_value = val as *const Value;
+        print_any(key_value);
         super::buffer::write_str(": ");
-        print_any(val as *const c_char);
+        print_any(val_value);
         if i + 1 < len {
             super::buffer::write_str(", ");
         }
@@ -141,19 +144,41 @@ pub unsafe extern "C" fn print_dict(dict: *mut Dict) {
     super::buffer::write_str("}");
 }
 
-/// A catch-all runtime printer that inspects the c_char pointer for type
+/// A catch-all runtime printer that inspects the Value for its type
 #[no_mangle]
-pub unsafe extern "C" fn print_any(ptr: *const c_char) {
-    if ptr.is_null() {
+pub unsafe extern "C" fn print_any(val: *const Value) {
+    if val.is_null() {
         super::buffer::write_str("None");
         return;
     }
-    let s = CStr::from_ptr(ptr).to_string_lossy();
-    // simple heuristic: if it starts with [ it's a list, if { it's dict else string
-    match s.chars().next() {
-        Some('[') => super::buffer::write_str(&s),
-        Some('{') => super::buffer::write_str(&s),
-        _ => super::buffer::write_str(&s),
+    match (*val).tag {
+        ValueTag::None => super::buffer::write_str("None"),
+        ValueTag::Int => {
+            let v = *((*val).data as *const i64);
+            super::buffer::write_int(v);
+        }
+        ValueTag::Float => {
+            let v = *((*val).data as *const f64);
+            super::buffer::write_float(v);
+        }
+        ValueTag::Bool => {
+            let v = *((*val).data as *const bool);
+            super::buffer::write_bool(v);
+        }
+        ValueTag::Str => {
+            let s = CStr::from_ptr((*val).data as *const c_char).to_string_lossy();
+            super::buffer::write_str(&s);
+        }
+        ValueTag::List => {
+            print_list((*val).data as *mut RawList);
+        }
+        ValueTag::Dict => {
+            print_dict((*val).data as *mut Dict);
+        }
+        ValueTag::Tuple => {
+            // For tuples, we'll print them as lists for now
+            print_list((*val).data as *mut RawList);
+        }
     }
 }
 
