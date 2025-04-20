@@ -1,199 +1,228 @@
-// optimized_loop_optimizer.rs - High-performance loop optimizations
-
-use inkwell::basic_block::BasicBlock;
-use inkwell::builder::Builder;
-use inkwell::context::Context;
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue};
-use inkwell::IntPredicate;
-
-// Import memory profiler for dynamic chunk sizing
+use inkwell::{
+    basic_block::BasicBlock,
+    builder::Builder,
+    context::Context,
+    module::Module,
+    values::{BasicValueEnum, FunctionValue, IntValue},
+    IntPredicate,
+};
 use crate::compiler::runtime::memory_profiler;
 
-// Constants for loop optimization
+// === Loop Flattening ===
+
+/// Flattens nested loops to prevent stack overflow
+pub struct LoopFlattener<'ctx> {
+    builder: &'ctx Builder<'ctx>,
+    context: &'ctx Context,
+}
+
+impl<'ctx> LoopFlattener<'ctx> {
+    /// Create a new loop flattener
+    pub fn new(builder: &'ctx Builder<'ctx>, context: &'ctx Context) -> Self {
+        Self { builder, context }
+    }
+
+    /// Check if a loop should be flattened
+    pub fn should_flatten_loop(&self, loop_block: BasicBlock<'ctx>) -> bool {
+        let mut contains_loop = false;
+        let mut current_inst = loop_block.get_first_instruction();
+        while let Some(inst) = current_inst {
+            if inst.get_opcode() == inkwell::values::InstructionOpcode::Br {
+                if let Some(target) = inst.get_operand(0) {
+                    if let Some(block) = target.right() {
+                        if let Ok(name) = block.get_name().to_str() {
+                            if name.contains("loop") || name.contains("for") {
+                                contains_loop = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            current_inst = inst.get_next_instruction();
+        }
+        contains_loop
+    }
+
+    /// Flatten a nested loop into a single loop with state variables
+    pub fn flatten_nested_loop(
+        &self,
+        function: FunctionValue<'ctx>,
+        outer_loop_var: BasicValueEnum<'ctx>,
+        outer_start: IntValue<'ctx>,
+        outer_end: IntValue<'ctx>,
+        outer_step: IntValue<'ctx>,
+        inner_loop_var: BasicValueEnum<'ctx>,
+        inner_start: IntValue<'ctx>,
+        inner_end: IntValue<'ctx>,
+        inner_step: IntValue<'ctx>,
+        _body_block: BasicBlock<'ctx>,
+        exit_block: BasicBlock<'ctx>,
+    ) -> BasicBlock<'ctx> {
+        let i64_t = self.context.i64_type();
+        let entry = self.builder.get_insert_block().unwrap();
+
+        let init_bb = self.context.append_basic_block(function, "flat_init");
+        let cond_bb = self.context.append_basic_block(function, "flat_cond");
+        let body_bb = self.context.append_basic_block(function, "flat_body");
+        let inc_bb = self.context.append_basic_block(function, "flat_inc");
+
+        self.builder.build_unconditional_branch(init_bb).unwrap();
+        self.builder.position_at_end(init_bb);
+
+        let outer_ptr = self.builder.build_alloca(i64_t, "outer_ptr").unwrap();
+        let inner_ptr = self.builder.build_alloca(i64_t, "inner_ptr").unwrap();
+        self.builder.build_store(outer_ptr, outer_start).unwrap();
+        self.builder.build_store(inner_ptr, inner_start).unwrap();
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        self.builder.position_at_end(cond_bb);
+        let outer_val = self.builder.build_load(i64_t, outer_ptr, "ov").unwrap().into_int_value();
+        let inner_val = self.builder.build_load(i64_t, inner_ptr, "iv").unwrap().into_int_value();
+
+        let oc = self.builder
+            .build_int_compare(IntPredicate::SLT, outer_val, outer_end, "oc")
+            .unwrap();
+        let ic = self.builder
+            .build_int_compare(IntPredicate::SLT, inner_val, inner_end, "ic")
+            .unwrap();
+        let cc = self.builder.build_and(oc, ic, "cc").unwrap();
+        self.builder.build_conditional_branch(cc, body_bb, exit_block).unwrap();
+
+        self.builder.position_at_end(body_bb);
+        self.builder.build_store(outer_loop_var.into_pointer_value(), outer_val).unwrap();
+        self.builder.build_store(inner_loop_var.into_pointer_value(), inner_val).unwrap();
+        self.builder.build_unconditional_branch(inc_bb).unwrap();
+
+        self.builder.position_at_end(inc_bb);
+        let next_inner = self.builder.build_int_add(inner_val, inner_step, "ni").unwrap();
+        self.builder.build_store(inner_ptr, next_inner).unwrap();
+
+        let done_inner = self.builder
+            .build_int_compare(IntPredicate::SGE, next_inner, inner_end, "done_i")
+            .unwrap();
+        let reset_bb = self.context.append_basic_block(function, "reset_i");
+        let cont_bb = self.context.append_basic_block(function, "cont");
+
+        self.builder.build_conditional_branch(done_inner, reset_bb, cont_bb).unwrap();
+        self.builder.position_at_end(reset_bb);
+        self.builder.build_store(inner_ptr, inner_start).unwrap();
+        let next_outer = self.builder.build_int_add(outer_val, outer_step, "no").unwrap();
+        self.builder.build_store(outer_ptr, next_outer).unwrap();
+        self.builder.build_unconditional_branch(cont_bb).unwrap();
+
+        self.builder.position_at_end(cont_bb);
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        entry
+    }
+}
+
+// === Loop Optimization ===
+
 const MIN_CHUNK_SIZE: u64 = 5000;
 const MAX_CHUNK_SIZE: u64 = 200000;
 const DEFAULT_CHUNK_SIZE: u64 = 50000;
-
-// Threshold for large ranges that need special handling
 const LARGE_RANGE_THRESHOLD: u64 = 1000000;
 const VERY_LARGE_RANGE_THRESHOLD: u64 = 10000000;
-
-// Constants for adaptive chunk sizing
 const ADAPTIVE_CHUNK_FACTOR: f64 = 0.8;
 const MEMORY_SCALING_FACTOR: f64 = 0.6;
 const SYSTEM_MEMORY_THRESHOLD: f64 = 0.8;
-
-// Constants for loop unrolling
 const UNROLL_THRESHOLD: u64 = 16;
 const PARTIAL_UNROLL_FACTOR: u64 = 4;
 
-/// Loop optimization helper functions
+/// High-performance loop optimizer
 pub struct LoopOptimizer<'ctx> {
     builder: &'ctx Builder<'ctx>,
     context: &'ctx Context,
 }
 
 impl<'ctx> LoopOptimizer<'ctx> {
-    /// Create a new loop optimizer
     pub fn new(builder: &'ctx Builder<'ctx>, context: &'ctx Context) -> Self {
         Self { builder, context }
     }
 
-    /// Check if a loop should be chunked based on its range
-    pub fn should_chunk_loop(&self, start_val: IntValue<'ctx>, end_val: IntValue<'ctx>) -> bool {
-        if let (Some(start_const), Some(end_const)) = (
-            start_val.get_sign_extended_constant(),
-            end_val.get_sign_extended_constant(),
-        ) {
-            if end_const > start_const {
-                let range_size = (end_const - start_const) as u64;
-                return range_size > MIN_CHUNK_SIZE;
-            }
+    /// Decide if chunking is needed
+    pub fn should_chunk_loop(&self, start: IntValue<'ctx>, end: IntValue<'ctx>) -> bool {
+        if let (Some(s), Some(e)) = (start.get_sign_extended_constant(), end.get_sign_extended_constant()) {
+            return e > s && (e - s) as u64 > MIN_CHUNK_SIZE;
         }
-
         false
     }
 
-    /// Calculate an appropriate chunk size based on the range size and system conditions
-    pub fn calculate_chunk_size(&self, start_val: IntValue<'ctx>, end_val: IntValue<'ctx>) -> u64 {
-        let range_size = if let (Some(start_const), Some(end_const)) = (
-            start_val.get_sign_extended_constant(),
-            end_val.get_sign_extended_constant(),
-        ) {
-            if end_const > start_const {
-                (end_const - start_const) as u64
-            } else {
-                return MIN_CHUNK_SIZE;
-            }
+    /// Compute chunk size
+    pub fn calculate_chunk_size(&self, start: IntValue<'ctx>, end: IntValue<'ctx>) -> u64 {
+        let range = if let (Some(s), Some(e)) = (start.get_sign_extended_constant(), end.get_sign_extended_constant()) {
+            if e > s { (e - s) as u64 } else { 0 }
         } else {
             return self.adjust_chunk_size_for_memory(DEFAULT_CHUNK_SIZE);
         };
 
-        let base_chunk_size = self.get_base_chunk_size(range_size);
-
-        let memory_adjusted_size = self.adjust_chunk_size_for_memory(base_chunk_size);
-
-        let final_chunk_size = self.adjust_for_complexity(memory_adjusted_size);
-
-        if cfg!(debug_assertions) {
-            println!(
-                "[CHUNK SIZE] Range: {}, Base: {}, Memory-adjusted: {}, Final: {}",
-                range_size, base_chunk_size, memory_adjusted_size, final_chunk_size
-            );
-        }
-
-        final_chunk_size
+        let base = self.get_base_chunk_size(range);
+        let mem_adj = self.adjust_chunk_size_for_memory(base);
+        self.adjust_for_complexity(mem_adj)
     }
 
-    /// Get the base chunk size based on the range size
-    fn get_base_chunk_size(&self, range_size: u64) -> u64 {
-        if range_size > VERY_LARGE_RANGE_THRESHOLD {
+    fn get_base_chunk_size(&self, range: u64) -> u64 {
+        if range > VERY_LARGE_RANGE_THRESHOLD {
             MAX_CHUNK_SIZE
-        } else if range_size > LARGE_RANGE_THRESHOLD {
-            let sqrt_factor = (range_size as f64).sqrt() as u64 / 50;
-            let adjusted_size = DEFAULT_CHUNK_SIZE * sqrt_factor.max(1);
-            adjusted_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
-        } else if range_size > MAX_CHUNK_SIZE {
-            let power_of_two = (range_size as f64).log2().floor();
-            (2.0f64.powf(power_of_two) as u64).clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
-        } else if range_size > MIN_CHUNK_SIZE {
-            range_size
+        } else if range > LARGE_RANGE_THRESHOLD {
+            let sqrt = ((range as f64).sqrt() as u64).max(1) / 50;
+            (DEFAULT_CHUNK_SIZE * sqrt).clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
+        } else if range > MAX_CHUNK_SIZE {
+            let pow2 = (range as f64).log2().floor() as u32;
+            (2u64.pow(pow2)).clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
+        } else if range > MIN_CHUNK_SIZE {
+            range
         } else {
             MIN_CHUNK_SIZE
         }
     }
 
-    /// Adjust chunk size based on current memory usage
-    fn adjust_chunk_size_for_memory(&self, chunk_size: u64) -> u64 {
-        let current_memory = memory_profiler::get_current_memory_usage() as f64;
-        let peak_memory = memory_profiler::get_peak_memory_usage() as f64;
-
-        if current_memory == 0.0 || peak_memory == 0.0 {
-            return chunk_size;
-        }
-
-        let memory_ratio = current_memory / peak_memory;
-
-        if memory_ratio > SYSTEM_MEMORY_THRESHOLD {
-            let scale_factor =
-                1.0 - ((memory_ratio - SYSTEM_MEMORY_THRESHOLD) / (1.0 - SYSTEM_MEMORY_THRESHOLD));
-            let scaled_size = (chunk_size as f64 * scale_factor * MEMORY_SCALING_FACTOR) as u64;
-
-            scaled_size.max(MIN_CHUNK_SIZE)
+    fn adjust_chunk_size_for_memory(&self, size: u64) -> u64 {
+        let cur = memory_profiler::get_current_memory_usage() as f64;
+        let peak = memory_profiler::get_peak_memory_usage() as f64;
+        if cur == 0.0 || peak == 0.0 { return size; }
+        let ratio = cur / peak;
+        if ratio > SYSTEM_MEMORY_THRESHOLD {
+            let scale = 1.0 - ((ratio - SYSTEM_MEMORY_THRESHOLD) / (1.0 - SYSTEM_MEMORY_THRESHOLD));
+            ((size as f64 * scale * MEMORY_SCALING_FACTOR) as u64).max(MIN_CHUNK_SIZE)
         } else {
-            chunk_size
+            size
         }
     }
 
-    /// Adjust chunk size based on estimated loop complexity
-    fn adjust_for_complexity(&self, chunk_size: u64) -> u64 {
-        let adjusted_size = (chunk_size as f64 * ADAPTIVE_CHUNK_FACTOR) as u64;
-
-        let remainder = adjusted_size % PARTIAL_UNROLL_FACTOR;
-        let size = if remainder == 0 {
-            adjusted_size
-        } else {
-            adjusted_size + (PARTIAL_UNROLL_FACTOR - remainder)
-        };
-
-        size.max(MIN_CHUNK_SIZE)
+    fn adjust_for_complexity(&self, size: u64) -> u64 {
+        let adj = (size as f64 * ADAPTIVE_CHUNK_FACTOR) as u64;
+        let rem = adj % PARTIAL_UNROLL_FACTOR;
+        let final_size = if rem == 0 { adj } else { adj + (PARTIAL_UNROLL_FACTOR - rem) };
+        final_size.max(MIN_CHUNK_SIZE)
     }
 
-    /// Optimize a range-based for loop
+    /// Main entry: unroll, then chunk, then simple optimize
     pub fn optimize_range_loop(
         &self,
         function: FunctionValue<'ctx>,
-        start_val: IntValue<'ctx>,
-        end_val: IntValue<'ctx>,
-        step_val: IntValue<'ctx>,
-        loop_var_ptr: BasicValueEnum<'ctx>,
-        body_block: BasicBlock<'ctx>,
-        exit_block: BasicBlock<'ctx>,
+        start: IntValue<'ctx>,
+        end: IntValue<'ctx>,
+        step: IntValue<'ctx>,
+        var_ptr: BasicValueEnum<'ctx>,
+        body: BasicBlock<'ctx>,
+        exit: BasicBlock<'ctx>
     ) -> BasicBlock<'ctx> {
-        let entry_block = self.builder.get_insert_block().unwrap();
-
-        if let Some(unrolled_entry) = self.try_unroll_loop(
-            function,
-            start_val,
-            end_val,
-            step_val,
-            loop_var_ptr,
-            body_block,
-            exit_block,
-        ) {
-            return unrolled_entry;
+        if let Some(unrolled) = self.try_unroll_loop(function, start, end, step, var_ptr, body, exit) {
+            return unrolled;
         }
-
-        if self.should_chunk_loop(start_val, end_val) {
-            return self.create_chunked_loop(
-                function,
-                start_val,
-                end_val,
-                step_val,
-                loop_var_ptr,
-                body_block,
-                exit_block,
-            );
+        if self.should_chunk_loop(start, end) {
+            return self.create_chunked_loop(function, start, end, step, var_ptr, body, exit);
         }
-
-        let inc_block = self.context.append_basic_block(function, "opt_inc_block");
-
-        self.optimize_loop_condition(
-            function,
-            start_val,
-            end_val,
-            step_val,
-            loop_var_ptr,
-            body_block,
-            exit_block,
-            inc_block,
-        );
-
-        entry_block
+        let inc_bb = self.context.append_basic_block(function, "opt_inc");
+        self.optimize_loop_condition(function, start, end, step, var_ptr, body, exit, inc_bb);
+        self.builder.get_insert_block().unwrap()
     }
 
-    /// Create a chunked loop to prevent stack overflow
-    fn create_chunked_loop(
+     /// Create a chunked loop to prevent stack overflow
+     fn create_chunked_loop(
         &self,
         function: FunctionValue<'ctx>,
         start_val: IntValue<'ctx>,
@@ -375,8 +404,6 @@ impl<'ctx> LoopOptimizer<'ctx> {
         entry_block
     }
 
-    /// Try to unroll a loop if it has constant bounds and a small iteration count
-    /// Returns Some(entry_block) if unrolling was successful, None otherwise
     fn try_unroll_loop(
         &self,
         function: FunctionValue<'ctx>,
@@ -736,5 +763,80 @@ impl<'ctx> LoopOptimizer<'ctx> {
             .unwrap();
 
         self.builder.build_unconditional_branch(cond_block).unwrap();
+    }
+}
+
+// === Parallel Loop Optimization ===
+
+const MIN_PARALLEL_SIZE: u64 = 1000;
+
+/// Parallel loop optimizer using Rayon-like dispatch
+pub struct ParallelLoopOptimizer<'ctx> {
+    builder: &'ctx Builder<'ctx>,
+    context: &'ctx Context,
+    module: &'ctx Module<'ctx>,
+}
+
+impl<'ctx> ParallelLoopOptimizer<'ctx> {
+    pub fn new(builder: &'ctx Builder<'ctx>, context: &'ctx Context, module: &'ctx Module<'ctx>) -> Self {
+        Self { builder, context, module }
+    }
+
+    pub fn should_parallelize(&self, start: IntValue<'ctx>, end: IntValue<'ctx>) -> bool {
+        if let (Some(s), Some(e)) = (start.get_sign_extended_constant(), end.get_sign_extended_constant()) {
+            e > s && (e - s) as u64 >= MIN_PARALLEL_SIZE
+        } else {
+            false
+        }
+    }
+
+    pub fn create_parallel_loop(
+        &self,
+        function: FunctionValue<'ctx>,
+        start: IntValue<'ctx>,
+        end: IntValue<'ctx>,
+        step: IntValue<'ctx>,
+        _var_ptr: BasicValueEnum<'ctx>,
+        body_bb: BasicBlock<'ctx>,
+        exit_bb: BasicBlock<'ctx>,
+    ) -> BasicBlock<'ctx> {
+        let i64_t = self.context.i64_type();
+        let entry = self.builder.get_insert_block().unwrap();
+        let par_bb = self.context.append_basic_block(function, "parallel_loop");
+        self.builder.build_unconditional_branch(par_bb).unwrap();
+        self.builder.position_at_end(par_bb);
+
+        let fn_ty = self.context.void_type().fn_type(&[i64_t.into()], false);
+        let loop_fn = self.module.add_function(
+            &format!("parallel_body_{}", function.get_name().to_str().unwrap_or("fn")),
+            fn_ty,
+            None,
+        );
+        let entry_fn_bb = self.context.append_basic_block(loop_fn, "entry");
+        let ret_bb = self.builder.get_insert_block().unwrap();
+        self.builder.position_at_end(entry_fn_bb);
+
+        let idx = loop_fn.get_first_param().unwrap().into_int_value();
+        let glob = self.module.add_global(i64_t, None, &format!("gvar_{}", function.get_name().to_str().unwrap_or("fn")));
+        glob.set_initializer(&i64_t.const_zero());
+        self.builder.build_store(glob.as_pointer_value(), idx).unwrap();
+        self.builder.build_unconditional_branch(body_bb).unwrap();
+
+        self.builder.position_at_end(ret_bb);
+        let pr_fn = self.module.get_function("parallel_range_for_each").unwrap_or_else(|| {
+            let ty = self.context.void_type().fn_type(
+                &[i64_t.into(), i64_t.into(), i64_t.into(), self.context.ptr_type(inkwell::AddressSpace::default()).into()],
+                false,
+            );
+            self.module.add_function("parallel_range_for_each", ty, None)
+        });
+        self.builder.build_call(
+            pr_fn,
+            &[start.into(), end.into(), step.into(), loop_fn.as_global_value().as_pointer_value().into()],
+            "call_par",
+        ).unwrap();
+        self.builder.build_unconditional_branch(exit_bb).unwrap();
+
+        entry
     }
 }
