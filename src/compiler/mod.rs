@@ -292,8 +292,7 @@ impl<'ctx> Compiler<'ctx> {
 
         self.context.register_len_function();
         self.context.register_print_function();
-        self.context.register_min_function();
-        self.context.register_max_function();
+        self.context.register_min_max_functions();
     }
 
     fn create_conversion_functions(&mut self) {
