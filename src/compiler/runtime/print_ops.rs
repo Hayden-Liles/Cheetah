@@ -82,10 +82,14 @@ pub extern "C" fn println_string(value: *const c_char) {
 pub extern "C" fn print_int(value: i64) {
     super::buffered_output::write_int_to_buffer(value);
 }
+
+/// Print a float to stdout (C-compatible wrapper)
 #[no_mangle]
 pub extern "C" fn print_float(value: f64) {
     super::buffered_output::write_float_to_buffer(value);
 }
+
+/// Print a boolean to stdout (C-compatible wrapper)
 #[no_mangle]
 pub extern "C" fn print_bool(value: bool) {
     super::buffered_output::write_bool_to_buffer(value);

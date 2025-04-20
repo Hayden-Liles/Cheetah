@@ -34,7 +34,6 @@ impl<'ctx> CompilationContext<'ctx> {
         let println_fn = self.module.get_function("println_string")
             .ok_or("println_string function not found".to_string())?;
 
-        // Emit each argument without newline, separated by spaces
         for (i, arg) in args.iter().enumerate() {
             let (val, ty) = self.compile_expr(arg)?;
             match ty {
@@ -58,14 +57,12 @@ impl<'ctx> CompilationContext<'ctx> {
                 }
             }
 
-            // Space between arguments
             if i + 1 < args.len() {
                 let ptr = self.make_cstr("space", b" \0");
                 let _ = self.builder.build_call(print_str_fn, &[ptr.into()], "print_space");
             }
         }
 
-        // Single newline at the end
         let nl_ptr = self.make_cstr("newline", b"\n\0");
         let _ = self.builder.build_call(println_fn, &[nl_ptr.into()], "print_end");
 
