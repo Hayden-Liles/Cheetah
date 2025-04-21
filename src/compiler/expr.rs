@@ -1752,21 +1752,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         println!("All list elements have the same type: {:?}", first_type);
                         first_type.clone()
                     } else {
-                        let mut common_type = element_types[0].clone();
-                        for ty in &element_types[1..] {
-                            common_type = match self.get_common_type(&common_type, ty) {
-                                Ok(t) => t,
-                                Err(_) => {
-                                    println!("Could not find common type between {:?} and {:?}, using Any", common_type, ty);
-                                    Type::Any
-                                }
-                            };
-                        }
-                        println!(
-                            "List elements have different types, using common type: {:?}",
-                            common_type
-                        );
-                        common_type
+                        // Use Any type for heterogeneous lists
+                        println!("List elements have different types, using Any type");
+                        Type::Any
                     }
                 };
 
@@ -1937,25 +1925,85 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             None => return Err("list_append function not found".to_string()),
         };
 
-        for (i, element) in elements.iter().enumerate() {
-            let element_ptr = if crate::compiler::types::is_reference_type(element_type) {
-                *element
-            } else {
-                let element_alloca = self
-                    .builder
-                    .build_alloca(element.get_type(), &format!("list_element_{}", i))
-                    .unwrap();
-                self.builder.build_store(element_alloca, *element).unwrap();
-                element_alloca.into()
-            };
+        // Handle different cases for element types
+        match element_type {
+            // Case 1: Tuple type (legacy heterogeneous list representation)
+            Type::Tuple(tuple_element_types) => {
+                // If we have a tuple of element types, we need to handle each element individually
+                // based on its specific type
+                for (i, element) in elements.iter().enumerate() {
+                    // Get the specific type for this element
+                    let specific_element_type = if i < tuple_element_types.len() {
+                        &tuple_element_types[i]
+                    } else {
+                        // Fallback if we somehow have more elements than types
+                        &Type::Any
+                    };
 
-            self.builder
-                .build_call(
-                    list_append_fn,
-                    &[list_ptr.into(), element_ptr.into()],
-                    &format!("list_append_{}", i),
-                )
-                .unwrap();
+                    let element_ptr = if crate::compiler::types::is_reference_type(specific_element_type) {
+                        *element
+                    } else {
+                        let element_alloca = self
+                            .builder
+                            .build_alloca(element.get_type(), &format!("list_element_{}", i))
+                            .unwrap();
+                        self.builder.build_store(element_alloca, *element).unwrap();
+                        element_alloca.into()
+                    };
+
+                    self.builder
+                        .build_call(
+                            list_append_fn,
+                            &[list_ptr.into(), element_ptr.into()],
+                            &format!("list_append_{}", i),
+                        )
+                        .unwrap();
+                }
+            },
+            // Case 2: Any type (new heterogeneous list representation)
+            Type::Any | Type::Unknown => {
+                // For Any type, we need to box each element individually
+                for (i, element) in elements.iter().enumerate() {
+                    // Always box the element to ensure it's a pointer
+                    let element_alloca = self
+                        .builder
+                        .build_alloca(element.get_type(), &format!("list_element_{}", i))
+                        .unwrap();
+                    self.builder.build_store(element_alloca, *element).unwrap();
+
+                    self.builder
+                        .build_call(
+                            list_append_fn,
+                            &[list_ptr.into(), element_alloca.into()],
+                            &format!("list_append_{}", i),
+                        )
+                        .unwrap();
+                }
+            },
+            // Case 3: Homogeneous lists (all elements have the same type)
+            _ => {
+                // Original code for homogeneous lists
+                for (i, element) in elements.iter().enumerate() {
+                    let element_ptr = if crate::compiler::types::is_reference_type(element_type) {
+                        *element
+                    } else {
+                        let element_alloca = self
+                            .builder
+                            .build_alloca(element.get_type(), &format!("list_element_{}", i))
+                            .unwrap();
+                        self.builder.build_store(element_alloca, *element).unwrap();
+                        element_alloca.into()
+                    };
+
+                    self.builder
+                        .build_call(
+                            list_append_fn,
+                            &[list_ptr.into(), element_ptr.into()],
+                            &format!("list_append_{}", i),
+                        )
+                        .unwrap();
+                }
+            }
         }
 
         Ok(list_ptr)

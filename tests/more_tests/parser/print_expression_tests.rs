@@ -29,11 +29,6 @@ fn assert_parses(source: &str) {
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 }
 
-fn assert_parse_fails(source: &str) {
-    let result = parse_code(source);
-    assert!(result.is_err(), "Expected parsing to fail, but it succeeded");
-}
-
 #[test]
 fn test_print_with_basic_expressions() {
     // Test print with simple expressions

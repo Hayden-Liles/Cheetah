@@ -1369,6 +1369,18 @@ fn register_runtime_functions(
         }
     }
 
+    // Register any_to_string function if it exists
+    if let Some(function) = module.get_function("any_to_string") {
+        {
+            // We need to implement this in Rust, but for now we'll use the C implementation
+            // This will be loaded from the any_to_string.c file at runtime
+            extern "C" {
+                fn any_to_string(ptr: *mut libc::c_void) -> *mut c_char;
+            }
+            engine.add_global_mapping(&function, any_to_string as usize);
+        }
+    }
+
     Ok(())
 }
 

@@ -960,6 +960,74 @@ impl Type {
         }
     }
 
+    /// Try to find the *nearest* common super‑type of two types.
+    /// Returns `None` when the values are fundamentally incompatible.
+    pub fn common_supertype(a: &Type, b: &Type) -> Option<Type> {
+        use Type::*;
+
+        // identical ⇒ trivial
+        if a == b { return Some(a.clone()); }
+
+        // Early-out for tuples with different lengths
+        match (a, b) {
+            (Tuple(ae), Tuple(be)) if ae.len() != be.len() => return Option::None,
+            _ => {}
+        }
+
+        // Anything can be promoted to Any / Unknown
+        match (a, b) {
+            (Any, t) | (t, Any)         => return Some(t.clone()),
+            (Unknown, t) | (t, Unknown) => return Some(t.clone()),
+            _ => {}
+        }
+
+        // Numeric lattice
+        match (a, b) {
+            (Bool, Int) | (Int, Bool)               => return Some(Int),
+            (Bool, Float) | (Float, Bool)
+          | (Int,  Float) | (Float, Int)            => return Some(Float),
+            _ => {}
+        }
+
+        // Containers – recurse
+        match (a, b) {
+            (List(ax), List(bx)) => {
+                if let Some(elem) = Type::common_supertype(ax, bx) {
+                    return Some(List(Box::new(elem)));
+                } else {
+                    return Some(List(Box::new(Any)));
+                }
+            }
+            (Set(ax), Set(bx)) => {
+                if let Some(elem) = Type::common_supertype(ax, bx) {
+                    return Some(Set(Box::new(elem)));
+                } else {
+                    return Some(Set(Box::new(Any)));
+                }
+            }
+            (Tuple(ax), Tuple(bx)) if ax.len() == bx.len() => {
+                let mut merged = Vec::with_capacity(ax.len());
+                for (l, r) in ax.iter().zip(bx) {
+                    if let Some(common) = Type::common_supertype(l, r) {
+                        merged.push(common);
+                    } else {
+                        merged.push(Any);
+                    }
+                }
+                return Some(Tuple(merged));
+            }
+            (Dict(ak, av), Dict(bk, bv)) => {
+                let k = Type::common_supertype(ak, bk).unwrap_or(Any);
+                let v = Type::common_supertype(av, bv).unwrap_or(Any);
+                return Some(Dict(Box::new(k), Box::new(v)));
+            }
+            _ => {}
+        }
+
+        // No luck
+        Option::None
+    }
+
     /// Unify two types, if possible
     pub fn unify(type1: &Type, type2: &Type) -> Option<Type> {
         if type1 == type2 {
@@ -988,9 +1056,8 @@ impl Type {
         }
 
         match (type1, type2) {
-            (Type::List(elem1), Type::List(elem2)) => match Type::unify(elem1, elem2) {
-                Some(unified_elem) => Some(Type::List(Box::new(unified_elem))),
-                None => Some(Type::List(Box::new(Type::Any))),
+            (Type::List(elem1), Type::List(elem2)) => {
+                Type::unify(elem1, elem2).map(|unified_elem| Type::List(Box::new(unified_elem)))
             },
 
             (Type::Tuple(elems1), Type::Tuple(elems2)) => {
@@ -1362,10 +1429,12 @@ pub(crate) fn is_reference_type(ty: &Type) -> bool {
         Type::String
             | Type::Bytes
             | Type::List(_)
+            | Type::Tuple(_)      // Added Tuple as a reference type
             | Type::Dict(_, _)
             | Type::Set(_)
             | Type::Function { .. }
             | Type::Class { .. }
+            | Type::Any           // Added Any as a reference type
     )
 }
 

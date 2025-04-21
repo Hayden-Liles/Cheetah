@@ -2,6 +2,42 @@ use crate::ast::{CmpOperator, Expr, NameConstant, Number, Operator, UnaryOperato
 use crate::compiler::types::{Type, TypeError};
 use crate::typechecker::environment::TypeEnvironment;
 use crate::typechecker::TypeResult;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+
+/// Cache for common supertype calculations to avoid redundant work
+static COMMON_SUPER_CACHE: OnceLock<Mutex<HashMap<(Type, Type), Option<Type>>>> = OnceLock::new();
+
+/// Get or initialize the cache
+fn get_cache() -> &'static Mutex<HashMap<(Type, Type), Option<Type>>> {
+    COMMON_SUPER_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Cached version of Type::common_supertype to reduce redundant calculations
+fn cached_supertype(a: &Type, b: &Type) -> Option<Type> {
+    // Try to get from cache first
+    let cache = get_cache();
+    if let Ok(cache_guard) = cache.lock() {
+        if let Some(result) = cache_guard.get(&(a.clone(), b.clone())) {
+            return result.clone();
+        }
+    }
+
+    // Calculate and cache the result
+    let result = Type::common_supertype(a, b);
+
+    // Update cache
+    if let Ok(mut cache_guard) = cache.lock() {
+        // Limit cache size to avoid memory issues
+        if cache_guard.len() > 1000 {
+            cache_guard.clear();
+        }
+        cache_guard.insert((a.clone(), b.clone()), result.clone());
+    }
+
+    result
+}
 
 /// Type inference for expressions
 pub struct TypeInference;
@@ -35,63 +71,37 @@ impl TypeInference {
                     println!("Empty list, using Any as element type");
                     Ok(Type::List(Box::new(Type::Any)))
                 } else {
-                    let mut element_types = Vec::with_capacity(elts.len());
-
-                    for elt in elts {
-                        let elt_type = Self::infer_expr(env, elt)?;
-                        println!("List element type: {:?}", elt_type);
-                        element_types.push(elt_type);
-                    }
+                    let element_types: Vec<_> = elts.iter()
+                        .map(|e| {
+                            let elt_type = Self::infer_expr(env, e)?;
+                            println!("List element type: {:?}", elt_type);
+                            Ok(elt_type)
+                        })
+                        .collect::<TypeResult<_>>()?;
 
                     let first_type = &element_types[0];
                     let all_same = element_types.iter().all(|t| t == first_type);
 
-                    let element_type = if all_same {
+                    if all_same {
                         println!("All list elements have the same type: {:?}", first_type);
-                        first_type.clone()
+                        let final_type = first_type.clone();
+                        println!("Final list element type: {:?}", final_type);
+                        Ok(Type::List(Box::new(final_type)))
                     } else {
-                        let common_type = Self::find_common_type(&element_types)?;
-                        println!(
-                            "List elements have different types, using common type: {:?}",
-                            common_type
-                        );
-                        common_type
-                    };
-
-                    let final_type = match &element_type {
-                        Type::Tuple(tuple_types) if tuple_types.len() == 1 => {
-                            println!("Unwrapping single-element tuple: {:?}", tuple_types[0]);
-                            tuple_types[0].clone()
-                        }
-                        Type::Tuple(tuple_types) => {
-                            if !tuple_types.is_empty()
-                                && tuple_types.iter().all(|t| t == &tuple_types[0])
-                            {
-                                println!(
-                                    "All tuple elements have the same type: {:?}",
-                                    tuple_types[0]
-                                );
-                                tuple_types[0].clone()
-                            } else {
-                                element_type
-                            }
-                        }
-                        _ => element_type,
-                    };
-
-                    println!("Final list element type: {:?}", final_type);
-                    Ok(Type::List(Box::new(final_type)))
+                        // For heterogeneous lists, use Type::Any
+                        println!("List elements have different types, using Any type");
+                        println!("Final list element type: Type::Any");
+                        Ok(Type::List(Box::new(Type::Any)))
+                    }
                 }
             }
 
             Expr::Tuple { elts, .. } => {
                 env.set_tuple_context(true);
 
-                let mut element_types = Vec::with_capacity(elts.len());
-
-                for elt in elts {
-                    element_types.push(Self::infer_expr(env, elt)?);
-                }
+                let element_types: Vec<_> = elts.iter()
+                    .map(|e| Self::infer_expr(env, e))
+                    .collect::<TypeResult<_>>()?;
 
                 env.set_tuple_context(false);
 
@@ -102,15 +112,16 @@ impl TypeInference {
                 if keys.is_empty() || values.is_empty() {
                     Ok(Type::Dict(Box::new(Type::Any), Box::new(Type::Any)))
                 } else {
-                    let mut key_types = Vec::with_capacity(keys.len());
-                    let mut value_types = Vec::with_capacity(values.len());
+                    // Collect key types
+                    let key_types: Vec<_> = keys.iter()
+                        .filter_map(|key_opt| key_opt.as_ref())
+                        .map(|key| Self::infer_expr(env, key))
+                        .collect::<TypeResult<_>>()?;
 
-                    for (key_opt, value) in keys.iter().zip(values.iter()) {
-                        if let Some(key) = key_opt {
-                            key_types.push(Self::infer_expr(env, key)?);
-                        }
-                        value_types.push(Self::infer_expr(env, value)?);
-                    }
+                    // Collect value types
+                    let value_types: Vec<_> = values.iter()
+                        .map(|value| Self::infer_expr(env, value))
+                        .collect::<TypeResult<_>>()?;
 
                     let key_type = if key_types.is_empty() {
                         Type::Any
@@ -140,11 +151,9 @@ impl TypeInference {
                 if elts.is_empty() {
                     Ok(Type::Set(Box::new(Type::Any)))
                 } else {
-                    let mut element_types = Vec::with_capacity(elts.len());
-
-                    for elt in elts {
-                        element_types.push(Self::infer_expr(env, elt)?);
-                    }
+                    let element_types: Vec<_> = elts.iter()
+                        .map(|e| Self::infer_expr(env, e))
+                        .collect::<TypeResult<_>>()?;
 
                     let common_type = Self::find_common_type(&element_types)?;
                     Ok(Type::Set(Box::new(common_type)))
@@ -856,21 +865,14 @@ impl TypeInference {
             return Ok(types[0].clone());
         }
 
-        let mut result = types[0].clone();
-
+        let mut acc = types[0].clone();
         for ty in &types[1..] {
-            if let Some(common) = Type::unify(&result, ty) {
-                result = common;
-            } else {
-                return Err(TypeError::IncompatibleTypes {
-                    expected: result,
-                    got: ty.clone(),
-                    operation: "type unification".to_string(),
-                });
+            match cached_supertype(&acc, ty) {
+                Some(t) => acc = t,
+                None    => return Ok(Type::Any),         // give up *gracefully*
             }
         }
-
-        Ok(result)
+        Ok(acc)
     }
 
     /// Infer the type of a function parameter based on the argument type
