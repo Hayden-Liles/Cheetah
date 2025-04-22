@@ -272,9 +272,27 @@ pub unsafe extern "C" fn print_any(ptr: *const c_char) {
     let result = std::panic::catch_unwind(|| {
         let s = CStr::from_ptr(ptr).to_string_lossy();
         if s.len() > 0 && s.chars().all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace()) {
-            super::buffer::write_str("\"");
-            super::buffer::write_str(&s);
-            super::buffer::write_str("\"");
+            // Check if it looks like a string (starts with a letter or quote)
+            let first_char = s.chars().next().unwrap();
+            if first_char.is_alphabetic() || first_char == '"' || first_char == '\'' {
+                super::buffer::write_str("\"");
+                super::buffer::write_str(&s);
+                super::buffer::write_str("\"");
+                return true;
+            }
+        }
+        false
+    });
+
+    if result.is_ok() && result.unwrap() {
+        return;
+    }
+
+    // Try to interpret as a float
+    let result = std::panic::catch_unwind(|| {
+        let val = *(ptr as *const f64);
+        if !val.is_nan() && (val.abs() > 0.000001 || val == 0.0) {
+            super::buffer::write_float(val);
             return true;
         }
         false
@@ -287,10 +305,15 @@ pub unsafe extern "C" fn print_any(ptr: *const c_char) {
     // Try to interpret as an integer
     let result = std::panic::catch_unwind(|| {
         let val = *(ptr as *const i64);
-        super::buffer::write_int(val);
+        // Only print if it looks like a reasonable integer
+        if val > -1000000000 && val < 1000000000 {
+            super::buffer::write_int(val);
+            return true;
+        }
+        false
     });
 
-    if result.is_ok() {
+    if result.is_ok() && result.unwrap() {
         return;
     }
 
