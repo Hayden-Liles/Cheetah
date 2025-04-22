@@ -1381,6 +1381,8 @@ fn register_runtime_functions(
         }
     }
 
+    // print_any is already registered in print_ops::register_print_runtime_functions
+
     Ok(())
 }
 

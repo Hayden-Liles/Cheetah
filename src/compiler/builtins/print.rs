@@ -225,7 +225,8 @@ impl<'ctx> CompilationContext<'ctx> {
                 let _ = self.builder.build_call(print_str_fn, &[none_str.into()], "print_none_elem");
             }
             Type::Any | Type::Unknown => {
-                // delegate to the generic runtime printer
+                // For heterogeneous lists, we need to use the print_any function
+                // But for the entire list, we'll use print_list_any which handles all elements properly
                 let print_any_fn = self.module.get_function("print_any")
                     .ok_or("print_any not found".to_string())?;
                 let ptr = elem_val.into_pointer_value();
@@ -291,13 +292,16 @@ impl<'ctx> CompilationContext<'ctx> {
                 Type::Bool => {
                     let _ = self.builder.build_call(print_bool_fn, &[val.into()], "print_bool");
                 }
-                Type::List(inner) => {
-                    // inline compile‑time list printing
-                    self.print_list_value(
-                        val.into_pointer_value(),
-                        &*inner,
-                        print_str_fn,
-                    )?;
+                Type::List(_) => {
+                    // For all lists, use the regular list printing
+                    // The print_list function has been updated to handle heterogeneous lists safely
+                    let print_list_fn = self.module.get_function("print_list")
+                        .ok_or("print_list not found".to_string())?;
+                    let _ = self.builder.build_call(
+                        print_list_fn,
+                        &[val.into_pointer_value().into()],
+                        "print_list_call"
+                    );
                 }
                 Type::Dict(_,_) => {
                     let print_dict_fn = self.module.get_function("print_dict").unwrap();

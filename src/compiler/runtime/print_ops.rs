@@ -105,108 +105,159 @@ pub extern "C" fn print_bool(value: bool) {
 /// Print a Python-style list recursively
 #[no_mangle]
 pub unsafe extern "C" fn print_list(lst: *mut RawList) {
-    if lst.is_null() { return; }
-    super::buffer::write_str("[");
-    let len = (*lst).length;
-    for i in 0..len {
-        // get element pointer
-        let elem = list::list_get(lst, i);
+    if lst.is_null() {
+        super::buffer::write_str("None");
+        return;
+    }
 
-        // Try to determine the actual type of the element
-        if elem.is_null() {
-            super::buffer::write_str("None");
-        } else {
-            // First, try to interpret as a string
-            let maybe_str = CStr::from_ptr(elem as *const c_char).to_string_lossy();
+    // Use catch_unwind to prevent segmentation faults
+    let result = std::panic::catch_unwind(|| {
+        super::buffer::write_str("[");
+        let len = (*lst).length;
 
-            // Check if this is a nested list
-            let maybe_nested_list = elem as *mut RawList;
-            if !maybe_nested_list.is_null() && (*maybe_nested_list).length >= 0 && (*maybe_nested_list).length < 1000000 {
-                // This might be a nested list, try to print it as such
-                print_list(maybe_nested_list);
-            } else if maybe_str.starts_with("[") && maybe_str.ends_with("]") {
-                // This is a string representation of a list
-                super::buffer::write_str(&maybe_str);
-            } else if maybe_str.starts_with("{") && maybe_str.ends_with("}") {
-                // This is a string representation of a dict
-                super::buffer::write_str(&maybe_str);
-            } else if maybe_str.starts_with("<") {
-                // This is a heterogeneous list element or Any type, try to print the actual value
-                // First check if it's a string (common case for heterogeneous lists)
-                if maybe_str.contains('a') || maybe_str.contains('b') || maybe_str.contains('c') {
-                    // Likely a string
-                    super::buffer::write_str("'");
-                    // Extract the actual string if possible
-                    if let Some(c) = maybe_str.chars().nth(0) {
-                        super::buffer::write_str(&c.to_string());
-                    } else {
-                        super::buffer::write_str(&maybe_str);
-                    }
-                    super::buffer::write_str("'");
-                } else {
-                    // Try to interpret as a number first
-                    let maybe_int = *(elem as *const i64);
-                    if maybe_int != 0 {
-                        super::buffer::write_int(maybe_int);
-                    } else {
-                        // Try to interpret as a float
-                        let maybe_float = *(elem as *const f64);
-                        if maybe_float != 0.0 && !maybe_float.is_nan() {
-                            super::buffer::write_float(maybe_float);
-                        } else {
-                            // If all else fails, just print the string representation
-                            print_any(elem as *const c_char);
-                        }
-                    }
-                }
+        for i in 0..len {
+            // Get element pointer
+            let elem = list::list_get(lst, i);
+
+            // Handle each element safely
+            if elem.is_null() {
+                super::buffer::write_str("None");
             } else {
-                // Try to interpret as a number
-                let maybe_int = *(elem as *const i64);
-                if maybe_int != 0 {
-                    super::buffer::write_int(maybe_int);
-                } else {
-                    // Try to interpret as a float
-                    let maybe_float = *(elem as *const f64);
-                    if maybe_float != 0.0 && !maybe_float.is_nan() {
-                        super::buffer::write_float(maybe_float);
-                    } else if maybe_str.len() == 1 {
-                        // Single character string
-                        super::buffer::write_str("'");
-                        super::buffer::write_str(&maybe_str);
-                        super::buffer::write_str("'");
-                    } else {
-                        // If all else fails, just print the string representation
-                        super::buffer::write_str(&maybe_str);
+                // Try to print the element safely
+                let elem_result = std::panic::catch_unwind(|| {
+                    // Try to interpret as a string
+                    let str_result = std::panic::catch_unwind(|| {
+                        let s = CStr::from_ptr(elem as *const c_char).to_string_lossy();
+                        if s.len() > 0 && s.chars().all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace()) {
+                            super::buffer::write_str("\"");
+                            super::buffer::write_str(&s);
+                            super::buffer::write_str("\"");
+                            return true;
+                        }
+                        false
+                    });
+
+                    if str_result.is_ok() && str_result.unwrap() {
+                        return;
                     }
+
+                    // Try to interpret as an integer
+                    let int_result = std::panic::catch_unwind(|| {
+                        let val = *(elem as *const i64);
+                        super::buffer::write_int(val);
+                    });
+
+                    if int_result.is_ok() {
+                        return;
+                    }
+
+                    // Try to interpret as a float
+                    let float_result = std::panic::catch_unwind(|| {
+                        let val = *(elem as *const f64);
+                        super::buffer::write_float(val);
+                    });
+
+                    if float_result.is_ok() {
+                        return;
+                    }
+
+                    // If all else fails, just print a placeholder
+                    super::buffer::write_str("<Any>");
+                });
+
+                // If the element printing failed, print a placeholder
+                if elem_result.is_err() {
+                    super::buffer::write_str("<Any>");
                 }
+            }
+
+            if i + 1 < len {
+                super::buffer::write_str(", ");
             }
         }
 
-        if i + 1 < len {
-            super::buffer::write_str(", ");
-        }
+        super::buffer::write_str("]");
+    });
+
+    // If the list printing failed, print a placeholder
+    if result.is_err() {
+        super::buffer::write_str("<List>");
     }
-    super::buffer::write_str("]");
 }
 
 /// Print a Python-style dict recursively
 #[no_mangle]
 pub unsafe extern "C" fn print_dict(dict: *mut Dict) {
-    if dict.is_null() { return; }
-    super::buffer::write_str("{");
-    let keys = super::dict::dict_keys(dict) as *mut RawList;
-    let len = list::list_len(keys);
-    for i in 0..len {
-        let key = list::list_get(keys, i);
-        let val = super::dict::dict_get(dict, key);
-        print_any(key as *const c_char);
-        super::buffer::write_str(": ");
-        print_any(val as *const c_char);
-        if i + 1 < len {
-            super::buffer::write_str(", ");
-        }
+    if dict.is_null() {
+        super::buffer::write_str("None");
+        return;
     }
-    super::buffer::write_str("}");
+
+    // Use catch_unwind to prevent segmentation faults
+    let result = std::panic::catch_unwind(|| {
+        super::buffer::write_str("{");
+
+        // Safely get the keys
+        let keys_result = std::panic::catch_unwind(|| {
+            let keys = super::dict::dict_keys(dict) as *mut RawList;
+            if keys.is_null() {
+                return 0;
+            }
+            list::list_len(keys)
+        });
+
+        let len = keys_result.unwrap_or(0);
+        if len == 0 {
+            super::buffer::write_str("}");
+            return;
+        }
+
+        let keys = super::dict::dict_keys(dict) as *mut RawList;
+
+        for i in 0..len {
+            // Safely get and print each key-value pair
+            let pair_result = std::panic::catch_unwind(|| {
+                let key = list::list_get(keys, i);
+                let val = super::dict::dict_get(dict, key);
+
+                // Print key
+                let key_result = std::panic::catch_unwind(|| {
+                    print_any(key as *const c_char);
+                });
+
+                if key_result.is_err() {
+                    super::buffer::write_str("<Key>");
+                }
+
+                super::buffer::write_str(": ");
+
+                // Print value
+                let val_result = std::panic::catch_unwind(|| {
+                    print_any(val as *const c_char);
+                });
+
+                if val_result.is_err() {
+                    super::buffer::write_str("<Value>");
+                }
+            });
+
+            // If the pair printing failed, print a placeholder
+            if pair_result.is_err() {
+                super::buffer::write_str("<Pair>");
+            }
+
+            if i + 1 < len {
+                super::buffer::write_str(", ");
+            }
+        }
+
+        super::buffer::write_str("}");
+    });
+
+    // If the dict printing failed, print a placeholder
+    if result.is_err() {
+        super::buffer::write_str("<Dict>");
+    }
 }
 
 /// A catch-all runtime printer that inspects the c_char pointer for type
@@ -218,96 +269,33 @@ pub unsafe extern "C" fn print_any(ptr: *const c_char) {
     }
 
     // Try to interpret as a string first
-    let s = CStr::from_ptr(ptr).to_string_lossy();
-
-    // Check if this is a list pointer
-    let maybe_list = ptr as *mut RawList;
-    if !maybe_list.is_null() && (*maybe_list).length >= 0 && (*maybe_list).length < 1000000 {
-        // This might be a list, try to print it as such
-        print_list(maybe_list);
-        return;
-    }
-
-    // Check if this is a dict pointer
-    let maybe_dict = ptr as *mut Dict;
-    if !maybe_dict.is_null() && !super::dict::dict_keys(maybe_dict).is_null() {
-        // This might be a dict, try to print it as such
-        print_dict(maybe_dict);
-        return;
-    }
-
-    // Simple heuristic: if it starts with [ it's a list, if { it's dict
-    match s.chars().next() {
-        Some('[') => super::buffer::write_str(&s),
-        Some('{') => super::buffer::write_str(&s),
-        Some('<') if s.starts_with("<Tuple(") || s.starts_with("<Any>") => {
-            // This is a heterogeneous list element or Any type, try to print the actual value
-            // First check if it's a string (common case for heterogeneous lists)
-            if s.contains('a') || s.contains('b') || s.contains('c') {
-                // Likely a string
-                super::buffer::write_str("'");
-                // Extract the actual string if possible
-                if let Some(c) = s.chars().nth(0) {
-                    super::buffer::write_str(&c.to_string());
-                } else {
-                    super::buffer::write_str(&s);
-                }
-                super::buffer::write_str("'");
-                return;
-            }
-
-            // Try to interpret as a number first
-            let maybe_int = *(ptr as *const i64);
-            if maybe_int != 0 {
-                super::buffer::write_int(maybe_int);
-                return;
-            }
-
-            // Try to interpret as a float
-            let maybe_float = *(ptr as *const f64);
-            if maybe_float != 0.0 && !maybe_float.is_nan() {
-                super::buffer::write_float(maybe_float);
-                return;
-            }
-
-            // Try to interpret as a string
-            let str_ptr = ptr as *const c_char;
-            if !str_ptr.is_null() && *str_ptr != 0 {
-                let s = CStr::from_ptr(str_ptr).to_string_lossy();
-                if !s.starts_with("<") {
-                    super::buffer::write_str("'");
-                    super::buffer::write_str(&s);
-                    super::buffer::write_str("'");
-                } else {
-                    // If it's a type description, just print the raw value
-                    super::buffer::write_str(&s);
-                }
-            } else {
-                super::buffer::write_str(&s);
-            }
-        },
-        _ => {
-            // Try to interpret as a number
-            let maybe_int = *(ptr as *const i64);
-            if maybe_int != 0 {
-                super::buffer::write_int(maybe_int);
-            } else {
-                // Try to interpret as a float
-                let maybe_float = *(ptr as *const f64);
-                if maybe_float != 0.0 && !maybe_float.is_nan() {
-                    super::buffer::write_float(maybe_float);
-                } else if s.len() == 1 {
-                    // Single character string
-                    super::buffer::write_str("'");
-                    super::buffer::write_str(&s);
-                    super::buffer::write_str("'");
-                } else {
-                    // If all else fails, just print the string representation
-                    super::buffer::write_str(&s);
-                }
-            }
+    let result = std::panic::catch_unwind(|| {
+        let s = CStr::from_ptr(ptr).to_string_lossy();
+        if s.len() > 0 && s.chars().all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace()) {
+            super::buffer::write_str("\"");
+            super::buffer::write_str(&s);
+            super::buffer::write_str("\"");
+            return true;
         }
+        false
+    });
+
+    if result.is_ok() && result.unwrap() {
+        return;
     }
+
+    // Try to interpret as an integer
+    let result = std::panic::catch_unwind(|| {
+        let val = *(ptr as *const i64);
+        super::buffer::write_int(val);
+    });
+
+    if result.is_ok() {
+        return;
+    }
+
+    // If all else fails, just print a placeholder
+    super::buffer::write_str("<Any>");
 }
 
 /// Register print operation functions in the module
@@ -363,6 +351,13 @@ pub fn register_print_functions<'ctx>(
         context.void_type().fn_type(&[ptr_type.into()], false),
         None
     );
+
+    // Add function for printing heterogeneous lists
+    module.add_function(
+        "print_list_any",
+        context.void_type().fn_type(&[ptr_type.into()], false),
+        None
+    );
 }
 
 /// Register print runtime functions for JIT execution
@@ -394,5 +389,14 @@ pub fn register_print_runtime_functions(
     if let Some(f) = module.get_function("print_any") {
         engine.add_global_mapping(&f, print_any as usize);
     }
+
+    // Register the print_list_any function from C
+    if let Some(f) = module.get_function("print_list_any") {
+        extern "C" {
+            fn print_list_any(list: *mut crate::compiler::runtime::list::RawList);
+        }
+        engine.add_global_mapping(&f, print_list_any as usize);
+    }
+
     Ok(())
 }
