@@ -141,6 +141,21 @@ pub unsafe extern "C" fn print_list(lst: *mut RawList) {
                         return;
                     }
 
+                    // Try to interpret as a float FIRST
+                    let float_result = std::panic::catch_unwind(|| {
+                        let val = *(elem as *const f64);
+                        // Only print as float if it really looks like one
+                        if !val.is_nan() && val.fract() != 0.0 {
+                            super::buffer::write_float(val);
+                            return true;
+                        }
+                        false
+                    });
+
+                    if float_result.is_ok() && float_result.unwrap() {
+                        return;
+                    }
+
                     // Try to interpret as an integer
                     let int_result = std::panic::catch_unwind(|| {
                         let val = *(elem as *const i64);
@@ -148,16 +163,6 @@ pub unsafe extern "C" fn print_list(lst: *mut RawList) {
                     });
 
                     if int_result.is_ok() {
-                        return;
-                    }
-
-                    // Try to interpret as a float
-                    let float_result = std::panic::catch_unwind(|| {
-                        let val = *(elem as *const f64);
-                        super::buffer::write_float(val);
-                    });
-
-                    if float_result.is_ok() {
                         return;
                     }
 
