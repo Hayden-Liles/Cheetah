@@ -2,6 +2,7 @@
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::ptr;
 use inkwell::context::Context;
 use inkwell::module::Module;
 
@@ -89,12 +90,25 @@ pub extern "C" fn exception_free(exception: *mut Exception) {
 
 // -------- Global exception state --------
 
-// These functions are defined in the runtime library (libcheetah.a)
-// We only declare them here for the LLVM module, but don't provide implementations
-// to avoid duplicate symbol errors during linking
+static mut GLOBAL_EXCEPTION: *mut Exception = ptr::null_mut();
 
-// The actual implementations are in the register_exception_state function below
-// which generates the LLVM IR for these functions
+/// Get current exception
+#[no_mangle]
+pub extern "C" fn get_current_exception() -> *mut Exception {
+    unsafe { GLOBAL_EXCEPTION }
+}
+
+/// Set current exception
+#[no_mangle]
+pub extern "C" fn set_current_exception(exc: *mut Exception) {
+    unsafe { GLOBAL_EXCEPTION = exc; }
+}
+
+/// Clear current exception
+#[no_mangle]
+pub extern "C" fn clear_current_exception() {
+    unsafe { GLOBAL_EXCEPTION = ptr::null_mut(); }
+}
 
 // -------- LLVM module registration --------
 
