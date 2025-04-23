@@ -198,9 +198,9 @@ fn test_for_loop_with_function_call() {
 def get_value():
     return 5
 
-# For loop using function call - use a direct integer
+# For loop using function call
 sum = 0
-for i in range(5):  # Use literal instead of function call
+for i in range(get_value()):
     sum = sum + i
 "#;
 
