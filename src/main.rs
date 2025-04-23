@@ -141,7 +141,7 @@ enum Commands {
 // Function to increase the stack size limit
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn increase_stack_size() {
-    let stack_size = 128 * 1024 * 1024;
+    let stack_size = 256 * 1024 * 1024;
 
     let mut current_rlim = libc::rlimit {
         rlim_cur: 0,
