@@ -1,13 +1,10 @@
 #[cfg(test)]
 mod boxed_any_code_gen_tests {
-    use cheetah::ast::{Expr, Number, NameConstant, ExprContext};
+    use cheetah::ast::{Expr, Number, NameConstant};
     use cheetah::compiler::context::CompilationContext;
     use cheetah::compiler::expr::ExprCompiler;
     use cheetah::compiler::types::Type;
     use inkwell::context::Context;
-    use cheetah::compiler::runtime::boxed_any::{
-        boxed_any_to_int, boxed_any_to_float, boxed_any_to_bool, type_tags
-    };
 
     fn setup_context<'ctx>(context: &'ctx Context) -> CompilationContext<'ctx> {
         CompilationContext::new(context, "test_module")

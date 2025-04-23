@@ -8,8 +8,7 @@ use std::os::raw::c_char;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 
-use cheetah::compiler::runtime::{boxed_any,
-    buffer, parallel_ops,
+use cheetah::compiler::runtime::{buffer, parallel_ops,
     print_ops::{print_bool, print_float, print_int, print_string, println_string},
     range, min_max_ops,
 };

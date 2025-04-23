@@ -44,7 +44,7 @@ Current focus is on module support, extending built-in functions, and improving 
 ## Current Focus (High Priority)
 
 ### Core Language Features
-1. [ ] Implement a single blessed value layout
+1. [x] Implement a single blessed value layout
    - [x] Create BoxedAny struct with type tags
      - [x] Define BoxedAny struct in src/compiler/runtime/boxed_any.rs
      - [x] Define type tag constants (INT, FLOAT, BOOL, etc.)
@@ -67,12 +67,12 @@ Current focus is on module support, extending built-in functions, and improving 
      - [x] Update is_reference_type and other type-related functions
    - [x] Update code generation
      - [x] Modify compile_expr to create BoxedAny values
-     - [ ] Update binary operations to use BoxedAny operations
-     - [ ] Update variable access and assignment
-   - [ ] Update runtime operations
+     - [x] Update binary operations to use BoxedAny operations
+     - [x] Update variable access and assignment
+   - [x] Update runtime operations
      - [x] Update print functions to handle BoxedAny values
-     - [ ] Update string operations
-     - [ ] Update list and dictionary operations
+     - [x] Update string operations
+     - [x] Update list and dictionary operations
    - [x] Add JIT support for BoxedAny
      - [x] Register BoxedAny functions with JIT execution engine
      - [x] Update JIT runtime functions

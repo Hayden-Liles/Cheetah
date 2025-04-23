@@ -5375,6 +5375,122 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
             }
         }
 
+        // For BoxedAny values, use the BoxedAny comparison operations
+        if left.is_pointer_value() && right.is_pointer_value() {
+            let left_ptr = left.into_pointer_value();
+            let right_ptr = right.into_pointer_value();
+
+            // Determine which BoxedAny comparison function to call based on the operator
+            match op {
+                CmpOperator::Eq => {
+                    // Get the boxed_any_equals function
+                    let boxed_any_equals_fn = self.module.get_function("boxed_any_equals")
+                        .ok_or_else(|| "boxed_any_equals function not found".to_string())?;
+
+                    // Call boxed_any_equals to perform the equality comparison
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_equals_fn,
+                        &[left_ptr.into(), right_ptr.into()],
+                        "boxed_equals"
+                    ).unwrap();
+
+                    let result = call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to perform BoxedAny equals comparison".to_string())?;
+
+                    return Ok((result, Type::Bool));
+                },
+                CmpOperator::NotEq => {
+                    // Get the boxed_any_not_equals function
+                    let boxed_any_not_equals_fn = self.module.get_function("boxed_any_not_equals")
+                        .ok_or_else(|| "boxed_any_not_equals function not found".to_string())?;
+
+                    // Call boxed_any_not_equals to perform the inequality comparison
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_not_equals_fn,
+                        &[left_ptr.into(), right_ptr.into()],
+                        "boxed_not_equals"
+                    ).unwrap();
+
+                    let result = call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to perform BoxedAny not equals comparison".to_string())?;
+
+                    return Ok((result, Type::Bool));
+                },
+                CmpOperator::Lt => {
+                    // Get the boxed_any_less_than function
+                    let boxed_any_less_than_fn = self.module.get_function("boxed_any_less_than")
+                        .ok_or_else(|| "boxed_any_less_than function not found".to_string())?;
+
+                    // Call boxed_any_less_than to perform the less than comparison
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_less_than_fn,
+                        &[left_ptr.into(), right_ptr.into()],
+                        "boxed_less_than"
+                    ).unwrap();
+
+                    let result = call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to perform BoxedAny less than comparison".to_string())?;
+
+                    return Ok((result, Type::Bool));
+                },
+                CmpOperator::LtE => {
+                    // Get the boxed_any_less_than_or_equal function
+                    let boxed_any_less_than_or_equal_fn = self.module.get_function("boxed_any_less_than_or_equal")
+                        .ok_or_else(|| "boxed_any_less_than_or_equal function not found".to_string())?;
+
+                    // Call boxed_any_less_than_or_equal to perform the less than or equal comparison
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_less_than_or_equal_fn,
+                        &[left_ptr.into(), right_ptr.into()],
+                        "boxed_less_than_or_equal"
+                    ).unwrap();
+
+                    let result = call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to perform BoxedAny less than or equal comparison".to_string())?;
+
+                    return Ok((result, Type::Bool));
+                },
+                CmpOperator::Gt => {
+                    // Get the boxed_any_greater_than function
+                    let boxed_any_greater_than_fn = self.module.get_function("boxed_any_greater_than")
+                        .ok_or_else(|| "boxed_any_greater_than function not found".to_string())?;
+
+                    // Call boxed_any_greater_than to perform the greater than comparison
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_greater_than_fn,
+                        &[left_ptr.into(), right_ptr.into()],
+                        "boxed_greater_than"
+                    ).unwrap();
+
+                    let result = call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to perform BoxedAny greater than comparison".to_string())?;
+
+                    return Ok((result, Type::Bool));
+                },
+                CmpOperator::GtE => {
+                    // Get the boxed_any_greater_than_or_equal function
+                    let boxed_any_greater_than_or_equal_fn = self.module.get_function("boxed_any_greater_than_or_equal")
+                        .ok_or_else(|| "boxed_any_greater_than_or_equal function not found".to_string())?;
+
+                    // Call boxed_any_greater_than_or_equal to perform the greater than or equal comparison
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_greater_than_or_equal_fn,
+                        &[left_ptr.into(), right_ptr.into()],
+                        "boxed_greater_than_or_equal"
+                    ).unwrap();
+
+                    let result = call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to perform BoxedAny greater than or equal comparison".to_string())?;
+
+                    return Ok((result, Type::Bool));
+                },
+                _ => {
+                    // For other operators, fall back to the old implementation
+                }
+            }
+        }
+
+        // Fall back to the old implementation for non-BoxedAny values
         let common_type = self.get_common_type(left_type, right_type)?;
 
         let left_converted = if left_type != &common_type {
@@ -5628,395 +5744,58 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                 }
             }
             Expr::Name { id, .. } => {
-                let is_global = if let Some(current_scope) = self.scope_stack.current_scope() {
-                    current_scope.is_global(id)
-                } else {
-                    false
-                };
+                // With BoxedAny, we don't need to convert types or handle different types differently
+                // We just need to store the BoxedAny pointer in the variable
 
-                let is_nonlocal = if let Some(current_scope) = self.scope_stack.current_scope() {
-                    current_scope.is_nonlocal(id)
-                } else {
-                    false
-                };
-
-                if is_nonlocal {
-                    if let Some(env_name) = &self.current_environment {
-                        if let Some(env) = self.get_closure_environment(env_name) {
-                            if let Some(proxy_ptr) = env.get_nonlocal_proxy(id) {
-                                self.builder.build_store(*proxy_ptr, value).unwrap();
-                                println!("Assigned to nonlocal variable '{}' using proxy in environment {}", id, env_name);
-                                return Ok(());
-                            }
-                        }
-                    }
-
-                    if let Some(current_scope) = self.scope_stack.current_scope() {
-                        if let Some(unique_name) = current_scope.get_nonlocal_mapping(id) {
-                            if let Some(ptr) = current_scope.get_variable(unique_name).cloned() {
-                                self.builder.build_store(ptr, value).unwrap();
-                                println!(
-                                    "Assigned to nonlocal variable '{}' using unique name '{}'",
-                                    id, unique_name
-                                );
-                                return Ok(());
-                            }
-                        }
-
-                        if self.scope_stack.scopes.len() >= 2 {
-                            let parent_scope_index = self.scope_stack.scopes.len() - 2;
-
-                            let parent_var_ptr = self.scope_stack.scopes[parent_scope_index]
-                                .get_variable(id)
-                                .cloned();
-
-                            if let Some(_ptr) = parent_var_ptr {
-                                let llvm_type = value.get_type();
-
-                                let current_position = self.builder.get_insert_block().unwrap();
-
-                                let current_function = self.current_function.unwrap();
-                                let entry_block = current_function.get_first_basic_block().unwrap();
-                                if let Some(first_instr) = entry_block.get_first_instruction() {
-                                    self.builder.position_before(&first_instr);
-                                } else {
-                                    self.builder.position_at_end(entry_block);
-                                }
-
-                                let local_ptr = self.builder.build_alloca(llvm_type, id).unwrap();
-
-                                self.builder.position_at_end(current_position);
-
-                                self.builder.build_store(local_ptr, value).unwrap();
-
-                                self.scope_stack.current_scope_mut().map(|scope| {
-                                    scope.add_variable(id.clone(), local_ptr, value_type.clone());
-                                    println!(
-                                        "Created shadowing variable '{}' in nested function",
-                                        id
-                                    );
-                                });
-
-                                self.variables.insert(id.clone(), local_ptr);
-
-                                self.register_variable(id.clone(), value_type.clone());
-
-                                return Ok(());
-                            }
-                        }
-                    }
-
-                    if let Some(env_name) = &self.current_environment {
-                        let mut env_data = None;
-
-                        if let Some(env) = self.get_closure_environment(env_name) {
-                            if let Some(index) = env.get_index(id) {
-                                if let Some(var_type) = env.get_type(id) {
-                                    if let Some(env_ptr) = env.env_ptr {
-                                        if let Some(struct_type) = env.env_type {
-                                            env_data = Some((
-                                                index,
-                                                var_type.clone(),
-                                                env_ptr,
-                                                struct_type,
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some((index, var_type, env_ptr, struct_type)) = env_data {
-                            let unique_name =
-                                format!("__nonlocal_{}_{}", env_name.replace('.', "_"), id);
-
-                            let llvm_type = self.get_llvm_type(&var_type);
-                            let ptr = self.builder.build_alloca(llvm_type, &unique_name).unwrap();
-
-                            self.store_nonlocal_variable(ptr, value, &unique_name)?;
-
-                            if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                                current_scope.add_variable(
-                                    unique_name.clone(),
-                                    ptr,
-                                    var_type.clone(),
-                                );
-                                current_scope.add_nonlocal_mapping(id.clone(), unique_name.clone());
-                                println!("Created local variable for nonlocal variable '{}' with unique name '{}'", id, unique_name);
-                            }
-
-                            let field_ptr = self
-                                .builder
-                                .build_struct_gep(
-                                    struct_type,
-                                    env_ptr,
-                                    index,
-                                    &format!("env_{}_ptr", id),
-                                )
-                                .unwrap();
-
-                            self.builder.build_store(field_ptr, value).unwrap();
-                            println!("Updated nonlocal variable '{}' in closure environment", id);
-
-                            return Ok(());
-                        }
-                    }
-                }
-
-                let simple_global_name = format!("__nonlocal_{}", id);
-
-                let current_function =
-                    if let Some(func) = self.builder.get_insert_block().unwrap().get_parent() {
-                        func.get_name().to_string_lossy().to_string()
-                    } else {
-                        "".to_string()
-                    };
-
-                let mut global_var = None;
-
-                if !current_function.is_empty() {
-                    let func_global_name =
-                        format!("__nonlocal_{}_{}", current_function.replace('.', "_"), id);
-                    if let Some(var) = self.module.get_global(&func_global_name) {
-                        global_var = Some(var);
-                    }
-
-                    if global_var.is_none() && current_function.contains('.') {
-                        let parts: Vec<&str> = current_function.split('.').collect();
-                        for i in 1..parts.len() {
-                            let parent_name = parts[..i].join(".");
-                            let parent_global_name =
-                                format!("__nonlocal_{}_{}", parent_name.replace('.', "_"), id);
-                            if let Some(var) = self.module.get_global(&parent_global_name) {
-                                global_var = Some(var);
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if global_var.is_none() {
-                    if let Some(var) = self.module.get_global(&simple_global_name) {
-                        global_var = Some(var);
-                    }
-                }
-
-                if let Some(global_var) = global_var {
-                    self.builder
-                        .build_store(global_var.as_pointer_value(), value)
-                        .unwrap();
-                    println!(
-                        "Assigned to nonlocal variable '{}' using global variable",
-                        id
-                    );
+                // Check if the variable already exists
+                if let Some(ptr) = self.get_variable_ptr(id) {
+                    // Store the BoxedAny pointer in the variable
+                    self.builder.build_store(ptr, value).unwrap();
                     return Ok(());
                 }
 
-                if is_global {
-                    if let Some(global_scope) = self.scope_stack.global_scope() {
-                        if let Some(ptr) = global_scope.get_variable(id) {
-                            if let Some(target_type) = self.lookup_variable_type(id) {
-                                let converted_value = if target_type != value_type {
-                                    self.convert_type(value, value_type, target_type)?
-                                } else {
-                                    value
-                                };
+                // If the variable doesn't exist, create it
+                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                let var_ptr = self.builder.build_alloca(ptr_type, id).unwrap();
 
-                                self.builder.build_store(*ptr, converted_value).unwrap();
-                                return Ok(());
-                            }
-                        } else {
-                            let global_var = self.module.add_global(
-                                self.get_llvm_type(value_type).into_int_type(),
-                                None,
-                                id,
-                            );
+                // Store the BoxedAny pointer in the variable
+                self.builder.build_store(var_ptr, value).unwrap();
 
-                            global_var
-                                .set_initializer(&self.get_llvm_type(value_type).const_zero());
+                // Register the variable
+                self.register_variable(id.clone(), Type::Any);
+                self.variables.insert(id.clone(), var_ptr);
 
-                            let ptr = global_var.as_pointer_value();
-
-                            if let Some(global_scope) = self.scope_stack.global_scope_mut() {
-                                global_scope.add_variable(id.clone(), ptr, value_type.clone());
-                            }
-
-                            self.builder.build_store(ptr, value).unwrap();
-                            return Ok(());
-                        }
-                    }
-                } else if is_nonlocal {
-                    if let Some(ptr) = self.get_variable_ptr(id) {
-                        if let Some(target_type) = self.lookup_variable_type(id) {
-                            let converted_value = if target_type != value_type {
-                                self.convert_type(value, value_type, target_type)?
-                            } else {
-                                value
-                            };
-
-                            self.builder.build_store(ptr, converted_value).unwrap();
-                            return Ok(());
-                        }
-                    } else {
-                        return Err(format!("Nonlocal variable '{}' not found", id));
-                    }
+                if let Some(current_scope) = self.scope_stack.current_scope_mut() {
+                    current_scope.add_variable(id.clone(), var_ptr, Type::Any);
+                    println!("Added variable '{}' to current scope", id);
                 }
 
-                if let Some(ptr) = self.get_variable_ptr(id) {
-                    if let Some(target_type) = self.lookup_variable_type(id) {
-                        let converted_value = if target_type != value_type {
-                            self.convert_type(value, value_type, target_type)?
-                        } else {
-                            value
-                        };
-
-                        self.builder.build_store(ptr, converted_value).unwrap();
-                        Ok(())
-                    } else {
-                        Err(format!("Variable '{}' has unknown type", id))
-                    }
-                } else {
-                    let ptr = if let Some(current_function) = self.current_function {
-                        let fn_name = current_function.get_name().to_string_lossy();
-                        if fn_name.contains('.') {
-                            let current_position = self.builder.get_insert_block().unwrap();
-
-                            let entry_block = current_function.get_first_basic_block().unwrap();
-                            if let Some(first_instr) = entry_block.get_first_instruction() {
-                                self.builder.position_before(&first_instr);
-                            } else {
-                                self.builder.position_at_end(entry_block);
-                            }
-
-                            let llvm_type = self.get_llvm_type(value_type);
-
-                            let ptr = self.builder.build_alloca(llvm_type, id).unwrap();
-
-                            self.builder.position_at_end(current_position);
-
-                            ptr
-                        } else {
-                            self.allocate_variable(id.clone(), value_type)
-                        }
-                    } else {
-                        self.allocate_variable(id.clone(), value_type)
-                    };
-
-                    self.register_variable(id.clone(), value_type.clone());
-
-                    if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                        current_scope.add_variable(id.clone(), ptr, value_type.clone());
-                        println!("Added variable '{}' to current scope", id);
-                    }
-
-                    self.builder.build_store(ptr, value).unwrap();
-                    Ok(())
-                }
+                Ok(())
             }
 
-            Expr::Subscript { value, slice, .. } => {
-                let (container_val, container_type) = self.compile_expr(value)?;
+            Expr::Subscript { value: container_expr, slice, .. } => {
+                let (container_val, _container_type) = self.compile_expr(container_expr)?;
+                let (index_val, _index_type) = self.compile_expr(slice)?;
 
-                let (index_val, index_type) = self.compile_expr(slice)?;
+                // With BoxedAny, we use the boxed_any_set_item function for all container types
+                // The function will handle type checking internally
 
-                match &container_type {
-                    Type::List(_) => {
-                        if !matches!(index_type, Type::Int) {
-                            return Err(format!(
-                                "List index must be an integer, got {:?}",
-                                index_type
-                            ));
-                        }
+                // Get the boxed_any_set_item function
+                let boxed_any_set_item_fn = self.module.get_function("boxed_any_set_item")
+                    .ok_or_else(|| "boxed_any_set_item function not found".to_string())?;
 
-                        let list_set_fn = match self.module.get_function("list_set") {
-                            Some(f) => f,
-                            None => return Err("list_set function not found".to_string()),
-                        };
+                // Call boxed_any_set_item to set the item
+                self.builder.build_call(
+                    boxed_any_set_item_fn,
+                    &[
+                        container_val.into(),
+                        index_val.into(),
+                        value.into(),
+                    ],
+                    "boxed_set_item_result",
+                ).unwrap();
 
-                        let (value_val, _) = self.compile_expr(value)?;
-
-                        let value_alloca = self
-                            .builder
-                            .build_alloca(value_val.get_type(), "list_set_value")
-                            .unwrap();
-                        self.builder.build_store(value_alloca, value_val).unwrap();
-
-                        self.builder
-                            .build_call(
-                                list_set_fn,
-                                &[
-                                    container_val.into_pointer_value().into(),
-                                    index_val.into_int_value().into(),
-                                    value_alloca.into(),
-                                ],
-                                "list_set_result",
-                            )
-                            .unwrap();
-
-                        Ok(())
-                    }
-                    Type::Dict(key_type, _value_type) => {
-                        if matches!(**key_type, Type::Unknown) {
-                            println!(
-                                "Updating dictionary key type from Unknown to {:?}",
-                                index_type
-                            );
-                        } else if !index_type.can_coerce_to(key_type)
-                            && !matches!(index_type, Type::String)
-                            && !matches!(**key_type, Type::Unknown)
-                        {
-                            return Err(format!(
-                                "Dictionary key type mismatch: expected {:?}, got {:?}",
-                                key_type, index_type
-                            ));
-                        }
-
-                        let dict_set_fn = match self.module.get_function("dict_set") {
-                            Some(f) => f,
-                            None => return Err("dict_set function not found".to_string()),
-                        };
-
-                        let key_ptr = if crate::compiler::types::is_reference_type(&index_type) {
-                            index_val
-                        } else {
-                            let key_alloca = self
-                                .builder
-                                .build_alloca(index_val.get_type(), "dict_key_temp")
-                                .unwrap();
-                            self.builder.build_store(key_alloca, index_val).unwrap();
-                            key_alloca.into()
-                        };
-
-                        let (value_val, _value_type) = self.compile_expr(target)?;
-
-                        let value_alloca = self
-                            .builder
-                            .build_alloca(value_val.get_type(), "dict_value_temp")
-                            .unwrap();
-                        self.builder.build_store(value_alloca, value_val).unwrap();
-
-                        self.builder
-                            .build_call(
-                                dict_set_fn,
-                                &[
-                                    container_val.into_pointer_value().into(),
-                                    key_ptr.into(),
-                                    value_alloca.into(),
-                                ],
-                                "dict_set_result",
-                            )
-                            .unwrap();
-
-                        Ok(())
-                    }
-                    Type::Tuple(_) => {
-                        return Err("Tuple elements cannot be modified".to_string());
-                    }
-                    Type::String => {
-                        return Err("String elements cannot be modified".to_string());
-                    }
-                    _ => Err(format!("Type {:?} is not indexable", container_type)),
-                }
+                Ok(())
             }
 
             _ => Err(format!("Unsupported assignment target: {:?}", target)),

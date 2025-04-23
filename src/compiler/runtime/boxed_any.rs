@@ -272,9 +272,48 @@ pub extern "C" fn boxed_any_add(a: *const BoxedAny, b: *const BoxedAny) -> *mut 
                 boxed_any_from_float(result)
             },
             (type_tags::STRING, type_tags::STRING) => {
-                // String concatenation will be implemented later
-                // For now, return None
-                boxed_any_none()
+                // String concatenation
+                if (*a).data.ptr_val.is_null() && (*b).data.ptr_val.is_null() {
+                    // Both strings are empty
+                    return boxed_any_from_string(CString::new("").unwrap().as_ptr());
+                }
+
+                if (*a).data.ptr_val.is_null() {
+                    // First string is empty, return a copy of the second
+                    return boxed_any_from_string((*b).data.ptr_val as *const c_char);
+                }
+
+                if (*b).data.ptr_val.is_null() {
+                    // Second string is empty, return a copy of the first
+                    return boxed_any_from_string((*a).data.ptr_val as *const c_char);
+                }
+
+                // Both strings have content, concatenate them
+                let str_a = CStr::from_ptr((*a).data.ptr_val as *const c_char);
+                let str_b = CStr::from_ptr((*b).data.ptr_val as *const c_char);
+
+                let a_bytes = str_a.to_bytes();
+                let b_bytes = str_b.to_bytes();
+
+                // Allocate memory for the concatenated string (including null terminator)
+                let total_len = a_bytes.len() + b_bytes.len();
+                let result_ptr = malloc(total_len + 1) as *mut c_char;
+
+                // Copy the first string
+                ptr::copy_nonoverlapping(a_bytes.as_ptr(), result_ptr as *mut u8, a_bytes.len());
+
+                // Copy the second string
+                ptr::copy_nonoverlapping(b_bytes.as_ptr(), (result_ptr as *mut u8).add(a_bytes.len()), b_bytes.len());
+
+                // Add null terminator
+                *((result_ptr as *mut u8).add(total_len)) = 0;
+
+                // Create a new BoxedAny with the concatenated string
+                let boxed = malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny;
+                (*boxed).tag = type_tags::STRING;
+                (*boxed).data.ptr_val = result_ptr as *mut c_void;
+
+                boxed
             },
             _ => {
                 // Type error
