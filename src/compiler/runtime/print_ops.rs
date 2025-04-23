@@ -111,35 +111,9 @@ pub unsafe extern "C" fn print_list(lst: *mut RawList) {
     for i in 0..len {
         // get element pointer
         let elem = list::list_get(lst, i);
-
-        if elem.is_null() {
-            super::buffer::write_str("None");
-        } else {
-            // Try to determine the type and print accordingly
-            // This is a simplified approach - in a real implementation you'd have proper type tags
-            let elem_ptr = elem as *const u8;
-            let first_byte = if !elem_ptr.is_null() { *elem_ptr } else { 0 };
-
-            // Check for list or dict markers
-            if first_byte == b'[' {
-                // Looks like a list
-                print_list(elem as *mut RawList);
-            } else if first_byte == b'{' {
-                // Looks like a dict
-                print_dict(elem as *mut Dict);
-            } else {
-                // Try to interpret as a string first
-                let c_str = elem as *const c_char;
-                if !c_str.is_null() && CStr::from_ptr(c_str).to_str().is_ok() {
-                    // It's a valid string
-                    print_string(c_str);
-                } else {
-                    // Fall back to print_any
-                    print_any(c_str);
-                }
-            }
-        }
-
+        // here we assume value is a pointer tagged to indicate its true type;
+        // for simplicity, call a generic print_any(elem)
+        print_any(elem as *const c_char);
         if i + 1 < len {
             super::buffer::write_str(", ");
         }
@@ -157,75 +131,9 @@ pub unsafe extern "C" fn print_dict(dict: *mut Dict) {
     for i in 0..len {
         let key = list::list_get(keys, i);
         let val = super::dict::dict_get(dict, key);
-
-        // Print the key with appropriate type handling
-        if key.is_null() {
-            super::buffer::write_str("None");
-        } else {
-            // Check if it's a list or dict (unlikely for keys, but handle it)
-            let first_byte = *(key as *const u8);
-            if first_byte == b'[' {
-                print_list(key as *mut RawList);
-            } else if first_byte == b'{' {
-                print_dict(key as *mut Dict);
-            } else {
-                // Try to determine the type by examining the value
-                let as_i64_ptr = key as *const i64;
-                let as_f64_ptr = key as *const f64;
-                let as_bool_ptr = key as *const bool;
-
-                // Check if it looks like a string
-                if first_byte >= 32 && first_byte <= 126 {
-                    // Likely a string
-                    print_string(key as *const c_char);
-                } else if *as_bool_ptr == true || *as_bool_ptr == false {
-                    // Likely a boolean
-                    print_bool(*as_bool_ptr);
-                } else if *as_f64_ptr > -1e10 && *as_f64_ptr < 1e10 {
-                    // Likely a float
-                    print_float(*as_f64_ptr);
-                } else {
-                    // Default to integer
-                    print_int(*as_i64_ptr);
-                }
-            }
-        }
-
+        print_any(key as *const c_char);
         super::buffer::write_str(": ");
-
-        // Print the value with appropriate type handling
-        if val.is_null() {
-            super::buffer::write_str("None");
-        } else {
-            // Check if it's a list or dict
-            let first_byte = *(val as *const u8);
-            if first_byte == b'[' {
-                print_list(val as *mut RawList);
-            } else if first_byte == b'{' {
-                print_dict(val as *mut Dict);
-            } else {
-                // Try to determine the type by examining the value
-                let as_i64_ptr = val as *const i64;
-                let as_f64_ptr = val as *const f64;
-                let as_bool_ptr = val as *const bool;
-
-                // Check if it looks like a string
-                if first_byte >= 32 && first_byte <= 126 {
-                    // Likely a string
-                    print_string(val as *const c_char);
-                } else if *as_bool_ptr == true || *as_bool_ptr == false {
-                    // Likely a boolean
-                    print_bool(*as_bool_ptr);
-                } else if *as_f64_ptr > -1e10 && *as_f64_ptr < 1e10 {
-                    // Likely a float
-                    print_float(*as_f64_ptr);
-                } else {
-                    // Default to integer
-                    print_int(*as_i64_ptr);
-                }
-            }
-        }
-
+        print_any(val as *const c_char);
         if i + 1 < len {
             super::buffer::write_str(", ");
         }
