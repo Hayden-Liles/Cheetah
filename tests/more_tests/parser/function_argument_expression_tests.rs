@@ -29,6 +29,18 @@ fn assert_parses(source: &str) {
     assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 }
 
+fn assert_parse_fails_with_details(source: &str) -> Option<ParseError> {
+    let result = parse_code(source);
+    if let Err(ref errors) = result {
+        if !errors.is_empty() {
+            println!("Error parsing '{}': {:?}", source, errors[0]);
+            return Some(errors[0].clone());
+        }
+    }
+    assert!(result.is_err(), "Expected parsing to fail, but it succeeded");
+    None
+}
+
 /// Tests for expressions in function arguments
 /// These tests focus on the specific issues found in print_test_comprehensive.ch
 #[test]

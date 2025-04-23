@@ -1695,7 +1695,7 @@ impl ExprParser for Parser {
                             column,
                         })
                     } else {
-                        let first_expr = self.parse_or_test()?;
+                        let first_expr = self.parse_expression()?;
 
                         if self.match_token(TokenType::For) {
                             return self.with_context(ParserContext::Comprehension, |this| {
@@ -2121,7 +2121,7 @@ impl ExprParser for Parser {
                 column,
             }));
         } else {
-            expressions.push(Box::new(self.parse_or_test()?));
+            expressions.push(Box::new(self.parse_expression()?));
         }
 
         while self.match_token(TokenType::Comma) {
@@ -2158,7 +2158,7 @@ impl ExprParser for Parser {
                     column,
                 }));
             } else {
-                expressions.push(Box::new(self.parse_or_test()?));
+                expressions.push(Box::new(self.parse_expression()?));
             }
         }
 

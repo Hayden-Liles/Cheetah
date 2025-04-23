@@ -1,6 +1,5 @@
 // Runtime support module for the Cheetah compiler
 
-pub mod any_ops;
 pub mod buffer;
 pub mod debug_utils;
 pub mod dict;
@@ -48,7 +47,4 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register min and max functions
     min_max_ops::register_min_max_functions(context, module);
-
-    // Register Any type functions
-    any_ops::register_any_functions(context, module);
 }

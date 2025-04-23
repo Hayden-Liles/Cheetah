@@ -224,13 +224,6 @@ impl<'ctx> CompilationContext<'ctx> {
                 let none_str = self.make_cstr("none_literal", b"None\0");
                 let _ = self.builder.build_call(print_str_fn, &[none_str.into()], "print_none_elem");
             }
-            Type::Any | Type::Unknown => {
-                // delegate to the generic runtime printer
-                let print_any_fn = self.module.get_function("print_any")
-                    .ok_or("print_any not found".to_string())?;
-                let ptr = elem_val.into_pointer_value();
-                let _ = self.builder.build_call(print_any_fn, &[ptr.into()], "print_any_elem");
-            }
             _ => {
                 // fallback placeholder
                 let ph = self.make_cstr("ph", format!("<{:?}>\0", element_type).as_bytes());

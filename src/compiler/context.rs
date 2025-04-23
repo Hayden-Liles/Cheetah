@@ -571,12 +571,6 @@ impl<'ctx> CompilationContext<'ctx> {
         }
 
         match (type1, type2) {
-            // If either side is already Any, the result is Any
-            (Type::Any, _) | (_, Type::Any) => Ok(Type::Any),
-
-            // Lists whose element types differ become List(Any)
-            (Type::List(_), Type::List(_)) => Ok(Type::List(Box::new(Type::Any))),
-
             (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
             (Type::Int, Type::Bool) | (Type::Bool, Type::Int) => Ok(Type::Int),
             (Type::Float, Type::Bool) | (Type::Bool, Type::Float) => Ok(Type::Float),
@@ -587,8 +581,7 @@ impl<'ctx> CompilationContext<'ctx> {
             (Type::Tuple(_), Type::Int) => Ok(type1.clone()),
             (Type::Int, Type::Tuple(_)) => Ok(type2.clone()),
 
-            // Anything else: give up but don't propagate an error
-            _ => Ok(Type::Any),
+            _ => Err(format!("No common type for {:?} and {:?}", type1, type2)),
         }
     }
 
@@ -769,71 +762,6 @@ impl<'ctx> CompilationContext<'ctx> {
                     .unwrap();
 
                 Ok(none_ptr)
-            },
-            crate::compiler::types::Type::List(_elem_type) => {
-                // For all lists, we'll use the print_list function
-                // which will handle the individual element types at runtime
-                let _print_list_fn = match self.module.get_function("print_list") {
-                    Some(f) => f,
-                    None => {
-                        let void_type = self.llvm_context.void_type();
-                        let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                        let fn_type = void_type.fn_type(&[ptr_type.into()], false);
-                        self.module.add_function("print_list", fn_type, None)
-                    }
-                };
-
-                // We'll return the list pointer directly, as print_list will handle the conversion
-                if value.is_pointer_value() {
-                    Ok(value.into_pointer_value())
-                } else {
-                    Err("Expected pointer value for list".to_string())
-                }
-            },
-            crate::compiler::types::Type::Tuple(_element_types) => {
-                // For tuples representing heterogeneous list types, we want to return the actual value
-                // not just a type description
-                if value.is_pointer_value() {
-                    Ok(value.into_pointer_value())
-                } else {
-                    // If it's not a pointer, we need to create a string representation
-                    let s = format!("<value>");
-                    let tuple_str = self.llvm_context.const_string(s.as_bytes(), true);
-                    let tuple_global = self.module.add_global(tuple_str.get_type(), None, "tuple_str");
-                    tuple_global.set_constant(true);
-                    tuple_global.set_initializer(&tuple_str);
-
-                    let tuple_ptr = self
-                        .builder
-                        .build_pointer_cast(
-                            tuple_global.as_pointer_value(),
-                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
-                            "tuple_ptr",
-                        )
-                        .unwrap();
-
-                    Ok(tuple_ptr)
-                }
-            },
-            crate::compiler::types::Type::Any => {
-                // For Any type, we'll try to determine the actual type at runtime
-                let any_to_string_fn = self.module.get_function("any_to_string").unwrap_or_else(|| {
-                    let str_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                    let void_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                    let fn_type = str_ptr_type.fn_type(&[void_ptr_type.into()], false);
-                    self.module.add_function("any_to_string", fn_type, None)
-                });
-
-                let call = self.builder.build_call(
-                    any_to_string_fn,
-                    &[value.into()],
-                    "any_str"
-                ).unwrap();
-
-                let result = call.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to convert Any to string".to_string())?;
-
-                Ok(result.into_pointer_value())
             },
             _ => {
                 // For other types, use a placeholder string

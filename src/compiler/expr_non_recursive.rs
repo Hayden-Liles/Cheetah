@@ -795,28 +795,21 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     }
 
                     let mut elements = Vec::with_capacity(elements_count);
-                    let mut element_types = Vec::with_capacity(elements_count);
+                    let mut element_type = Type::Unknown;
 
                     for _ in 0..elements_count {
                         let idx = result_stack.len() - 1;
                         let element = result_stack.remove(idx);
                         elements.push(element.value);
-                        element_types.push(element.ty);
+
+                        if element_type == Type::Unknown {
+                            element_type = element.ty;
+                        } else if element_type != element.ty {
+                            element_type = Type::Any;
+                        }
                     }
 
                     elements.reverse();
-                    element_types.reverse();
-
-                    // Determine the element type
-                    let element_type = if element_types.is_empty() {
-                        Type::Unknown
-                    } else if element_types.iter().all(|t| t == &element_types[0]) {
-                        // All elements have the same type
-                        element_types[0].clone()
-                    } else {
-                        // Heterogeneous list - use Any type instead of Tuple
-                        Type::Any
-                    };
 
                     let list_ptr = self.build_list(elements, &element_type)?;
 
