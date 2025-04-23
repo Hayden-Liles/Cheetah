@@ -12,6 +12,7 @@ pub mod parallel_ops;
 pub mod print_ops;
 pub mod range;
 pub mod string;
+pub mod value;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -47,4 +48,7 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register min and max functions
     min_max_ops::register_min_max_functions(context, module);
+
+    // Register value functions
+    value::register_value_functions(context, module);
 }

@@ -8,6 +8,7 @@ use inkwell::AddressSpace;
 use std::ptr;
 use std::ffi::c_void;
 use super::list::RawList;
+use super::value::Value;
 
 /// C-compatible dict struct
 #[repr(C)]
@@ -19,22 +20,22 @@ pub struct Dict {
 
 #[repr(C)]
 pub struct DictEntry {
-    key: *mut c_void,
-    value: *mut c_void,
+    key: *mut Value,
+    value: *mut Value,
     hash: i64,
 }
 
 #[repr(C)]
 pub struct Tuple {
     length: i64,
-    data: *mut *mut c_void,
+    data: *mut *mut Value,
 }
 
 unsafe fn tuple_new(length: i64) -> *mut Tuple {
     let tuple = std::alloc::alloc(std::alloc::Layout::new::<Tuple>()) as *mut Tuple;
     (*tuple).length = length;
-    let layout = std::alloc::Layout::array::<*mut c_void>(length as usize).unwrap();
-    (*tuple).data = std::alloc::alloc(layout) as *mut *mut c_void;
+    let layout = std::alloc::Layout::array::<*mut Value>(length as usize).unwrap();
+    (*tuple).data = std::alloc::alloc(layout) as *mut *mut Value;
     std::ptr::write_bytes((*tuple).data as *mut u8, 0, layout.size());
     tuple
 }
@@ -61,8 +62,8 @@ pub unsafe extern "C" fn dict_with_capacity(cap: i64) -> *mut Dict {
 #[no_mangle]
 pub unsafe extern "C" fn dict_set(
     dict: *mut Dict,
-    key: *mut std::ffi::c_void,
-    value: *mut std::ffi::c_void,
+    key: *mut Value,
+    value: *mut Value,
 ) {
     if dict.is_null() { return; }
     let d = &mut *dict;
@@ -109,8 +110,8 @@ pub unsafe extern "C" fn dict_set(
 #[no_mangle]
 pub unsafe extern "C" fn dict_get(
     dict: *mut Dict,
-    key: *mut std::ffi::c_void,
-) -> *mut std::ffi::c_void {
+    key: *mut Value,
+) -> *mut Value {
     if dict.is_null() { return ptr::null_mut(); }
     let d = &*dict;
 
@@ -127,7 +128,7 @@ pub unsafe extern "C" fn dict_get(
 #[no_mangle]
 pub unsafe extern "C" fn dict_contains(
     dict: *mut Dict,
-    key: *mut std::ffi::c_void,
+    key: *mut Value,
 ) -> bool {
     if dict.is_null() { return false; }
     let d = &*dict;
@@ -175,6 +176,7 @@ pub unsafe extern "C" fn dict_keys(dict: *mut Dict) -> *mut RawList {
     for i in 0..(*dict).capacity {
         let entry = entries.add(i as usize);
         if !(*entry).key.is_null() {
+            // The key is already a Value pointer
             *(*keys_list).data.add(added as usize) = (*entry).key;
             added += 1;
         }
@@ -197,6 +199,7 @@ pub unsafe extern "C" fn dict_values(dict: *mut Dict) -> *mut RawList {
     for i in 0..(*dict).capacity {
         let entry = entries.add(i as usize);
         if !(*entry).key.is_null() {
+            // The value is already a Value pointer
             *(*values_list).data.add(added as usize) = (*entry).value;
             added += 1;
         }
@@ -222,7 +225,9 @@ pub unsafe extern "C" fn dict_items(dict: *mut Dict) -> *mut RawList {
             let tpl = tuple_new(2);
             *(*tpl).data.add(0) = (*entry).key;
             *(*tpl).data.add(1) = (*entry).value;
-            *(*items_list).data.add(added as usize) = tpl as *mut c_void;
+            // Create a Value with tag Tuple
+            let tuple_value = super::value::value_alloc(super::value::ValueTag::Tuple, tpl as *mut c_void);
+            *(*items_list).data.add(added as usize) = tuple_value;
             added += 1;
         }
     }
