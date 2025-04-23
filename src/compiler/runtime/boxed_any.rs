@@ -1,0 +1,664 @@
+// boxed_any.rs - Implementation of the BoxedAny type for Cheetah's single blessed value layout
+//
+// This file implements a tagged union representation for all Cheetah values.
+// BoxedAny is a struct that can represent any value in the Cheetah language,
+// with a type tag to indicate what kind of value it contains.
+
+use std::ffi::{c_void, CStr, CString};
+use std::os::raw::c_char;
+use std::ptr;
+use libc::{free, malloc};
+
+use inkwell::context::Context;
+use inkwell::module::Module;
+use inkwell::AddressSpace;
+
+/// Type tags for BoxedAny values
+pub mod type_tags {
+    pub const INT: i32 = 1;
+    pub const FLOAT: i32 = 2;
+    pub const BOOL: i32 = 3;
+    pub const NONE: i32 = 4;
+    pub const STRING: i32 = 5;
+    pub const BYTES: i32 = 6;
+    pub const LIST: i32 = 7;
+    pub const TUPLE: i32 = 8;
+    pub const DICT: i32 = 9;
+    pub const SET: i32 = 10;
+    pub const FUNCTION: i32 = 11;
+    pub const CLASS: i32 = 12;
+}
+
+/// A tagged union representing any Cheetah value
+#[repr(C)]
+pub struct BoxedAny {
+    /// Type tag indicating what kind of value this is
+    pub tag: i32,
+    /// The actual value data
+    pub data: ValueData,
+}
+
+/// Union of all possible value types
+#[repr(C)]
+pub union ValueData {
+    /// Integer value
+    pub int_val: i64,
+    /// Float value
+    pub float_val: f64,
+    /// Boolean value (stored as i8 for alignment)
+    pub bool_val: i8,
+    /// Pointer to heap-allocated data (for strings, lists, etc.)
+    pub ptr_val: *mut c_void,
+}
+
+/// Create a BoxedAny from an integer
+#[no_mangle]
+pub extern "C" fn boxed_any_from_int(value: i64) -> *mut BoxedAny {
+    let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
+    unsafe {
+        (*boxed).tag = type_tags::INT;
+        (*boxed).data.int_val = value;
+    }
+    boxed
+}
+
+/// Create a BoxedAny from a float
+#[no_mangle]
+pub extern "C" fn boxed_any_from_float(value: f64) -> *mut BoxedAny {
+    let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
+    unsafe {
+        (*boxed).tag = type_tags::FLOAT;
+        (*boxed).data.float_val = value;
+    }
+    boxed
+}
+
+/// Create a BoxedAny from a boolean
+#[no_mangle]
+pub extern "C" fn boxed_any_from_bool(value: bool) -> *mut BoxedAny {
+    let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
+    unsafe {
+        (*boxed).tag = type_tags::BOOL;
+        (*boxed).data.bool_val = if value { 1 } else { 0 };
+    }
+    boxed
+}
+
+/// Create a BoxedAny representing None
+#[no_mangle]
+pub extern "C" fn boxed_any_none() -> *mut BoxedAny {
+    let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
+    unsafe {
+        (*boxed).tag = type_tags::NONE;
+        (*boxed).data.ptr_val = ptr::null_mut();
+    }
+    boxed
+}
+
+/// Create a BoxedAny from a C string
+#[no_mangle]
+pub extern "C" fn boxed_any_from_string(value: *const c_char) -> *mut BoxedAny {
+    if value.is_null() {
+        return boxed_any_none();
+    }
+
+    let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
+
+    unsafe {
+        let c_str = CStr::from_ptr(value);
+        let len = c_str.to_bytes().len();
+
+        // Allocate memory for the string (including null terminator)
+        let str_ptr = malloc(len + 1) as *mut c_char;
+
+        // Copy the string content
+        ptr::copy_nonoverlapping(value, str_ptr, len + 1);
+
+        (*boxed).tag = type_tags::STRING;
+        (*boxed).data.ptr_val = str_ptr as *mut c_void;
+    }
+
+    boxed
+}
+
+/// Free a BoxedAny value
+#[no_mangle]
+pub extern "C" fn boxed_any_free(value: *mut BoxedAny) {
+    if value.is_null() {
+        return;
+    }
+
+    unsafe {
+        // Free any heap-allocated data based on the tag
+        match (*value).tag {
+            type_tags::STRING | type_tags::BYTES => {
+                if !(*value).data.ptr_val.is_null() {
+                    free((*value).data.ptr_val);
+                }
+            },
+            type_tags::LIST | type_tags::TUPLE => {
+                // For lists and tuples, we need to free the list structure
+                // This will be implemented later when we update the list implementation
+            },
+            type_tags::DICT => {
+                // For dictionaries, we need to free the dict structure
+                // This will be implemented later when we update the dict implementation
+            },
+            _ => {
+                // Other types don't have heap-allocated data
+            }
+        }
+
+        // Free the BoxedAny itself
+        free(value as *mut c_void);
+    }
+}
+
+/// Get the type tag of a BoxedAny value
+#[no_mangle]
+pub extern "C" fn boxed_any_get_type(value: *const BoxedAny) -> i32 {
+    if value.is_null() {
+        return type_tags::NONE;
+    }
+
+    unsafe { (*value).tag }
+}
+
+/// Convert a BoxedAny to a string representation
+#[no_mangle]
+pub extern "C" fn boxed_any_to_string(value: *const BoxedAny) -> *mut c_char {
+    if value.is_null() {
+        return CString::new("None").unwrap().into_raw();
+    }
+
+    unsafe {
+        match (*value).tag {
+            type_tags::INT => {
+                let s = format!("{}", (*value).data.int_val);
+                CString::new(s).unwrap().into_raw()
+            },
+            type_tags::FLOAT => {
+                let s = format!("{}", (*value).data.float_val);
+                CString::new(s).unwrap().into_raw()
+            },
+            type_tags::BOOL => {
+                let s = if (*value).data.bool_val != 0 { "True" } else { "False" };
+                CString::new(s).unwrap().into_raw()
+            },
+            type_tags::NONE => {
+                CString::new("None").unwrap().into_raw()
+            },
+            type_tags::STRING => {
+                if (*value).data.ptr_val.is_null() {
+                    CString::new("").unwrap().into_raw()
+                } else {
+                    let c_str = CStr::from_ptr((*value).data.ptr_val as *const c_char);
+                    let s = c_str.to_str().unwrap_or("").to_string();
+                    CString::new(s).unwrap().into_raw()
+                }
+            },
+            _ => {
+                let s = format!("<object at {:p}>", value);
+                CString::new(s).unwrap().into_raw()
+            }
+        }
+    }
+}
+
+/// Clone a BoxedAny value
+#[no_mangle]
+pub extern "C" fn boxed_any_clone(value: *const BoxedAny) -> *mut BoxedAny {
+    if value.is_null() {
+        return boxed_any_none();
+    }
+
+    unsafe {
+        match (*value).tag {
+            type_tags::INT => {
+                boxed_any_from_int((*value).data.int_val)
+            },
+            type_tags::FLOAT => {
+                boxed_any_from_float((*value).data.float_val)
+            },
+            type_tags::BOOL => {
+                boxed_any_from_bool((*value).data.bool_val != 0)
+            },
+            type_tags::NONE => {
+                boxed_any_none()
+            },
+            type_tags::STRING => {
+                if (*value).data.ptr_val.is_null() {
+                    boxed_any_from_string(ptr::null())
+                } else {
+                    boxed_any_from_string((*value).data.ptr_val as *const c_char)
+                }
+            },
+            _ => {
+                // For other types, we'll implement deep cloning later
+                // For now, just create a shallow copy
+                let boxed = malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny;
+                ptr::copy_nonoverlapping(value, boxed, 1);
+                boxed
+            }
+        }
+    }
+}
+
+// Basic arithmetic operations
+
+/// Add two BoxedAny values
+#[no_mangle]
+pub extern "C" fn boxed_any_add(a: *const BoxedAny, b: *const BoxedAny) -> *mut BoxedAny {
+    if a.is_null() || b.is_null() {
+        return boxed_any_none();
+    }
+
+    unsafe {
+        match ((*a).tag, (*b).tag) {
+            (type_tags::INT, type_tags::INT) => {
+                let result = (*a).data.int_val + (*b).data.int_val;
+                boxed_any_from_int(result)
+            },
+            (type_tags::FLOAT, type_tags::FLOAT) => {
+                let result = (*a).data.float_val + (*b).data.float_val;
+                boxed_any_from_float(result)
+            },
+            (type_tags::INT, type_tags::FLOAT) => {
+                let result = (*a).data.int_val as f64 + (*b).data.float_val;
+                boxed_any_from_float(result)
+            },
+            (type_tags::FLOAT, type_tags::INT) => {
+                let result = (*a).data.float_val + (*b).data.int_val as f64;
+                boxed_any_from_float(result)
+            },
+            (type_tags::STRING, type_tags::STRING) => {
+                // String concatenation will be implemented later
+                // For now, return None
+                boxed_any_none()
+            },
+            _ => {
+                // Type error
+                boxed_any_none()
+            }
+        }
+    }
+}
+
+/// Subtract two BoxedAny values
+#[no_mangle]
+pub extern "C" fn boxed_any_subtract(a: *const BoxedAny, b: *const BoxedAny) -> *mut BoxedAny {
+    if a.is_null() || b.is_null() {
+        return boxed_any_none();
+    }
+
+    unsafe {
+        match ((*a).tag, (*b).tag) {
+            (type_tags::INT, type_tags::INT) => {
+                let result = (*a).data.int_val - (*b).data.int_val;
+                boxed_any_from_int(result)
+            },
+            (type_tags::FLOAT, type_tags::FLOAT) => {
+                let result = (*a).data.float_val - (*b).data.float_val;
+                boxed_any_from_float(result)
+            },
+            (type_tags::INT, type_tags::FLOAT) => {
+                let result = (*a).data.int_val as f64 - (*b).data.float_val;
+                boxed_any_from_float(result)
+            },
+            (type_tags::FLOAT, type_tags::INT) => {
+                let result = (*a).data.float_val - (*b).data.int_val as f64;
+                boxed_any_from_float(result)
+            },
+            _ => {
+                // Type error
+                boxed_any_none()
+            }
+        }
+    }
+}
+
+/// Multiply two BoxedAny values
+#[no_mangle]
+pub extern "C" fn boxed_any_multiply(a: *const BoxedAny, b: *const BoxedAny) -> *mut BoxedAny {
+    if a.is_null() || b.is_null() {
+        return boxed_any_none();
+    }
+
+    unsafe {
+        match ((*a).tag, (*b).tag) {
+            (type_tags::INT, type_tags::INT) => {
+                let result = (*a).data.int_val * (*b).data.int_val;
+                boxed_any_from_int(result)
+            },
+            (type_tags::FLOAT, type_tags::FLOAT) => {
+                let result = (*a).data.float_val * (*b).data.float_val;
+                boxed_any_from_float(result)
+            },
+            (type_tags::INT, type_tags::FLOAT) => {
+                let result = (*a).data.int_val as f64 * (*b).data.float_val;
+                boxed_any_from_float(result)
+            },
+            (type_tags::FLOAT, type_tags::INT) => {
+                let result = (*a).data.float_val * (*b).data.int_val as f64;
+                boxed_any_from_float(result)
+            },
+            _ => {
+                // Type error
+                boxed_any_none()
+            }
+        }
+    }
+}
+
+/// Divide two BoxedAny values
+#[no_mangle]
+pub extern "C" fn boxed_any_divide(a: *const BoxedAny, b: *const BoxedAny) -> *mut BoxedAny {
+    if a.is_null() || b.is_null() {
+        return boxed_any_none();
+    }
+
+    unsafe {
+        match ((*a).tag, (*b).tag) {
+            (type_tags::INT, type_tags::INT) => {
+                if (*b).data.int_val == 0 {
+                    // Division by zero
+                    return boxed_any_none();
+                }
+                let result = (*a).data.int_val / (*b).data.int_val;
+                boxed_any_from_int(result)
+            },
+            (type_tags::FLOAT, type_tags::FLOAT) => {
+                if (*b).data.float_val == 0.0 {
+                    // Division by zero
+                    return boxed_any_none();
+                }
+                let result = (*a).data.float_val / (*b).data.float_val;
+                boxed_any_from_float(result)
+            },
+            (type_tags::INT, type_tags::FLOAT) => {
+                if (*b).data.float_val == 0.0 {
+                    // Division by zero
+                    return boxed_any_none();
+                }
+                let result = (*a).data.int_val as f64 / (*b).data.float_val;
+                boxed_any_from_float(result)
+            },
+            (type_tags::FLOAT, type_tags::INT) => {
+                if (*b).data.int_val == 0 {
+                    // Division by zero
+                    return boxed_any_none();
+                }
+                let result = (*a).data.float_val / (*b).data.int_val as f64;
+                boxed_any_from_float(result)
+            },
+            _ => {
+                // Type error
+                boxed_any_none()
+            }
+        }
+    }
+}
+
+// Comparison operations
+
+/// Compare two BoxedAny values for equality
+#[no_mangle]
+pub extern "C" fn boxed_any_equals(a: *const BoxedAny, b: *const BoxedAny) -> bool {
+    if a.is_null() && b.is_null() {
+        return true;
+    }
+    if a.is_null() || b.is_null() {
+        return false;
+    }
+
+    unsafe {
+        if (*a).tag != (*b).tag {
+            // Special case for numeric types
+            match ((*a).tag, (*b).tag) {
+                (type_tags::INT, type_tags::FLOAT) => {
+                    return (*a).data.int_val as f64 == (*b).data.float_val;
+                },
+                (type_tags::FLOAT, type_tags::INT) => {
+                    return (*a).data.float_val == (*b).data.int_val as f64;
+                },
+                _ => return false,
+            }
+        }
+
+        match (*a).tag {
+            type_tags::INT => (*a).data.int_val == (*b).data.int_val,
+            type_tags::FLOAT => (*a).data.float_val == (*b).data.float_val,
+            type_tags::BOOL => (*a).data.bool_val == (*b).data.bool_val,
+            type_tags::NONE => true, // None equals None
+            type_tags::STRING => {
+                if (*a).data.ptr_val.is_null() && (*b).data.ptr_val.is_null() {
+                    true
+                } else if (*a).data.ptr_val.is_null() || (*b).data.ptr_val.is_null() {
+                    false
+                } else {
+                    let str_a = CStr::from_ptr((*a).data.ptr_val as *const c_char);
+                    let str_b = CStr::from_ptr((*b).data.ptr_val as *const c_char);
+                    str_a.to_bytes() == str_b.to_bytes()
+                }
+            },
+            _ => {
+                // For other types, compare pointer values
+                (*a).data.ptr_val == (*b).data.ptr_val
+            }
+        }
+    }
+}
+
+/// Convert a BoxedAny to a boolean value
+#[no_mangle]
+pub extern "C" fn boxed_any_to_bool(value: *const BoxedAny) -> bool {
+    if value.is_null() {
+        return false;
+    }
+
+    unsafe {
+        match (*value).tag {
+            type_tags::INT => (*value).data.int_val != 0,
+            type_tags::FLOAT => (*value).data.float_val != 0.0,
+            type_tags::BOOL => (*value).data.bool_val != 0,
+            type_tags::NONE => false,
+            type_tags::STRING => {
+                if (*value).data.ptr_val.is_null() {
+                    false
+                } else {
+                    let c_str = CStr::from_ptr((*value).data.ptr_val as *const c_char);
+                    !c_str.to_bytes().is_empty()
+                }
+            },
+            _ => true, // Other objects are truthy by default
+        }
+    }
+}
+
+/// Convert a BoxedAny to an integer value
+#[no_mangle]
+pub extern "C" fn boxed_any_to_int(value: *const BoxedAny) -> i64 {
+    if value.is_null() {
+        return 0;
+    }
+
+    unsafe {
+        match (*value).tag {
+            type_tags::INT => (*value).data.int_val,
+            type_tags::FLOAT => (*value).data.float_val as i64,
+            type_tags::BOOL => if (*value).data.bool_val != 0 { 1 } else { 0 },
+            type_tags::STRING => {
+                if (*value).data.ptr_val.is_null() {
+                    0
+                } else {
+                    let c_str = CStr::from_ptr((*value).data.ptr_val as *const c_char);
+                    if let Ok(s) = c_str.to_str() {
+                        s.parse::<i64>().unwrap_or(0)
+                    } else {
+                        0
+                    }
+                }
+            },
+            _ => 0,
+        }
+    }
+}
+
+/// Convert a BoxedAny to a float value
+#[no_mangle]
+pub extern "C" fn boxed_any_to_float(value: *const BoxedAny) -> f64 {
+    if value.is_null() {
+        return 0.0;
+    }
+
+    unsafe {
+        match (*value).tag {
+            type_tags::INT => (*value).data.int_val as f64,
+            type_tags::FLOAT => (*value).data.float_val,
+            type_tags::BOOL => if (*value).data.bool_val != 0 { 1.0 } else { 0.0 },
+            type_tags::STRING => {
+                if (*value).data.ptr_val.is_null() {
+                    0.0
+                } else {
+                    let c_str = CStr::from_ptr((*value).data.ptr_val as *const c_char);
+                    if let Ok(s) = c_str.to_str() {
+                        s.parse::<f64>().unwrap_or(0.0)
+                    } else {
+                        0.0
+                    }
+                }
+            },
+            _ => 0.0,
+        }
+    }
+}
+
+// Type conversion functions
+
+/// Convert a BoxedAny to an integer BoxedAny
+#[no_mangle]
+pub extern "C" fn boxed_any_as_int(value: *const BoxedAny) -> *mut BoxedAny {
+    if value.is_null() {
+        return boxed_any_from_int(0);
+    }
+
+    boxed_any_from_int(boxed_any_to_int(value))
+}
+
+/// Convert a BoxedAny to a float BoxedAny
+#[no_mangle]
+pub extern "C" fn boxed_any_as_float(value: *const BoxedAny) -> *mut BoxedAny {
+    if value.is_null() {
+        return boxed_any_from_float(0.0);
+    }
+
+    boxed_any_from_float(boxed_any_to_float(value))
+}
+
+/// Convert a BoxedAny to a boolean BoxedAny
+#[no_mangle]
+pub extern "C" fn boxed_any_as_bool(value: *const BoxedAny) -> *mut BoxedAny {
+    if value.is_null() {
+        return boxed_any_from_bool(false);
+    }
+
+    boxed_any_from_bool(boxed_any_to_bool(value))
+}
+
+/// Convert a BoxedAny to a string BoxedAny
+#[no_mangle]
+pub extern "C" fn boxed_any_as_string(value: *const BoxedAny) -> *mut BoxedAny {
+    if value.is_null() {
+        return boxed_any_from_string(CString::new("None").unwrap().as_ptr());
+    }
+
+    let c_str = boxed_any_to_string(value);
+    let result = boxed_any_from_string(c_str);
+
+    // Free the temporary C string
+    unsafe {
+        let _ = CString::from_raw(c_str);
+    }
+
+    result
+}
+
+/// Register BoxedAny functions in the module
+pub fn register_boxed_any_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
+    // Define external functions for BoxedAny operations
+    let void_type = context.void_type();
+    let i32_type = context.i32_type();
+    let i64_type = context.i64_type();
+    let f64_type = context.f64_type();
+    let bool_type = context.bool_type();
+    let char_ptr_type = context.ptr_type(AddressSpace::default());
+    let void_ptr_type = context.ptr_type(AddressSpace::default());
+
+    // Define BoxedAny pointer type
+    let boxed_any_ptr_type = void_ptr_type;
+
+    // Creation functions
+    let boxed_any_from_int_type = boxed_any_ptr_type.fn_type(&[i64_type.into()], false);
+    module.add_function("boxed_any_from_int", boxed_any_from_int_type, None);
+
+    let boxed_any_from_float_type = boxed_any_ptr_type.fn_type(&[f64_type.into()], false);
+    module.add_function("boxed_any_from_float", boxed_any_from_float_type, None);
+
+    let boxed_any_from_bool_type = boxed_any_ptr_type.fn_type(&[bool_type.into()], false);
+    module.add_function("boxed_any_from_bool", boxed_any_from_bool_type, None);
+
+    let boxed_any_none_type = boxed_any_ptr_type.fn_type(&[], false);
+    module.add_function("boxed_any_none", boxed_any_none_type, None);
+
+    let boxed_any_from_string_type = boxed_any_ptr_type.fn_type(&[char_ptr_type.into()], false);
+    module.add_function("boxed_any_from_string", boxed_any_from_string_type, None);
+
+    // Memory management functions
+    let boxed_any_free_type = void_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_free", boxed_any_free_type, None);
+
+    let boxed_any_clone_type = boxed_any_ptr_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_clone", boxed_any_clone_type, None);
+
+    // Type information functions
+    let boxed_any_get_type_type = i32_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_get_type", boxed_any_get_type_type, None);
+
+    // Conversion functions
+    let boxed_any_to_string_type = char_ptr_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_to_string", boxed_any_to_string_type, None);
+
+    let boxed_any_to_bool_type = bool_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_to_bool", boxed_any_to_bool_type, None);
+
+    let boxed_any_to_int_type = i64_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_to_int", boxed_any_to_int_type, None);
+
+    let boxed_any_to_float_type = f64_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_to_float", boxed_any_to_float_type, None);
+
+    // Type conversion functions
+    let boxed_any_as_int_type = boxed_any_ptr_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_as_int", boxed_any_as_int_type, None);
+
+    let boxed_any_as_float_type = boxed_any_ptr_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_as_float", boxed_any_as_float_type, None);
+
+    let boxed_any_as_bool_type = boxed_any_ptr_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_as_bool", boxed_any_as_bool_type, None);
+
+    let boxed_any_as_string_type = boxed_any_ptr_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_as_string", boxed_any_as_string_type, None);
+
+    // Arithmetic operations
+    let binary_op_type = boxed_any_ptr_type.fn_type(&[boxed_any_ptr_type.into(), boxed_any_ptr_type.into()], false);
+
+    module.add_function("boxed_any_add", binary_op_type, None);
+    module.add_function("boxed_any_subtract", binary_op_type, None);
+    module.add_function("boxed_any_multiply", binary_op_type, None);
+    module.add_function("boxed_any_divide", binary_op_type, None);
+
+    // Comparison operations
+    let equals_type = bool_type.fn_type(&[boxed_any_ptr_type.into(), boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_equals", equals_type, None);
+}

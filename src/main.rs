@@ -8,7 +8,7 @@ use std::os::raw::c_char;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 
-use cheetah::compiler::runtime::{
+use cheetah::compiler::runtime::{boxed_any,
     buffer, parallel_ops,
     print_ops::{print_bool, print_float, print_int, print_string, println_string},
     range, min_max_ops,
@@ -1351,6 +1351,14 @@ fn register_runtime_functions(
         }
     }
 
+    // Register BoxedAny functions
+    if let Err(e) = register_boxed_any_jit_functions(engine, module) {
+        println!(
+            "{}",
+            format!("Warning: Failed to register BoxedAny functions: {}", e).bright_yellow()
+        );
+    }
+
     Ok(())
 }
 
@@ -1457,4 +1465,103 @@ extern "C" fn jit_string_length(string: *const c_char) -> i64 {
     let cstr = unsafe { CStr::from_ptr(string) };
     let s = cstr.to_str().unwrap_or("");
     s.len() as i64
+}
+
+/// Register BoxedAny JIT functions
+fn register_boxed_any_jit_functions(
+    engine: &inkwell::execution_engine::ExecutionEngine<'_>,
+    module: &inkwell::module::Module<'_>,
+) -> Result<(), String> {
+    // BoxedAny creation functions
+    if let Some(function) = module.get_function("boxed_any_from_int") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_from_int as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_from_float") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_from_float as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_from_bool") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_from_bool as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_none") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_none as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_from_string") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_from_string as usize);
+    }
+
+    // Memory management functions
+    if let Some(function) = module.get_function("boxed_any_free") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_free as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_clone") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_clone as usize);
+    }
+
+    // Type information functions
+    if let Some(function) = module.get_function("boxed_any_get_type") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_get_type as usize);
+    }
+
+    // Conversion functions
+    if let Some(function) = module.get_function("boxed_any_to_string") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_to_string as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_to_bool") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_to_bool as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_to_int") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_to_int as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_to_float") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_to_float as usize);
+    }
+
+    // Type conversion functions
+    if let Some(function) = module.get_function("boxed_any_as_int") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_as_int as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_as_float") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_as_float as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_as_bool") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_as_bool as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_as_string") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_as_string as usize);
+    }
+
+    // Arithmetic operations
+    if let Some(function) = module.get_function("boxed_any_add") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_add as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_subtract") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_subtract as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_multiply") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_multiply as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_divide") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_divide as usize);
+    }
+
+    // Comparison operations
+    if let Some(function) = module.get_function("boxed_any_equals") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_equals as usize);
+    }
+
+    Ok(())
 }
