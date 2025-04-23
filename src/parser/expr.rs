@@ -850,7 +850,7 @@ impl ExprParser for Parser {
                 if is_keyword {
                     self.advance();
 
-                    let value = Box::new(self.parse_expression()?);
+                    let value = Box::new(self.parse_or_test()?);
                     keywords.push((Some(id_name), value));
                     saw_keyword = true;
                 } else if !saw_keyword {
@@ -870,7 +870,7 @@ impl ExprParser for Parser {
                     ));
                 }
             } else if !saw_keyword {
-                args.push(Box::new(self.parse_expression()?));
+                args.push(Box::new(self.parse_or_test()?));
             } else {
                 return Err(ParseError::invalid_syntax(
                     "Positional argument after keyword argument",
@@ -921,7 +921,7 @@ impl ExprParser for Parser {
 
                 if self.match_token(TokenType::Multiply) {
                     let star_token = self.previous_token();
-                    let value = Box::new(self.parse_expression()?);
+                    let value = Box::new(self.parse_or_test()?);
 
                     let mut args = vec![Box::new(Expr::Starred {
                         value,
@@ -950,7 +950,7 @@ impl ExprParser for Parser {
                     };
                 } else if self.match_token(TokenType::Power) {
                     let _star_token = self.previous_token();
-                    let value = Box::new(self.parse_expression()?);
+                    let value = Box::new(self.parse_or_test()?);
 
                     let args = Vec::new();
                     let mut keywords = vec![(None, value)];
@@ -972,7 +972,7 @@ impl ExprParser for Parser {
                         column,
                     };
                 } else {
-                    let first_arg = self.parse_expression()?;
+                    let first_arg = self.parse_or_test()?;
 
                     if self.check(TokenType::For)
                         || (self.check(TokenType::Async) && self.peek_matches(TokenType::For))
@@ -1061,7 +1061,7 @@ impl ExprParser for Parser {
                     {
                         if let Expr::Name { id, .. } = first_arg {
                             self.advance();
-                            let value = Box::new(self.parse_expression()?);
+                            let value = Box::new(self.parse_or_test()?);
 
                             let mut args = Vec::new();
                             let mut keywords = vec![(Some(id), value)];
