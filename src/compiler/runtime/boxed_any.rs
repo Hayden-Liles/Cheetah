@@ -475,6 +475,37 @@ pub extern "C" fn boxed_any_to_bool(value: *const BoxedAny) -> bool {
     }
 }
 
+/// Logical AND operation on two BoxedAny values
+#[no_mangle]
+pub extern "C" fn boxed_any_and(a: *const BoxedAny, b: *const BoxedAny) -> *mut BoxedAny {
+    // Short-circuit evaluation: if a is falsy, return a
+    if !boxed_any_to_bool(a) {
+        return boxed_any_clone(a);
+    }
+
+    // Otherwise, return b
+    boxed_any_clone(b)
+}
+
+/// Logical OR operation on two BoxedAny values
+#[no_mangle]
+pub extern "C" fn boxed_any_or(a: *const BoxedAny, b: *const BoxedAny) -> *mut BoxedAny {
+    // Short-circuit evaluation: if a is truthy, return a
+    if boxed_any_to_bool(a) {
+        return boxed_any_clone(a);
+    }
+
+    // Otherwise, return b
+    boxed_any_clone(b)
+}
+
+/// Logical NOT operation on a BoxedAny value
+#[no_mangle]
+pub extern "C" fn boxed_any_not(value: *const BoxedAny) -> *mut BoxedAny {
+    let result = !boxed_any_to_bool(value);
+    boxed_any_from_bool(result)
+}
+
 /// Convert a BoxedAny to an integer value
 #[no_mangle]
 pub extern "C" fn boxed_any_to_int(value: *const BoxedAny) -> i64 {
@@ -661,4 +692,11 @@ pub fn register_boxed_any_functions<'ctx>(context: &'ctx Context, module: &mut M
     // Comparison operations
     let equals_type = bool_type.fn_type(&[boxed_any_ptr_type.into(), boxed_any_ptr_type.into()], false);
     module.add_function("boxed_any_equals", equals_type, None);
+
+    // Logical operations
+    module.add_function("boxed_any_and", binary_op_type, None);
+    module.add_function("boxed_any_or", binary_op_type, None);
+
+    let unary_op_type = boxed_any_ptr_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_not", unary_op_type, None);
 }

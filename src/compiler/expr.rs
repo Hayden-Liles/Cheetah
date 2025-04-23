@@ -3012,28 +3012,68 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     fn compile_number(&mut self, num: &Number) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         match num {
             Number::Integer(value) => {
+                // Get the boxed_any_from_int function
+                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
+                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
+
+                // Create the integer constant
                 let int_type = self.llvm_context.i64_type();
                 let int_value = int_type.const_int(*value as u64, true);
-                Ok((int_value.into(), Type::Int))
+
+                // Call boxed_any_from_int to create a BoxedAny value
+                let call_site_value = self.builder.build_call(
+                    boxed_any_from_int_fn,
+                    &[int_value.into()],
+                    "boxed_int"
+                ).unwrap();
+
+                let boxed_value = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to create BoxedAny from integer".to_string())?;
+
+                Ok((boxed_value, Type::Int))
             }
             Number::Float(value) => {
+                // Get the boxed_any_from_float function
+                let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
+                    .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
+
+                // Create the float constant
                 let float_type = self.llvm_context.f64_type();
                 let float_value = float_type.const_float(*value);
-                Ok((float_value.into(), Type::Float))
+
+                // Call boxed_any_from_float to create a BoxedAny value
+                let call_site_value = self.builder.build_call(
+                    boxed_any_from_float_fn,
+                    &[float_value.into()],
+                    "boxed_float"
+                ).unwrap();
+
+                let boxed_value = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to create BoxedAny from float".to_string())?;
+
+                Ok((boxed_value, Type::Float))
             }
-            Number::Complex { real, imag } => {
+            Number::Complex { real, imag: _ } => {
+                // For complex numbers, we'll just use the real part for now
+                // Get the boxed_any_from_float function
+                let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
+                    .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
+
+                // Create the float constant for the real part
                 let float_type = self.llvm_context.f64_type();
-                let struct_type = self
-                    .llvm_context
-                    .struct_type(&[float_type.into(), float_type.into()], false);
-
                 let real_value = float_type.const_float(*real);
-                let imag_value = float_type.const_float(*imag);
 
-                let complex_value =
-                    struct_type.const_named_struct(&[real_value.into(), imag_value.into()]);
+                // Call boxed_any_from_float to create a BoxedAny value
+                let call_site_value = self.builder.build_call(
+                    boxed_any_from_float_fn,
+                    &[real_value.into()],
+                    "boxed_complex"
+                ).unwrap();
 
-                Ok((complex_value.into(), Type::Float))
+                let boxed_value = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to create BoxedAny from complex".to_string())?;
+
+                Ok((boxed_value, Type::Float))
             }
         }
     }
@@ -3044,19 +3084,63 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         match constant {
             NameConstant::True => {
+                // Get the boxed_any_from_bool function
+                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                // Create the bool constant
                 let bool_type = self.llvm_context.bool_type();
                 let bool_value = bool_type.const_int(1, false);
-                Ok((bool_value.into(), Type::Bool))
+
+                // Call boxed_any_from_bool to create a BoxedAny value
+                let call_site_value = self.builder.build_call(
+                    boxed_any_from_bool_fn,
+                    &[bool_value.into()],
+                    "boxed_true"
+                ).unwrap();
+
+                let boxed_value = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?;
+
+                Ok((boxed_value, Type::Bool))
             }
             NameConstant::False => {
+                // Get the boxed_any_from_bool function
+                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                // Create the bool constant
                 let bool_type = self.llvm_context.bool_type();
                 let bool_value = bool_type.const_int(0, false);
-                Ok((bool_value.into(), Type::Bool))
+
+                // Call boxed_any_from_bool to create a BoxedAny value
+                let call_site_value = self.builder.build_call(
+                    boxed_any_from_bool_fn,
+                    &[bool_value.into()],
+                    "boxed_false"
+                ).unwrap();
+
+                let boxed_value = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?;
+
+                Ok((boxed_value, Type::Bool))
             }
             NameConstant::None => {
-                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                let null_value = ptr_type.const_null();
-                Ok((null_value.into(), Type::None))
+                // Get the boxed_any_none function
+                let boxed_any_none_fn = self.module.get_function("boxed_any_none")
+                    .ok_or_else(|| "boxed_any_none function not found".to_string())?;
+
+                // Call boxed_any_none to create a BoxedAny value
+                let call_site_value = self.builder.build_call(
+                    boxed_any_none_fn,
+                    &[],
+                    "boxed_none"
+                ).unwrap();
+
+                let boxed_value = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to create BoxedAny for None".to_string())?;
+
+                Ok((boxed_value, Type::None))
             }
         }
     }
@@ -4840,737 +4924,293 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
         right: inkwell::values::BasicValueEnum<'ctx>,
         right_type: &Type,
     ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
-        let common_type = self.get_common_type(left_type, right_type)?;
+        // With BoxedAny, we don't need to convert types before operations
+        // The BoxedAny operations will handle type conversions internally
 
-        let left_converted = if left_type != &common_type {
-            self.convert_type(left, left_type, &common_type)?
-        } else {
-            left
-        };
+        // Make sure we have pointers to BoxedAny values
+        if !left.is_pointer_value() || !right.is_pointer_value() {
+            return Err("Expected BoxedAny pointers for binary operation".to_string());
+        }
 
-        let right_converted = if right_type != &common_type {
-            self.convert_type(right, right_type, &common_type)?
-        } else {
-            right
-        };
+        let left_ptr = left.into_pointer_value();
+        let right_ptr = right.into_pointer_value();
 
+        // Determine which BoxedAny operation to call based on the operator
         match op {
-            Operator::Add => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
-                    let result = self
-                        .builder
-                        .build_int_add(left_int, right_int, "int_add")
-                        .unwrap();
-                    Ok((result.into(), Type::Int))
-                }
-                Type::Float => {
-                    let left_float = left_converted.into_float_value();
-                    let right_float = right_converted.into_float_value();
-                    let result = self
-                        .builder
-                        .build_float_add(left_float, right_float, "float_add")
-                        .unwrap();
-                    Ok((result.into(), Type::Float))
-                }
-                Type::String => {
-                    let string_concat_fn = self
-                        .module
-                        .get_function("string_concat")
-                        .unwrap_or_else(|| {
-                            let str_ptr_type =
-                                self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                            let fn_type = str_ptr_type
-                                .fn_type(&[str_ptr_type.into(), str_ptr_type.into()], false);
-                            self.module.add_function("string_concat", fn_type, None)
-                        });
+            Operator::Add => {
+                // Get the boxed_any_add function
+                let boxed_any_add_fn = self.module.get_function("boxed_any_add")
+                    .ok_or_else(|| "boxed_any_add function not found".to_string())?;
 
-                    let left_ptr = left_converted.into_pointer_value();
-                    let right_ptr = right_converted.into_pointer_value();
-                    let result = self
-                        .builder
-                        .build_call(
-                            string_concat_fn,
-                            &[left_ptr.into(), right_ptr.into()],
-                            "string_concat_result",
-                        )
-                        .unwrap();
+                // Call boxed_any_add to perform the addition
+                let call_site_value = self.builder.build_call(
+                    boxed_any_add_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_add"
+                ).unwrap();
 
-                    if let Some(result_val) = result.try_as_basic_value().left() {
-                        Ok((result_val, Type::String))
-                    } else {
-                        Err("Failed to concatenate strings".to_string())
-                    }
-                }
-                Type::List(elem_type) => {
-                    let list_concat_fn = match self.module.get_function("list_concat") {
-                        Some(f) => f,
-                        None => return Err("list_concat function not found".to_string()),
-                    };
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny addition".to_string())?;
 
-                    let left_ptr = left_converted.into_pointer_value();
-                    let right_ptr = right_converted.into_pointer_value();
-                    let call_site_value = self
-                        .builder
-                        .build_call(
-                            list_concat_fn,
-                            &[left_ptr.into(), right_ptr.into()],
-                            "list_concat_result",
-                        )
-                        .unwrap();
+                // Determine the result type based on the operand types
+                let result_type = if left_type == &Type::Float || right_type == &Type::Float {
+                    Type::Float
+                } else if left_type == &Type::String || right_type == &Type::String {
+                    Type::String
+                } else {
+                    Type::Int
+                };
 
-                    if let Some(ret_val) = call_site_value.try_as_basic_value().left() {
-                        Ok((ret_val, Type::List(elem_type.clone())))
-                    } else {
-                        Err("Failed to concatenate lists".to_string())
-                    }
-                }
-                _ => Err(format!("Addition not supported for type {:?}", common_type)),
+                Ok((result, result_type))
             },
 
-            Operator::Sub => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
-                    let result = self
-                        .builder
-                        .build_int_sub(left_int, right_int, "int_sub")
-                        .unwrap();
-                    Ok((result.into(), Type::Int))
-                }
-                Type::Float => {
-                    let left_float = left_converted.into_float_value();
-                    let right_float = right_converted.into_float_value();
-                    let result = self
-                        .builder
-                        .build_float_sub(left_float, right_float, "float_sub")
-                        .unwrap();
-                    Ok((result.into(), Type::Float))
-                }
-                _ => Err(format!(
-                    "Subtraction not supported for type {:?}",
-                    common_type
-                )),
+            Operator::Sub => {
+                // Get the boxed_any_subtract function
+                let boxed_any_subtract_fn = self.module.get_function("boxed_any_subtract")
+                    .ok_or_else(|| "boxed_any_subtract function not found".to_string())?;
+
+                // Call boxed_any_subtract to perform the subtraction
+                let call_site_value = self.builder.build_call(
+                    boxed_any_subtract_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_subtract"
+                ).unwrap();
+
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny subtraction".to_string())?;
+
+                // Determine the result type based on the operand types
+                let result_type = if left_type == &Type::Float || right_type == &Type::Float {
+                    Type::Float
+                } else {
+                    Type::Int
+                };
+
+                Ok((result, result_type))
             },
 
-            Operator::Mult => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
-                    let result = self
-                        .builder
-                        .build_int_mul(left_int, right_int, "int_mul")
-                        .unwrap();
-                    Ok((result.into(), Type::Int))
-                }
-                Type::Float => {
-                    let left_float = left_converted.into_float_value();
-                    let right_float = right_converted.into_float_value();
-                    let result = self
-                        .builder
-                        .build_float_mul(left_float, right_float, "float_mul")
-                        .unwrap();
-                    Ok((result.into(), Type::Float))
-                }
-                Type::String => {
-                    if let Type::Int = *right_type {
-                        let string_repeat_fn = self
-                            .module
-                            .get_function("string_repeat")
-                            .unwrap_or_else(|| {
-                                let str_ptr_type =
-                                    self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                                let fn_type = str_ptr_type.fn_type(
-                                    &[str_ptr_type.into(), self.llvm_context.i64_type().into()],
-                                    false,
-                                );
-                                self.module.add_function("string_repeat", fn_type, None)
-                            });
+            Operator::Mult => {
+                // Get the boxed_any_multiply function
+                let boxed_any_multiply_fn = self.module.get_function("boxed_any_multiply")
+                    .ok_or_else(|| "boxed_any_multiply function not found".to_string())?;
 
-                        let left_ptr = left_converted.into_pointer_value();
-                        let right_int = right_converted.into_int_value();
-                        let result = self
-                            .builder
-                            .build_call(
-                                string_repeat_fn,
-                                &[left_ptr.into(), right_int.into()],
-                                "string_repeat_result",
-                            )
-                            .unwrap();
+                // Call boxed_any_multiply to perform the multiplication
+                let call_site_value = self.builder.build_call(
+                    boxed_any_multiply_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_multiply"
+                ).unwrap();
 
-                        if let Some(result_val) = result.try_as_basic_value().left() {
-                            return Ok((result_val, Type::String));
-                        } else {
-                            return Err("Failed to repeat string".to_string());
-                        }
-                    }
-                    Err(format!(
-                        "String repetition requires an integer, got {:?}",
-                        right_type
-                    ))
-                }
-                Type::List(elem_type) => {
-                    if let Type::Int = right_type {
-                        let list_repeat_fn = match self.module.get_function("list_repeat") {
-                            Some(f) => f,
-                            None => return Err("list_repeat function not found".to_string()),
-                        };
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny multiplication".to_string())?;
 
-                        let left_ptr = left_converted.into_pointer_value();
-                        let right_int = right_converted.into_int_value();
-                        let call_site_value = self
-                            .builder
-                            .build_call(
-                                list_repeat_fn,
-                                &[left_ptr.into(), right_int.into()],
-                                "list_repeat_result",
-                            )
-                            .unwrap();
+                // Determine the result type based on the operand types
+                let result_type = if left_type == &Type::Float || right_type == &Type::Float {
+                    Type::Float
+                } else if left_type == &Type::String && right_type == &Type::Int {
+                    Type::String
+                } else if left_type == &Type::List(Box::new(Type::Any)) && right_type == &Type::Int {
+                    Type::List(Box::new(Type::Any))
+                } else {
+                    Type::Int
+                };
 
-                        if let Some(ret_val) = call_site_value.try_as_basic_value().left() {
-                            return Ok((ret_val, Type::List(elem_type.clone())));
-                        } else {
-                            return Err("Failed to repeat list".to_string());
-                        }
-                    }
-                    Err(format!(
-                        "List repetition requires an integer, got {:?}",
-                        right_type
-                    ))
-                }
-                _ => Err(format!(
-                    "Multiplication not supported for type {:?}",
-                    common_type
-                )),
+                Ok((result, result_type))
             },
 
-            Operator::Div => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
+            Operator::Div => {
+                // Get the boxed_any_divide function
+                let boxed_any_divide_fn = self.module.get_function("boxed_any_divide")
+                    .ok_or_else(|| "boxed_any_divide function not found".to_string())?;
 
-                    let zero = self.llvm_context.i64_type().const_zero();
-                    let is_zero = self
-                        .builder
-                        .build_int_compare(inkwell::IntPredicate::EQ, right_int, zero, "is_zero")
-                        .unwrap();
+                // Call boxed_any_divide to perform the division
+                let call_site_value = self.builder.build_call(
+                    boxed_any_divide_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_divide"
+                ).unwrap();
 
-                    let current_function = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-                    let div_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "div");
-                    let div_by_zero_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "div_by_zero");
-                    let cont_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "cont");
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny division".to_string())?;
 
-                    self.builder
-                        .build_conditional_branch(is_zero, div_by_zero_bb, div_bb)
-                        .unwrap();
-
-                    self.builder.position_at_end(div_bb);
-                    let left_float = self
-                        .builder
-                        .build_signed_int_to_float(
-                            left_int,
-                            self.llvm_context.f64_type(),
-                            "int_to_float",
-                        )
-                        .unwrap();
-                    let right_float = self
-                        .builder
-                        .build_signed_int_to_float(
-                            right_int,
-                            self.llvm_context.f64_type(),
-                            "int_to_float",
-                        )
-                        .unwrap();
-                    let div_result = self
-                        .builder
-                        .build_float_div(left_float, right_float, "float_div")
-                        .unwrap();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let div_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(div_by_zero_bb);
-                    let error_value = self.llvm_context.f64_type().const_float(f64::NAN);
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let div_by_zero_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(cont_bb);
-                    let phi = self
-                        .builder
-                        .build_phi(self.llvm_context.f64_type(), "div_result")
-                        .unwrap();
-                    phi.add_incoming(&[(&div_result, div_bb), (&error_value, div_by_zero_bb)]);
-
-                    Ok((phi.as_basic_value(), Type::Float))
-                }
-                Type::Float => {
-                    let left_float = left_converted.into_float_value();
-                    let right_float = right_converted.into_float_value();
-
-                    let zero = self.llvm_context.f64_type().const_float(0.0);
-                    let is_zero = self
-                        .builder
-                        .build_float_compare(
-                            inkwell::FloatPredicate::OEQ,
-                            right_float,
-                            zero,
-                            "is_zero",
-                        )
-                        .unwrap();
-
-                    let current_function = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-                    let div_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "div");
-                    let div_by_zero_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "div_by_zero");
-                    let cont_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "cont");
-
-                    self.builder
-                        .build_conditional_branch(is_zero, div_by_zero_bb, div_bb)
-                        .unwrap();
-
-                    self.builder.position_at_end(div_bb);
-                    let div_result = self
-                        .builder
-                        .build_float_div(left_float, right_float, "float_div")
-                        .unwrap();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let div_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(div_by_zero_bb);
-                    let error_value = self.llvm_context.f64_type().const_float(f64::NAN);
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let div_by_zero_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(cont_bb);
-                    let phi = self
-                        .builder
-                        .build_phi(self.llvm_context.f64_type(), "div_result")
-                        .unwrap();
-                    phi.add_incoming(&[(&div_result, div_bb), (&error_value, div_by_zero_bb)]);
-
-                    Ok((phi.as_basic_value(), Type::Float))
-                }
-                _ => Err(format!("Division not supported for type {:?}", common_type)),
+                // Division always returns a float in Python
+                Ok((result, Type::Float))
             },
 
-            Operator::FloorDiv => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
+            Operator::FloorDiv => {
+                // Get the boxed_any_floor_div function
+                let boxed_any_floor_div_fn = self.module.get_function("boxed_any_floor_div")
+                    .ok_or_else(|| "boxed_any_floor_div function not found".to_string())?;
 
-                    let zero = self.llvm_context.i64_type().const_zero();
-                    let is_zero = self
-                        .builder
-                        .build_int_compare(inkwell::IntPredicate::EQ, right_int, zero, "is_zero")
-                        .unwrap();
+                // Call boxed_any_floor_div to perform the floor division
+                let call_site_value = self.builder.build_call(
+                    boxed_any_floor_div_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_floor_div"
+                ).unwrap();
 
-                    let current_function = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-                    let div_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "div");
-                    let div_by_zero_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "div_by_zero");
-                    let cont_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "cont");
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny floor division".to_string())?;
 
-                    self.builder
-                        .build_conditional_branch(is_zero, div_by_zero_bb, div_bb)
-                        .unwrap();
+                // Floor division with integers returns an integer
+                let result_type = if left_type == &Type::Int && right_type == &Type::Int {
+                    Type::Int
+                } else {
+                    Type::Float
+                };
 
-                    self.builder.position_at_end(div_bb);
-                    let div_result = self
-                        .builder
-                        .build_int_signed_div(left_int, right_int, "int_div")
-                        .unwrap();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let div_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(div_by_zero_bb);
-                    let error_value = self.llvm_context.i64_type().const_zero();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let div_by_zero_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(cont_bb);
-                    let phi = self
-                        .builder
-                        .build_phi(self.llvm_context.i64_type(), "div_result")
-                        .unwrap();
-                    phi.add_incoming(&[(&div_result, div_bb), (&error_value, div_by_zero_bb)]);
-
-                    Ok((phi.as_basic_value(), Type::Int))
-                }
-                Type::Float => {
-                    let left_float = left_converted.into_float_value();
-                    let right_float = right_converted.into_float_value();
-
-                    let zero = self.llvm_context.f64_type().const_float(0.0);
-                    let is_zero = self
-                        .builder
-                        .build_float_compare(
-                            inkwell::FloatPredicate::OEQ,
-                            right_float,
-                            zero,
-                            "is_zero",
-                        )
-                        .unwrap();
-
-                    let current_function = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-                    let div_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "div");
-                    let div_by_zero_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "div_by_zero");
-                    let cont_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "cont");
-
-                    self.builder
-                        .build_conditional_branch(is_zero, div_by_zero_bb, div_bb)
-                        .unwrap();
-
-                    self.builder.position_at_end(div_bb);
-                    let div_result = self
-                        .builder
-                        .build_float_div(left_float, right_float, "float_div")
-                        .unwrap();
-                    let floor_result = self
-                        .builder
-                        .build_call(
-                            self.module
-                                .get_function("llvm.floor.f64")
-                                .unwrap_or_else(|| {
-                                    let f64_type = self.llvm_context.f64_type();
-                                    let function_type = f64_type.fn_type(&[f64_type.into()], false);
-                                    self.module
-                                        .add_function("llvm.floor.f64", function_type, None)
-                                }),
-                            &[div_result.into()],
-                            "floor_div",
-                        )
-                        .unwrap();
-                    let floor_result = floor_result.try_as_basic_value().left().unwrap();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let div_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(div_by_zero_bb);
-                    let error_value = self.llvm_context.f64_type().const_float(f64::NAN);
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let div_by_zero_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(cont_bb);
-                    let phi = self
-                        .builder
-                        .build_phi(self.llvm_context.f64_type(), "div_result")
-                        .unwrap();
-                    phi.add_incoming(&[(&floor_result, div_bb), (&error_value, div_by_zero_bb)]);
-
-                    Ok((phi.as_basic_value(), Type::Float))
-                }
-                _ => Err(format!(
-                    "Floor division not supported for type {:?}",
-                    common_type
-                )),
+                Ok((result, result_type))
             },
 
-            Operator::Mod => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
+            Operator::Mod => {
+                // Get the boxed_any_modulo function
+                let boxed_any_modulo_fn = self.module.get_function("boxed_any_modulo")
+                    .ok_or_else(|| "boxed_any_modulo function not found".to_string())?;
 
-                    let zero = self.llvm_context.i64_type().const_zero();
-                    let is_zero = self
-                        .builder
-                        .build_int_compare(inkwell::IntPredicate::EQ, right_int, zero, "is_zero")
-                        .unwrap();
+                // Call boxed_any_modulo to perform the modulo operation
+                let call_site_value = self.builder.build_call(
+                    boxed_any_modulo_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_modulo"
+                ).unwrap();
 
-                    let current_function = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-                    let mod_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "mod");
-                    let mod_by_zero_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "mod_by_zero");
-                    let cont_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "cont");
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny modulo operation".to_string())?;
 
-                    self.builder
-                        .build_conditional_branch(is_zero, mod_by_zero_bb, mod_bb)
-                        .unwrap();
+                // Determine the result type based on the operand types
+                let result_type = if left_type == &Type::Float || right_type == &Type::Float {
+                    Type::Float
+                } else {
+                    Type::Int
+                };
 
-                    self.builder.position_at_end(mod_bb);
-                    let mod_result = self
-                        .builder
-                        .build_int_signed_rem(left_int, right_int, "int_mod")
-                        .unwrap();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let mod_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(mod_by_zero_bb);
-                    let error_value = self.llvm_context.i64_type().const_zero();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let mod_by_zero_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(cont_bb);
-                    let phi = self
-                        .builder
-                        .build_phi(self.llvm_context.i64_type(), "mod_result")
-                        .unwrap();
-                    phi.add_incoming(&[(&mod_result, mod_bb), (&error_value, mod_by_zero_bb)]);
-
-                    Ok((phi.as_basic_value(), Type::Int))
-                }
-                Type::Float => {
-                    let left_float = left_converted.into_float_value();
-                    let right_float = right_converted.into_float_value();
-
-                    let zero = self.llvm_context.f64_type().const_float(0.0);
-                    let is_zero = self
-                        .builder
-                        .build_float_compare(
-                            inkwell::FloatPredicate::OEQ,
-                            right_float,
-                            zero,
-                            "is_zero",
-                        )
-                        .unwrap();
-
-                    let current_function = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-                    let mod_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "mod");
-                    let mod_by_zero_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "mod_by_zero");
-                    let cont_bb = self
-                        .llvm_context
-                        .append_basic_block(current_function, "cont");
-
-                    self.builder
-                        .build_conditional_branch(is_zero, mod_by_zero_bb, mod_bb)
-                        .unwrap();
-
-                    self.builder.position_at_end(mod_bb);
-                    let mod_result = self
-                        .builder
-                        .build_call(
-                            self.module.get_function("fmod").unwrap_or_else(|| {
-                                let f64_type = self.llvm_context.f64_type();
-                                let function_type =
-                                    f64_type.fn_type(&[f64_type.into(), f64_type.into()], false);
-                                self.module.add_function("fmod", function_type, None)
-                            }),
-                            &[left_float.into(), right_float.into()],
-                            "float_mod",
-                        )
-                        .unwrap();
-                    let mod_result = mod_result.try_as_basic_value().left().unwrap();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let mod_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(mod_by_zero_bb);
-                    let error_value = self.llvm_context.f64_type().const_float(f64::NAN);
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
-                    let mod_by_zero_bb = self.builder.get_insert_block().unwrap();
-
-                    self.builder.position_at_end(cont_bb);
-                    let phi = self
-                        .builder
-                        .build_phi(self.llvm_context.f64_type(), "mod_result")
-                        .unwrap();
-                    phi.add_incoming(&[(&mod_result, mod_bb), (&error_value, mod_by_zero_bb)]);
-
-                    Ok((phi.as_basic_value(), Type::Float))
-                }
-                _ => Err(format!("Modulo not supported for type {:?}", common_type)),
+                Ok((result, result_type))
             },
 
-            Operator::Pow => match common_type {
-                Type::Int => {
-                    let left_float = self.convert_type(left_converted, &Type::Int, &Type::Float)?;
-                    let right_float =
-                        self.convert_type(right_converted, &Type::Int, &Type::Float)?;
+            Operator::Pow => {
+                // Get the boxed_any_power function
+                let boxed_any_power_fn = self.module.get_function("boxed_any_power")
+                    .ok_or_else(|| "boxed_any_power function not found".to_string())?;
 
-                    let pow_result = self
-                        .builder
-                        .build_call(
-                            self.module.get_function("llvm.pow.f64").unwrap_or_else(|| {
-                                let f64_type = self.llvm_context.f64_type();
-                                let function_type =
-                                    f64_type.fn_type(&[f64_type.into(), f64_type.into()], false);
-                                self.module
-                                    .add_function("llvm.pow.f64", function_type, None)
-                            }),
-                            &[
-                                left_float.into_float_value().into(),
-                                right_float.into_float_value().into(),
-                            ],
-                            "float_pow",
-                        )
-                        .unwrap();
+                // Call boxed_any_power to perform the power operation
+                let call_site_value = self.builder.build_call(
+                    boxed_any_power_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_power"
+                ).unwrap();
 
-                    let pow_float = pow_result.try_as_basic_value().left().unwrap();
-                    let pow_int = self.convert_type(pow_float, &Type::Float, &Type::Int)?;
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny power operation".to_string())?;
 
-                    Ok((pow_int, Type::Int))
-                }
-                Type::Float => {
-                    let left_float = left_converted.into_float_value();
-                    let right_float = right_converted.into_float_value();
+                // Determine the result type based on the operand types
+                let result_type = if left_type == &Type::Int && right_type == &Type::Int {
+                    // Integer power with positive exponent returns integer
+                    Type::Int
+                } else {
+                    // All other cases return float
+                    Type::Float
+                };
 
-                    let pow_result = self
-                        .builder
-                        .build_call(
-                            self.module.get_function("llvm.pow.f64").unwrap_or_else(|| {
-                                let f64_type = self.llvm_context.f64_type();
-                                let function_type =
-                                    f64_type.fn_type(&[f64_type.into(), f64_type.into()], false);
-                                self.module
-                                    .add_function("llvm.pow.f64", function_type, None)
-                            }),
-                            &[left_float.into(), right_float.into()],
-                            "float_pow",
-                        )
-                        .unwrap();
-
-                    let pow_float = pow_result.try_as_basic_value().left().unwrap();
-
-                    Ok((pow_float, Type::Float))
-                }
-                _ => Err(format!(
-                    "Power operation not supported for type {:?}",
-                    common_type
-                )),
+                Ok((result, result_type))
             },
 
-            Operator::BitOr => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
-                    let result = self
-                        .builder
-                        .build_or(left_int, right_int, "int_or")
-                        .unwrap();
-                    Ok((result.into(), Type::Int))
-                }
-                _ => Err(format!(
-                    "Bitwise OR not supported for type {:?}",
-                    common_type
-                )),
+            Operator::BitOr => {
+                // Get the boxed_any_bit_or function
+                let boxed_any_bit_or_fn = self.module.get_function("boxed_any_bit_or")
+                    .ok_or_else(|| "boxed_any_bit_or function not found".to_string())?;
+
+                // Call boxed_any_bit_or to perform the bitwise OR operation
+                let call_site_value = self.builder.build_call(
+                    boxed_any_bit_or_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_bit_or"
+                ).unwrap();
+
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny bitwise OR operation".to_string())?;
+
+                // Bitwise operations always return integers
+                Ok((result, Type::Int))
             },
 
-            Operator::BitXor => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
-                    let result = self
-                        .builder
-                        .build_xor(left_int, right_int, "int_xor")
-                        .unwrap();
-                    Ok((result.into(), Type::Int))
-                }
-                _ => Err(format!(
-                    "Bitwise XOR not supported for type {:?}",
-                    common_type
-                )),
+            Operator::BitAnd => {
+                // Get the boxed_any_bit_and function
+                let boxed_any_bit_and_fn = self.module.get_function("boxed_any_bit_and")
+                    .ok_or_else(|| "boxed_any_bit_and function not found".to_string())?;
+
+                // Call boxed_any_bit_and to perform the bitwise AND operation
+                let call_site_value = self.builder.build_call(
+                    boxed_any_bit_and_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_bit_and"
+                ).unwrap();
+
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny bitwise AND operation".to_string())?;
+
+                // Bitwise operations always return integers
+                Ok((result, Type::Int))
             },
 
-            Operator::BitAnd => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
-                    let result = self
-                        .builder
-                        .build_and(left_int, right_int, "int_and")
-                        .unwrap();
-                    Ok((result.into(), Type::Int))
-                }
-                _ => Err(format!(
-                    "Bitwise AND not supported for type {:?}",
-                    common_type
-                )),
+            Operator::BitXor => {
+                // Get the boxed_any_bit_xor function
+                let boxed_any_bit_xor_fn = self.module.get_function("boxed_any_bit_xor")
+                    .ok_or_else(|| "boxed_any_bit_xor function not found".to_string())?;
+
+                // Call boxed_any_bit_xor to perform the bitwise XOR operation
+                let call_site_value = self.builder.build_call(
+                    boxed_any_bit_xor_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_bit_xor"
+                ).unwrap();
+
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny bitwise XOR operation".to_string())?;
+
+                // Bitwise operations always return integers
+                Ok((result, Type::Int))
             },
 
-            Operator::LShift => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
-                    let result = self
-                        .builder
-                        .build_left_shift(left_int, right_int, "int_lshift")
-                        .unwrap();
-                    Ok((result.into(), Type::Int))
-                }
-                _ => Err(format!(
-                    "Left shift not supported for type {:?}",
-                    common_type
-                )),
+            Operator::LShift => {
+                // Get the boxed_any_lshift function
+                let boxed_any_lshift_fn = self.module.get_function("boxed_any_lshift")
+                    .ok_or_else(|| "boxed_any_lshift function not found".to_string())?;
+
+                // Call boxed_any_lshift to perform the left shift operation
+                let call_site_value = self.builder.build_call(
+                    boxed_any_lshift_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_lshift"
+                ).unwrap();
+
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny left shift operation".to_string())?;
+
+                // Shift operations always return integers
+                Ok((result, Type::Int))
             },
 
-            Operator::RShift => match common_type {
-                Type::Int => {
-                    let left_int = left_converted.into_int_value();
-                    let right_int = right_converted.into_int_value();
-                    let result = self
-                        .builder
-                        .build_right_shift(left_int, right_int, true, "int_rshift")
-                        .unwrap();
-                    Ok((result.into(), Type::Int))
-                }
-                _ => Err(format!(
-                    "Right shift not supported for type {:?}",
-                    common_type
-                )),
+            Operator::RShift => {
+                // Get the boxed_any_rshift function
+                let boxed_any_rshift_fn = self.module.get_function("boxed_any_rshift")
+                    .ok_or_else(|| "boxed_any_rshift function not found".to_string())?;
+
+                // Call boxed_any_rshift to perform the right shift operation
+                let call_site_value = self.builder.build_call(
+                    boxed_any_rshift_fn,
+                    &[left_ptr.into(), right_ptr.into()],
+                    "boxed_rshift"
+                ).unwrap();
+
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to perform BoxedAny right shift operation".to_string())?;
+
+                // Shift operations always return integers
+                Ok((result, Type::Int))
             },
 
-            Operator::MatMult => Err("Matrix multiplication not yet implemented".to_string()),
-
-            #[allow(unreachable_patterns)]
-            _ => Err(format!("Binary operator {:?} not implemented", op)),
+            // For other operators, we'll need to implement them as needed
+            _ => Err(format!("Binary operator {:?} not yet implemented for BoxedAny", op))
         }
     }
 }

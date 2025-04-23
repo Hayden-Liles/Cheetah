@@ -1,6 +1,11 @@
 // Runtime support module for the Cheetah compiler
 
 pub mod boxed_any;
+pub mod boxed_any_ops;
+pub mod boxed_dict;
+pub mod boxed_list;
+pub mod boxed_print_ops;
+pub mod boxed_tuple;
 pub mod buffer;
 pub mod debug_utils;
 pub mod dict;
@@ -21,6 +26,21 @@ use inkwell::module::Module;
 pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
     // Register BoxedAny functions
     boxed_any::register_boxed_any_functions(context, module);
+
+    // Register BoxedAny operations
+    boxed_any_ops::register_boxed_any_ops_functions(context, module);
+
+    // Register BoxedList functions
+    boxed_list::register_boxed_list_functions(context, module);
+
+    // Register BoxedDict functions
+    boxed_dict::register_boxed_dict_functions(context, module);
+
+    // Register BoxedTuple functions
+    boxed_tuple::register_boxed_tuple_functions(context, module);
+
+    // Register BoxedAny print functions
+    boxed_print_ops::register_boxed_print_functions(context, module);
 
     // Register list operation functions
     list::register_list_functions(context, module);

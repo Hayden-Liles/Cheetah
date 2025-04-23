@@ -346,101 +346,10 @@ impl fmt::Display for Type {
 
 impl Type {
     /// Convert a Cheetah type to an LLVM type
+    /// With the single blessed value layout, all types are represented as BoxedAny pointers
     pub fn to_llvm_type<'ctx>(&self, context: &'ctx Context) -> BasicTypeEnum<'ctx> {
-        match self {
-            Type::Int => context.i64_type().into(),
-            Type::Float => context.f64_type().into(),
-            Type::Bool => context.bool_type().into(),
-            Type::None => context.ptr_type(AddressSpace::default()).into(),
-            Type::String => {
-                let _string_struct = context.struct_type(
-                    &[
-                        context.i64_type().into(),
-                        context.ptr_type(AddressSpace::default()).into(),
-                    ],
-                    false,
-                );
-                context
-                    .ptr_type(AddressSpace::default())
-                    .as_basic_type_enum()
-            }
-            Type::Bytes => {
-                let _bytes_struct = context.struct_type(
-                    &[
-                        context.i64_type().into(),
-                        context.ptr_type(AddressSpace::default()).into(),
-                    ],
-                    false,
-                );
-                context
-                    .ptr_type(AddressSpace::default())
-                    .as_basic_type_enum()
-            }
-            Type::List(element_type) => {
-                let _element_llvm_type = element_type.to_llvm_type(context);
-                let _list_struct = context.struct_type(
-                    &[
-                        context.i64_type().into(),
-                        context.i64_type().into(),
-                        context.ptr_type(AddressSpace::default()).into(),
-                    ],
-                    false,
-                );
-                context
-                    .ptr_type(AddressSpace::default())
-                    .as_basic_type_enum()
-            }
-            Type::Tuple(element_types) => {
-                let element_llvm_types: Vec<_> = element_types
-                    .iter()
-                    .map(|ty| ty.to_llvm_type(context))
-                    .collect();
-                let tuple_struct = context.struct_type(&element_llvm_types, false);
-                tuple_struct.into()
-            }
-            Type::Dict(key_type, value_type) => {
-                let key_llvm_type = key_type.to_llvm_type(context);
-                let value_llvm_type = value_type.to_llvm_type(context);
-                let _entry_struct = context.struct_type(&[key_llvm_type, value_llvm_type], false);
-                let _dict_struct = context.struct_type(
-                    &[
-                        context.i64_type().into(),
-                        context.i64_type().into(),
-                        context.ptr_type(AddressSpace::default()).into(),
-                    ],
-                    false,
-                );
-                context
-                    .ptr_type(AddressSpace::default())
-                    .as_basic_type_enum()
-            }
-            Type::Set(element_type) => {
-                let _element_llvm_type = element_type.to_llvm_type(context);
-                let _set_struct = context.struct_type(
-                    &[
-                        context.i64_type().into(),
-                        context.i64_type().into(),
-                        context.ptr_type(AddressSpace::default()).into(),
-                    ],
-                    false,
-                );
-                context
-                    .ptr_type(AddressSpace::default())
-                    .as_basic_type_enum()
-            }
-            Type::Function { .. } => context
-                .ptr_type(AddressSpace::default())
-                .as_basic_type_enum(),
-            Type::Class { .. } => context
-                .ptr_type(AddressSpace::default())
-                .as_basic_type_enum(),
-            Type::Any | Type::Unknown | Type::TypeParam(_) | Type::Generic { .. } => context
-                .ptr_type(AddressSpace::default())
-                .as_basic_type_enum(),
-            Type::Void => context
-                .ptr_type(AddressSpace::default())
-                .as_basic_type_enum(),
-        }
+        // All types are represented as BoxedAny pointers
+        context.ptr_type(AddressSpace::default()).into()
     }
 
     /// Get the appropriate LLVM void type (use this instead of returning a pointer for Void)
@@ -1338,17 +1247,10 @@ impl Type {
 }
 
 /// Determine if a type is a reference type (pointer to an object)
-pub(crate) fn is_reference_type(ty: &Type) -> bool {
-    matches!(
-        ty,
-        Type::String
-            | Type::Bytes
-            | Type::List(_)
-            | Type::Dict(_, _)
-            | Type::Set(_)
-            | Type::Function { .. }
-            | Type::Class { .. }
-    )
+/// With the single blessed value layout, all types are reference types
+pub(crate) fn is_reference_type(_ty: &Type) -> bool {
+    // All types are reference types with BoxedAny
+    true
 }
 
 /// Type context for tracking variable types during compilation

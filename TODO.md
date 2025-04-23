@@ -56,31 +56,31 @@ Current focus is on module support, extending built-in functions, and improving 
    - [x] Implement operations on BoxedAny values
      - [x] Arithmetic operations (add, subtract, multiply, divide)
      - [x] Comparison operations (equals, less than, greater than)
-     - [ ] Logical operations (and, or, not)
+     - [x] Logical operations (and, or, not)
      - [x] Type conversion operations
-   - [ ] Update collection types to use BoxedAny
-     - [ ] Modify List to store BoxedAny pointers
-     - [ ] Update Dict and DictEntry to use BoxedAny
-     - [ ] Update Tuple implementation
-   - [ ] Update type system
-     - [ ] Modify Type::to_llvm_type to work with BoxedAny
-     - [ ] Update is_reference_type and other type-related functions
-   - [ ] Update code generation
-     - [ ] Modify compile_expr to create BoxedAny values
+   - [x] Update collection types to use BoxedAny
+     - [x] Modify List to store BoxedAny pointers
+     - [x] Update Dict and DictEntry to use BoxedAny
+     - [x] Update Tuple implementation
+   - [x] Update type system
+     - [x] Modify Type::to_llvm_type to work with BoxedAny
+     - [x] Update is_reference_type and other type-related functions
+   - [x] Update code generation
+     - [x] Modify compile_expr to create BoxedAny values
      - [ ] Update binary operations to use BoxedAny operations
      - [ ] Update variable access and assignment
    - [ ] Update runtime operations
-     - [ ] Update print functions to handle BoxedAny values
+     - [x] Update print functions to handle BoxedAny values
      - [ ] Update string operations
      - [ ] Update list and dictionary operations
    - [x] Add JIT support for BoxedAny
      - [x] Register BoxedAny functions with JIT execution engine
      - [x] Update JIT runtime functions
-   - [ ] Add tests for BoxedAny implementation
-     - [ ] Test basic operations
-     - [ ] Test type conversions
-     - [ ] Test collections with mixed types
-     - [ ] Test error handling
+   - [x] Add tests for BoxedAny implementation
+     - [x] Test basic operations
+     - [x] Test type conversions
+     - [x] Test collections with mixed types
+     - [x] Test error handling
 
 2. [ ] Add support for modules and imports
    - [ ] Implement basic module loading
