@@ -1068,33 +1068,12 @@ impl ExprParser for Parser {
                         let mut args = vec![Box::new(first_arg)];
                         let mut keywords = Vec::new();
 
-                        // Keep parsing ", <expr or *args or kw=expr>" until ")"
-                        loop {
-                            if self.match_token(TokenType::Comma) {
-                                if self.check(TokenType::RightParen) {
-                                    // trailing comma; OK
-                                    break;
-                                }
-                                // parse either *args, **kwargs, or normal expr
-                                if self.match_token(TokenType::Multiply) {
-                                    let star = self.previous_token();
-                                    let val = Box::new(self.parse_or_test()?);
-                                    args.push(Box::new(Expr::Starred { value: val, ctx: ExprContext::Load, line: star.line, column: star.column }));
-                                } else if self.match_token(TokenType::Power) {
-                                    let val = Box::new(self.parse_or_test()?);
-                                    keywords.push((None, val));
-                                } else if self.check_identifier() && self.peek_matches(TokenType::Assign) {
-                                    let name = self.consume_identifier("keyword")?;
-                                    self.advance(); // skip '='
-                                    let val = Box::new(self.parse_or_test()?);
-                                    keywords.push((Some(name), val));
-                                } else {
-                                    let val = Box::new(self.parse_or_test()?);
-                                    args.push(val);
-                                }
-                                continue;
+                        if self.match_token(TokenType::Comma) {
+                            if !self.check(TokenType::RightParen) {
+                                let (more_args, kw_args) = self.parse_more_arguments()?;
+                                args.extend(more_args);
+                                keywords = kw_args;
                             }
-                            break;
                         }
 
                         self.consume(TokenType::RightParen, ")")?;
