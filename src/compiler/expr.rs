@@ -967,40 +967,6 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 ))
                             }
                         },
-                        // new arm: list.append(...)
-                        Type::List(_elem_type) if attr == "append" => {
-                            // must have exactly one argument
-                            if args.len() != 1 {
-                                return Err(format!(
-                                    "append() takes exactly one argument ({} given)",
-                                    args.len()
-                                ));
-                            }
-                            // compile the single element
-                            let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
-                            // lookup the runtime function
-                            let list_append_fn = self.module
-                                .get_function("list_append")
-                                .ok_or("runtime function `list_append` not found")?;
-                            // build the call
-                            let list_ptr = obj_val.into_pointer_value();
-                            let element_ptr = if is_reference_type(&arg_ty) {
-                                arg_val.into_pointer_value()
-                            } else {
-                                let tmp = self.builder.build_alloca(arg_val.get_type(), "append_elem").unwrap();
-                                self.builder.build_store(tmp, arg_val).unwrap();
-                                tmp
-                            };
-                            self.builder
-                                .build_call(
-                                    list_append_fn,
-                                    &[list_ptr.into(), element_ptr.into()],
-                                    "list_append_call",
-                                )
-                                .unwrap();
-                            // list.append returns None
-                            return Ok((self.llvm_context.i64_type().const_zero().into(), Type::None));
-                        },
                         _ => {
                             return Err(format!(
                                 "Type {:?} does not support method calls",
