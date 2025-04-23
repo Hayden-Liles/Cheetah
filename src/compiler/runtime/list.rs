@@ -9,14 +9,13 @@ use inkwell::execution_engine::ExecutionEngine;
 use libc::{calloc, free, malloc, realloc};
 use std::ffi::c_void;
 use std::ptr;
-use super::value::Value;
 
 /// C-compatible raw list struct
 #[repr(C)]
 pub struct RawList {
     pub length: i64,
     pub capacity: i64,
-    pub data: *mut *mut super::value::Value,
+    pub data: *mut *mut c_void,
 }
 
 #[no_mangle]
@@ -39,23 +38,23 @@ pub extern "C" fn list_with_capacity(cap: i64) -> *mut RawList {
         let rl = list_new();
         if rl.is_null() { return rl; }
         (*rl).capacity = cap;
-        (*rl).data = calloc(cap as usize, std::mem::size_of::<*mut Value>()) as *mut *mut Value;
+        (*rl).data = calloc(cap as usize, std::mem::size_of::<*mut c_void>()) as *mut *mut c_void;
         rl
     }
 }
 
 #[no_mangle]
-pub extern "C" fn list_append(list_ptr: *mut RawList, value: *mut Value) {
+pub extern "C" fn list_append(list_ptr: *mut RawList, value: *mut c_void) {
     unsafe {
         let rl = &mut *list_ptr;
         if rl.length == rl.capacity {
             let new_cap = if rl.capacity == 0 { 4 } else { rl.capacity * 2 };
-            let size = (new_cap as usize) * std::mem::size_of::<*mut Value>();
+            let size = (new_cap as usize) * std::mem::size_of::<*mut c_void>();
             let new_data = if rl.data.is_null() {
                 malloc(size)
             } else {
                 realloc(rl.data as *mut _, size)
-            } as *mut *mut Value;
+            } as *mut *mut c_void;
             rl.data = new_data;
             rl.capacity = new_cap;
         }
@@ -65,7 +64,7 @@ pub extern "C" fn list_append(list_ptr: *mut RawList, value: *mut Value) {
 }
 
 #[no_mangle]
-pub extern "C" fn list_get(list_ptr: *mut RawList, index: i64) -> *mut Value {
+pub extern "C" fn list_get(list_ptr: *mut RawList, index: i64) -> *mut c_void {
     unsafe {
         let rl = &*list_ptr;
         if index < 0 || index >= rl.length {
@@ -77,7 +76,7 @@ pub extern "C" fn list_get(list_ptr: *mut RawList, index: i64) -> *mut Value {
 }
 
 #[no_mangle]
-pub extern "C" fn list_set(list_ptr: *mut RawList, index: i64, value: *mut Value) {
+pub extern "C" fn list_set(list_ptr: *mut RawList, index: i64, value: *mut c_void) {
     unsafe {
         let rl = &mut *list_ptr;
         if index >= 0 && index < rl.length {
