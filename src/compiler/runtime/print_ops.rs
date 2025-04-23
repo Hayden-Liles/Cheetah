@@ -1,10 +1,7 @@
-// print_ops.rs - Extended runtime support for recursive printing
+// print_ops.rs - Runtime support for print function
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use crate::compiler::runtime::list;
-use crate::compiler::runtime::list::RawList;
-use crate::compiler::runtime::dict::Dict;
 
 // Cache for the most recently printed string to optimize repeated prints
 thread_local! {
@@ -102,67 +99,11 @@ pub extern "C" fn print_bool(value: bool) {
     super::buffer::write_bool(value);
 }
 
-/// Print a Python-style list recursively
-#[no_mangle]
-pub unsafe extern "C" fn print_list(lst: *mut RawList) {
-    if lst.is_null() { return; }
-    super::buffer::write_str("[");
-    let len = (*lst).length;
-    for i in 0..len {
-        // get element pointer
-        let elem = list::list_get(lst, i);
-        // here we assume value is a pointer tagged to indicate its true type;
-        // for simplicity, call a generic print_any(elem)
-        print_any(elem as *const c_char);
-        if i + 1 < len {
-            super::buffer::write_str(", ");
-        }
-    }
-    super::buffer::write_str("]");
-}
-
-/// Print a Python-style dict recursively
-#[no_mangle]
-pub unsafe extern "C" fn print_dict(dict: *mut Dict) {
-    if dict.is_null() { return; }
-    super::buffer::write_str("{");
-    let keys = super::dict::dict_keys(dict) as *mut RawList;
-    let len = list::list_len(keys);
-    for i in 0..len {
-        let key = list::list_get(keys, i);
-        let val = super::dict::dict_get(dict, key);
-        print_any(key as *const c_char);
-        super::buffer::write_str(": ");
-        print_any(val as *const c_char);
-        if i + 1 < len {
-            super::buffer::write_str(", ");
-        }
-    }
-    super::buffer::write_str("}");
-}
-
-/// A catch-all runtime printer that inspects the c_char pointer for type
-#[no_mangle]
-pub unsafe extern "C" fn print_any(ptr: *const c_char) {
-    if ptr.is_null() {
-        super::buffer::write_str("None");
-        return;
-    }
-    let s = CStr::from_ptr(ptr).to_string_lossy();
-    // simple heuristic: if it starts with [ it's a list, if { it's dict else string
-    match s.chars().next() {
-        Some('[') => super::buffer::write_str(&s),
-        Some('{') => super::buffer::write_str(&s),
-        _ => super::buffer::write_str(&s),
-    }
-}
-
 /// Register print operation functions in the module
 pub fn register_print_functions<'ctx>(
     context: &'ctx inkwell::context::Context,
     module: &mut inkwell::module::Module<'ctx>,
 ) {
-
     use inkwell::AddressSpace;
 
     let print_string_type = context
@@ -189,57 +130,4 @@ pub fn register_print_functions<'ctx>(
         .void_type()
         .fn_type(&[context.bool_type().into()], false);
     module.add_function("print_bool", print_bool_type, None);
-
-    // Add new recursive print functions
-    let ptr_type = context.ptr_type(AddressSpace::default());
-
-    module.add_function(
-        "print_list",
-        context.void_type().fn_type(&[ptr_type.into()], false),
-        None
-    );
-
-    module.add_function(
-        "print_dict",
-        context.void_type().fn_type(&[ptr_type.into()], false),
-        None
-    );
-
-    module.add_function(
-        "print_any",
-        context.void_type().fn_type(&[ptr_type.into()], false),
-        None
-    );
-}
-
-/// Register print runtime functions for JIT execution
-pub fn register_print_runtime_functions(
-    engine: &inkwell::execution_engine::ExecutionEngine<'_>,
-    module: &inkwell::module::Module<'_>,
-) -> Result<(), String> {
-    if let Some(f) = module.get_function("print_string") {
-        engine.add_global_mapping(&f, print_string as usize);
-    }
-    if let Some(f) = module.get_function("println_string") {
-        engine.add_global_mapping(&f, println_string as usize);
-    }
-    if let Some(f) = module.get_function("print_int") {
-        engine.add_global_mapping(&f, print_int as usize);
-    }
-    if let Some(f) = module.get_function("print_float") {
-        engine.add_global_mapping(&f, print_float as usize);
-    }
-    if let Some(f) = module.get_function("print_bool") {
-        engine.add_global_mapping(&f, print_bool as usize);
-    }
-    if let Some(f) = module.get_function("print_list") {
-        engine.add_global_mapping(&f, print_list as usize);
-    }
-    if let Some(f) = module.get_function("print_dict") {
-        engine.add_global_mapping(&f, print_dict as usize);
-    }
-    if let Some(f) = module.get_function("print_any") {
-        engine.add_global_mapping(&f, print_any as usize);
-    }
-    Ok(())
 }

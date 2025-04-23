@@ -213,18 +213,15 @@ impl<'ctx> CompilationContext<'ctx> {
                 Type::Bool => {
                     let _ = self.builder.build_call(print_bool_fn, &[val.into()], "print_bool");
                 }
-                Type::List(_) => {
-                    // call into the new runtime helper
-                    let print_list_fn = self.module.get_function("print_list").unwrap();
-                    let _ = self.builder.build_call(print_list_fn, &[val.into_pointer_value().into()], "print_list_call");
+                Type::List(element_type) => {
+                    // For lists, use our specialized list printing function
+                    self.print_list_value(val.into_pointer_value(), &*element_type, print_str_fn)?;
                 }
-                Type::Dict(_,_) => {
-                    let print_dict_fn = self.module.get_function("print_dict").unwrap();
-                    let _ = self.builder.build_call(print_dict_fn, &[val.into_pointer_value().into()], "print_dict_call");
-                }
-                Type::None => {
-                    let none_str = self.make_cstr("none_literal", b"None\0");
-                    let _ = self.builder.build_call(print_str_fn, &[none_str.into()], "print_none");
+                Type::Dict(key_type, value_type) => {
+                    // For dictionaries, print a more informative placeholder for now
+                    let placeholder = format!("{{dict with keys: {:?}, values: {:?}}}\0", *key_type, *value_type);
+                    let ptr = self.make_cstr("dict_ph", placeholder.as_bytes());
+                    let _ = self.builder.build_call(print_str_fn, &[ptr.into()], "print_dict_ph");
                 }
                 other => {
                     // Fallback: print a placeholder for unsupported types
