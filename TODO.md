@@ -44,7 +44,45 @@ Current focus is on module support, extending built-in functions, and improving 
 ## Current Focus (High Priority)
 
 ### Core Language Features
-1. [ ] Add support for modules and imports
+1. [ ] Implement a single blessed value layout
+   - [ ] Create BoxedAny struct with type tags
+     - [ ] Define BoxedAny struct in src/compiler/runtime/boxed_any.rs
+     - [ ] Define type tag constants (INT, FLOAT, BOOL, etc.)
+     - [ ] Implement ValueData union for storing different value types
+   - [ ] Implement BoxedAny creation functions
+     - [ ] boxed_any_from_int, boxed_any_from_float, boxed_any_from_bool, etc.
+     - [ ] Implement conversion functions between different types
+     - [ ] Add memory management functions (free, clone, etc.)
+   - [ ] Implement operations on BoxedAny values
+     - [ ] Arithmetic operations (add, subtract, multiply, divide)
+     - [ ] Comparison operations (equals, less than, greater than)
+     - [ ] Logical operations (and, or, not)
+     - [ ] Type conversion operations
+   - [ ] Update collection types to use BoxedAny
+     - [ ] Modify List to store BoxedAny pointers
+     - [ ] Update Dict and DictEntry to use BoxedAny
+     - [ ] Update Tuple implementation
+   - [ ] Update type system
+     - [ ] Modify Type::to_llvm_type to work with BoxedAny
+     - [ ] Update is_reference_type and other type-related functions
+   - [ ] Update code generation
+     - [ ] Modify compile_expr to create BoxedAny values
+     - [ ] Update binary operations to use BoxedAny operations
+     - [ ] Update variable access and assignment
+   - [ ] Update runtime operations
+     - [ ] Update print functions to handle BoxedAny values
+     - [ ] Update string operations
+     - [ ] Update list and dictionary operations
+   - [ ] Add JIT support for BoxedAny
+     - [ ] Register BoxedAny functions with JIT execution engine
+     - [ ] Update JIT runtime functions
+   - [ ] Add tests for BoxedAny implementation
+     - [ ] Test basic operations
+     - [ ] Test type conversions
+     - [ ] Test collections with mixed types
+     - [ ] Test error handling
+
+2. [ ] Add support for modules and imports
    - [ ] Implement basic module loading
    - [x] Support for import statements (parser implementation)
    - [ ] Handle module-level variables and functions
@@ -54,7 +92,7 @@ Current focus is on module support, extending built-in functions, and improving 
    - [ ] Add tests for module imports
 
 ### Essential Built-ins
-2. [ ] Extend built-in functions implementation
+3. [ ] Extend built-in functions implementation
    - [ ] Implement other common built-in functions (min, max, etc.)
    - [ ] Implement advanced string manipulation functions
 
@@ -101,7 +139,7 @@ Current focus is on module support, extending built-in functions, and improving 
 - [x] Add tests for edge cases in type conversions
 - [x] Add tests for error handling and recovery
 
-3. [ ] Enhance testing infrastructure further
+4. [ ] Enhance testing infrastructure further
    - [ ] Create integration tests comparing behavior with CPython
    - [ ] Create a test suite for comparing compiled output with CPython execution
 
@@ -132,7 +170,7 @@ Current focus is on module support, extending built-in functions, and improving 
   - [x] Implement non-recursive versions of `compile_subscript_with_value`
   - [x] Implement non-recursive versions of `compile_slice_operation`
 
-6. [ ] Continue eliminating recursive code generation patterns
+5. [ ] Continue eliminating recursive code generation patterns
   - [ ] Implement non-recursive versions of `compile_list_comprehension`
     - [ ] Implement `compile_list_comprehension_non_recursive`
     - [ ] Implement `handle_general_iteration_for_comprehension_non_recursive`
@@ -146,7 +184,7 @@ Current focus is on module support, extending built-in functions, and improving 
   - [ ] Validate memory management in non-recursive implementations
   - [ ] Add performance benchmarks comparing recursive vs non-recursive implementations
 
-7. [ ] Implement additional optimizations
+6. [ ] Implement additional optimizations
   - [ ] Implement constant folding
   - [ ] Add dead code elimination
   - [ ] Optimize numeric operations
@@ -174,7 +212,7 @@ Current focus is on module support, extending built-in functions, and improving 
 - [x] Create a REPL for interactive use
 - [x] Implement command-line interface with .ch file extension support
 
-4. [ ] Develop advanced tooling
+7. [ ] Develop advanced tooling
    - [ ] Add a debugger
    - [ ] Implement a profiler
    - [ ] Create a package manager
@@ -184,7 +222,7 @@ Current focus is on module support, extending built-in functions, and improving 
 ### Infrastructure
 - [x] Create installation script
 
-5. [ ] Improve project infrastructure
+8. [ ] Improve project infrastructure
    - [ ] Set up continuous integration
    - [ ] Add automated release process
    - [ ] Improve build system
@@ -200,3 +238,6 @@ Current focus is on module support, extending built-in functions, and improving 
 - Research how other compilers handle closure environments and variable capture
 - Research performance improvements for numeric operations
 - Explore Symbol from JS and how it could be used in Cheetah
+- Investigate how other languages implement tagged unions for dynamic typing (Python, Ruby, JavaScript)
+- Research memory management strategies for boxed values
+- Look into how JIT compilers optimize operations on boxed values
