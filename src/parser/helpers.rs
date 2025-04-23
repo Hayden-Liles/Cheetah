@@ -281,19 +281,15 @@ impl TokenMatching for Parser {
     }
 
     fn consume_newline(&mut self) -> Result<(), ParseError> {
-        // Treat semicolons as statement terminators (like newlines)
         if self.match_token(TokenType::SemiColon) {
-            // Skip any extra semicolons
-            while self.match_token(TokenType::SemiColon) {}
-            // Skip any actual newline tokens afterwards
-            while self.match_token(TokenType::Newline) {}
-            return Ok(());
+            if !self.check_newline()
+                && !self.check(TokenType::EOF)
+                && !self.check(TokenType::Dedent)
+            {}
         }
 
-        // Otherwise we still require a real newline, EOF or dedent
         if !self.check_newline() && !self.check(TokenType::EOF) && !self.check(TokenType::Dedent) {
             if let Some(token) = &self.current {
-                // If we're closing a bracket/paren, report that
                 match token.token_type {
                     TokenType::RightParen => {
                         return Err(ParseError::unexpected_token(
@@ -322,6 +318,7 @@ impl TokenMatching for Parser {
                     _ => {}
                 }
             }
+
             return Err(ParseError::InvalidSyntax {
                 message: "Expected newline after statement".to_string(),
                 line: self.current.as_ref().map_or(0, |t| t.line),
@@ -330,8 +327,8 @@ impl TokenMatching for Parser {
             });
         }
 
-        // Finally, skip any trailing newlines
         while self.match_token(TokenType::Newline) {}
+
         Ok(())
     }
 
