@@ -28,6 +28,7 @@ use types::Type;
 pub struct Compiler<'ctx> {
     pub context: CompilationContext<'ctx>,
     pub optimize: bool,
+    pub use_boxed_values: bool,
 }
 
 impl<'ctx> Compiler<'ctx> {
@@ -36,13 +37,22 @@ impl<'ctx> Compiler<'ctx> {
         Self {
             context: CompilationContext::new(context, module_name),
             optimize: true,
+            use_boxed_values: true, // Default to using BoxedAny values
         }
+    }
+
+    /// Set whether to use BoxedAny values
+    pub fn set_use_boxed_values(&mut self, use_boxed_values: bool) {
+        self.use_boxed_values = use_boxed_values;
+        self.context.set_use_boxed_values(use_boxed_values);
     }
 
     pub fn emit_to_aot(&mut self, filename: &str) -> Result<(), String> {
         use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target};
         use std::path::Path;
         use std::process::Command;
+
+        println!("Using external exception handling functions for AOT compilation");
 
         Target::initialize_all(&InitializationConfig::default());
 
@@ -64,19 +74,116 @@ impl<'ctx> Compiler<'ctx> {
         let module = &mut self.context.module;
         module.set_triple(&triple);
 
+        // Make sure exception handling functions are declared as external
+        let context = self.context.llvm_context;
+        let ptr_t = context.ptr_type(inkwell::AddressSpace::default());
+
+        // We can't remove existing functions, but we can ensure they're declared as external
+        // by adding them with the External linkage type
+
+        // Add the exception handling functions as external
+        module.add_function(
+            "get_current_exception",
+            ptr_t.fn_type(&[], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        module.add_function(
+            "set_current_exception",
+            context.void_type().fn_type(&[ptr_t.into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        module.add_function(
+            "clear_current_exception",
+            context.void_type().fn_type(&[], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        // Make sure print functions are declared as external
+        module.add_function(
+            "print_string",
+            context.void_type().fn_type(&[ptr_t.into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        module.add_function(
+            "print_int",
+            context.void_type().fn_type(&[context.i64_type().into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        module.add_function(
+            "print_float",
+            context.void_type().fn_type(&[context.f64_type().into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        module.add_function(
+            "print_bool",
+            context.void_type().fn_type(&[context.bool_type().into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        module.add_function(
+            "println_string",
+            context.void_type().fn_type(&[ptr_t.into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        module.add_function(
+            "print_boxed_any",
+            context.void_type().fn_type(&[ptr_t.into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        module.add_function(
+            "println_boxed_any",
+            context.void_type().fn_type(&[ptr_t.into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        // Make sure buffer_flush function is declared as external
+        module.add_function(
+            "buffer_flush",
+            context.void_type().fn_type(&[], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
+        // Also declare the alias function as external
+        module.add_function(
+            "_buffer_flush",
+            context.void_type().fn_type(&[], false),
+            Some(inkwell::module::Linkage::External),
+        );
+
         let obj_path = format!("{}.o", filename);
         tm.write_to_file(module, FileType::Object, Path::new(&obj_path))
             .map_err(|e| format!("Failed to write object file: {:?}", e))?;
 
+        // Find the correct library path
         let runtime_lib_dir = match std::env::var("CARGO_MANIFEST_DIR") {
-            Ok(manifest) => format!("{}/target/release", manifest),
+            Ok(manifest) => {
+                // Check if release build exists
+                let release_path = format!("{}/target/release", manifest);
+                let debug_path = format!("{}/target/debug", manifest);
+
+                if std::path::Path::new(&format!("{}/libcheetah.a", release_path)).exists() {
+                    println!("Using release library from {}", release_path);
+                    release_path
+                } else if std::path::Path::new(&format!("{}/libcheetah.a", debug_path)).exists() {
+                    println!("Using debug library from {}", debug_path);
+                    debug_path
+                } else {
+                    println!("Warning: Could not find libcheetah.a in target/release or target/debug");
+                    format!("{}/target/debug", manifest)
+                }
+            },
             Err(_) => {
                 let mut exe = std::env::current_exe()
                     .map_err(|e| format!("Failed to locate current exe: {}", e))?;
                 exe.pop();
-                exe.pop();
-                exe.push("lib");
-                exe.push("cheetah");
+                println!("Looking for library in {:?}", exe);
                 exe.to_string_lossy().into_owned()
             }
         };
@@ -102,6 +209,25 @@ impl<'ctx> Compiler<'ctx> {
             .arg(&runtime_lib_dir)
             .arg("-lcheetah");
 
+        // Print the library path for debugging
+        println!("Library path: {}", runtime_lib_dir);
+
+        // Try to find the buffer_flush symbol in the library
+        let nm_output = Command::new("nm")
+            .arg(format!("{}/libcheetah.a", runtime_lib_dir))
+            .output();
+
+        if let Ok(output) = nm_output {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            if output_str.contains("buffer_flush") {
+                println!("Found buffer_flush symbol in library");
+            } else {
+                println!("Warning: buffer_flush symbol not found in library");
+            }
+        } else {
+            println!("Warning: Could not run nm on library");
+        }
+
         for token in llvm_flags.split_whitespace() {
             cmd.arg(token);
         }
@@ -111,6 +237,19 @@ impl<'ctx> Compiler<'ctx> {
             .arg("-lzstd")
             .arg("-lffi")
             .arg("-ltinfo");
+
+        // Add explicit references to print functions to ensure they're linked
+        cmd.arg("-Wl,--undefined=print_string")
+           .arg("-Wl,--undefined=print_int")
+           .arg("-Wl,--undefined=print_float")
+           .arg("-Wl,--undefined=print_bool")
+           .arg("-Wl,--undefined=print_boxed_any")
+           .arg("-Wl,--undefined=println_boxed_any")
+           .arg("-Wl,--undefined=buffer_flush")
+           .arg("-Wl,--undefined=_buffer_flush");  // Add the alias function as well
+
+        // Print the linker command for debugging
+        println!("Linker command: {:?}", cmd);
 
         cmd.arg("-o").arg(filename);
 
@@ -137,8 +276,9 @@ impl<'ctx> Compiler<'ctx> {
             pass_manager.run_on(&self.context.module);
         }
 
-        let void_type = Type::get_void_type(self.context.llvm_context);
-        let fn_type = void_type.fn_type(&[], false);
+        // Use i32 return type for main function to allow returning status code
+        let i32_type = self.context.llvm_context.i32_type();
+        let fn_type = i32_type.fn_type(&[], false);
 
         let function = self.context.module.add_function("main", fn_type, None);
         let basic_block = self
@@ -153,7 +293,31 @@ impl<'ctx> Compiler<'ctx> {
         if let Ok(_) = &result {
             let current_block = self.context.builder.get_insert_block().unwrap();
             if current_block.get_terminator().is_none() {
-                self.context.builder.build_return(None).unwrap();
+                // Add a call to buffer::flush() before returning
+                if let Some(flush_fn) = self.context.module.get_function("buffer_flush") {
+                    self.context.builder.build_call(flush_fn, &[], "flush_call").unwrap();
+                } else {
+                    // Create the buffer_flush function if it doesn't exist
+                    let void_type = Type::get_void_type(self.context.llvm_context);
+                    let fn_type = void_type.fn_type(&[], false);
+                    let flush_fn = self.context.module.add_function("buffer_flush", fn_type, None);
+
+                    // Add the function to the module with External linkage
+                    flush_fn.set_linkage(inkwell::module::Linkage::External);
+
+                    // Call the function
+                    self.context.builder.build_call(flush_fn, &[], "flush_call").unwrap();
+                }
+
+                // Also call the alias function for redundancy
+                if let Some(flush_fn) = self.context.module.get_function("_buffer_flush") {
+                    self.context.builder.build_call(flush_fn, &[], "flush_alias_call").unwrap();
+                }
+
+                // Return 0 explicitly to indicate success
+                let i32_type = self.context.llvm_context.i32_type();
+                let zero = i32_type.const_int(0, false);
+                self.context.builder.build_return(Some(&zero)).unwrap();
             }
         }
 
@@ -166,8 +330,9 @@ impl<'ctx> Compiler<'ctx> {
         &mut self,
         module: &ast::Module,
     ) -> Result<(), String> {
-        let void_type = Type::get_void_type(self.context.llvm_context);
-        let fn_type = void_type.fn_type(&[], false);
+        // Use i32 return type for main function to allow returning status code
+        let i32_type = self.context.llvm_context.i32_type();
+        let fn_type = i32_type.fn_type(&[], false);
 
         let function = self.context.module.add_function("main", fn_type, None);
         let basic_block = self
@@ -218,7 +383,31 @@ impl<'ctx> Compiler<'ctx> {
 
         let current_block = self.context.builder.get_insert_block().unwrap();
         if current_block.get_terminator().is_none() {
-            self.context.builder.build_return(None).unwrap();
+            // Add a call to buffer::flush() before returning
+            if let Some(flush_fn) = self.context.module.get_function("buffer_flush") {
+                self.context.builder.build_call(flush_fn, &[], "flush_call").unwrap();
+            } else {
+                // Create the buffer_flush function if it doesn't exist
+                let void_type = Type::get_void_type(self.context.llvm_context);
+                let fn_type = void_type.fn_type(&[], false);
+                let flush_fn = self.context.module.add_function("buffer_flush", fn_type, None);
+
+                // Add the function to the module with External linkage
+                flush_fn.set_linkage(inkwell::module::Linkage::External);
+
+                // Call the function
+                self.context.builder.build_call(flush_fn, &[], "flush_call").unwrap();
+            }
+
+            // Also call the alias function for redundancy
+            if let Some(flush_fn) = self.context.module.get_function("_buffer_flush") {
+                self.context.builder.build_call(flush_fn, &[], "flush_alias_call").unwrap();
+            }
+
+            // Return 0 explicitly to indicate success
+            let i32_type = self.context.llvm_context.i32_type();
+            let zero = i32_type.const_int(0, false);
+            self.context.builder.build_return(Some(&zero)).unwrap();
         }
 
         if let Err(err) = self.context.module.verify() {
@@ -271,7 +460,31 @@ impl<'ctx> Compiler<'ctx> {
 
         let current_block = self.context.builder.get_insert_block().unwrap();
         if current_block.get_terminator().is_none() {
-            self.context.builder.build_return(None).unwrap();
+            // Add a call to buffer::flush() before returning
+            if let Some(flush_fn) = self.context.module.get_function("buffer_flush") {
+                self.context.builder.build_call(flush_fn, &[], "flush_call").unwrap();
+            } else {
+                // Create the buffer_flush function if it doesn't exist
+                let void_type = Type::get_void_type(self.context.llvm_context);
+                let fn_type = void_type.fn_type(&[], false);
+                let flush_fn = self.context.module.add_function("buffer_flush", fn_type, None);
+
+                // Add the function to the module with External linkage
+                flush_fn.set_linkage(inkwell::module::Linkage::External);
+
+                // Call the function
+                self.context.builder.build_call(flush_fn, &[], "flush_call").unwrap();
+            }
+
+            // Also call the alias function for redundancy
+            if let Some(flush_fn) = self.context.module.get_function("_buffer_flush") {
+                self.context.builder.build_call(flush_fn, &[], "flush_alias_call").unwrap();
+            }
+
+            // Return 0 explicitly to indicate success
+            let i32_type = self.context.llvm_context.i32_type();
+            let zero = i32_type.const_int(0, false);
+            self.context.builder.build_return(Some(&zero)).unwrap();
         }
 
         if let Err(err) = self.context.module.verify() {
@@ -538,7 +751,8 @@ impl<'ctx> Compiler<'ctx> {
         self.context.current_function = Some(function);
 
         for stmt in body {
-            self.context.compile_stmt(stmt.as_ref())?;
+            use crate::compiler::stmt_non_recursive::StmtNonRecursive;
+            self.context.compile_stmt_non_recursive(stmt.as_ref())?;
         }
 
         if !self
@@ -549,8 +763,20 @@ impl<'ctx> Compiler<'ctx> {
             .get_terminator()
             .is_some()
         {
-            let zero = context.i64_type().const_int(0, false);
-            self.context.builder.build_return(Some(&zero)).unwrap();
+            // Return None as the default value for BoxedAny implementation
+            let boxed_any_none_fn = self.context.module.get_function("boxed_any_none")
+                .ok_or_else(|| "boxed_any_none function not found".to_string())?;
+
+            let call_site_value = self.context.builder.build_call(
+                boxed_any_none_fn,
+                &[],
+                "default_return"
+            ).unwrap();
+
+            let none_val = call_site_value.try_as_basic_value().left()
+                .ok_or_else(|| "Failed to create None value for default return".to_string())?;
+
+            self.context.builder.build_return(Some(&none_val)).unwrap();
         }
 
         self.context.current_function = old_function;

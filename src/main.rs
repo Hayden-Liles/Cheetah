@@ -243,9 +243,26 @@ fn main() -> Result<()> {
             }
 
             println!("▶️  Running {}", exe_path.display());
-            let err = std::process::Command::new(&exe_path).exec();
-            eprintln!("❌ failed to exec `{}`: {}", exe_path.display(), err);
-            std::process::exit(1);
+
+            // Use output instead of status to capture stdout
+            let output = std::process::Command::new(&exe_path)
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to run {}: {}", exe_path.display(), e))?;
+
+            // Print the stdout
+            if !output.stdout.is_empty() {
+                print!("{}", String::from_utf8_lossy(&output.stdout));
+            }
+
+            // Print the stderr
+            if !output.stderr.is_empty() {
+                eprint!("{}", String::from_utf8_lossy(&output.stderr));
+            }
+
+            if !output.status.success() {
+                eprintln!("❌ Process exited with status: {}", output.status);
+                std::process::exit(output.status.code().unwrap_or(1));
+            }
         }
         return Ok(());
     }
@@ -410,6 +427,27 @@ fn run_file_jit(filename: &str) -> Result<()> {
                     let execution_engine = compiled_module
                         .create_jit_execution_engine(inkwell::OptimizationLevel::Aggressive)
                         .map_err(|e| anyhow::anyhow!("Failed to create execution engine: {}", e))?;
+
+                    // Register print functions first to ensure they're available
+                    if let Some(function) = compiled_module.get_function("print_string") {
+                        execution_engine.add_global_mapping(&function, print_string as usize);
+                    }
+
+                    if let Some(function) = compiled_module.get_function("print_boxed_any") {
+                        execution_engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_print_ops::print_boxed_any as usize);
+                    }
+
+                    if let Some(function) = compiled_module.get_function("println_boxed_any") {
+                        execution_engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_print_ops::println_boxed_any as usize);
+                    }
+
+                    if let Some(function) = compiled_module.get_function("buffer_flush") {
+                        execution_engine.add_global_mapping(&function, cheetah::compiler::runtime::buffer::buffer_flush as usize);
+                    }
+
+                    if let Some(function) = compiled_module.get_function("_buffer_flush") {
+                        execution_engine.add_global_mapping(&function, cheetah::compiler::runtime::buffer::_buffer_flush as usize);
+                    }
 
                     if let Err(e) = register_runtime_functions(&execution_engine, compiled_module) {
                         println!(
@@ -1056,6 +1094,8 @@ fn compile_file(
                             .and_then(|s| s.to_str())
                             .ok_or_else(|| anyhow::anyhow!("Invalid output filename"))?;
 
+                        // Always use the emit_to_aot function
+                        // The function will handle the exception handling functions properly
                         compiler
                             .emit_to_aot(exe_name)
                             .map_err(|e| anyhow::anyhow!("AOT compilation failed: {}", e))?;
@@ -1299,33 +1339,85 @@ fn register_runtime_functions(
     }
 
     if let Some(function) = module.get_function("print_string") {
+        println!("Registering print_string function for JIT execution");
         {
             engine.add_global_mapping(&function, print_string as usize);
         }
+    } else {
+        println!("Warning: print_string function not found in module");
     }
 
     if let Some(function) = module.get_function("println_string") {
+        println!("Registering println_string function for JIT execution");
         {
             engine.add_global_mapping(&function, println_string as usize);
         }
+    } else {
+        println!("Warning: println_string function not found in module");
     }
 
     if let Some(function) = module.get_function("print_int") {
+        println!("Registering print_int function for JIT execution");
         {
             engine.add_global_mapping(&function, print_int as usize);
         }
+    } else {
+        println!("Warning: print_int function not found in module");
     }
 
     if let Some(function) = module.get_function("print_float") {
+        println!("Registering print_float function for JIT execution");
         {
             engine.add_global_mapping(&function, print_float as usize);
         }
+    } else {
+        println!("Warning: print_float function not found in module");
     }
 
     if let Some(function) = module.get_function("print_bool") {
+        println!("Registering print_bool function for JIT execution");
         {
             engine.add_global_mapping(&function, print_bool as usize);
         }
+    } else {
+        println!("Warning: print_bool function not found in module");
+    }
+
+    // Register BoxedAny print functions
+    if let Some(function) = module.get_function("print_boxed_any") {
+        println!("Registering print_boxed_any function for JIT execution");
+        {
+            engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_print_ops::print_boxed_any as usize);
+        }
+    } else {
+        println!("Warning: print_boxed_any function not found in module");
+    }
+
+    if let Some(function) = module.get_function("println_boxed_any") {
+        println!("Registering println_boxed_any function for JIT execution");
+        {
+            engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_print_ops::println_boxed_any as usize);
+        }
+    } else {
+        println!("Warning: println_boxed_any function not found in module");
+    }
+
+    if let Some(function) = module.get_function("buffer_flush") {
+        println!("Registering buffer_flush function for JIT execution");
+        {
+            engine.add_global_mapping(&function, cheetah::compiler::runtime::buffer::buffer_flush as usize);
+        }
+    } else {
+        println!("Warning: buffer_flush function not found in module");
+    }
+
+    if let Some(function) = module.get_function("_buffer_flush") {
+        println!("Registering _buffer_flush function for JIT execution");
+        {
+            engine.add_global_mapping(&function, cheetah::compiler::runtime::buffer::_buffer_flush as usize);
+        }
+    } else {
+        println!("Warning: _buffer_flush function not found in module");
     }
 
     if let Some(function) = module.get_function("string_concat") {
@@ -1407,6 +1499,22 @@ fn register_runtime_functions(
         println!(
             "{}",
             format!("Warning: Failed to register BoxedAny print functions: {}", e).bright_yellow()
+        );
+    }
+
+    // Register BoxedAny operations
+    if let Err(e) = cheetah::compiler::runtime::boxed_any_ops::register_boxed_any_ops_runtime_functions(engine, module) {
+        println!(
+            "{}",
+            format!("Warning: Failed to register BoxedAny operations: {}", e).bright_yellow()
+        );
+    }
+
+    // Register BoxedAny contains functions
+    if let Err(e) = cheetah::compiler::runtime::boxed_any_contains::register_boxed_any_contains_runtime_functions(engine, module) {
+        println!(
+            "{}",
+            format!("Warning: Failed to register BoxedAny contains functions: {}", e).bright_yellow()
         );
     }
 
@@ -1534,6 +1642,10 @@ fn register_boxed_any_jit_functions(
 
     if let Some(function) = module.get_function("boxed_any_from_bool") {
         engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_from_bool as usize);
+    }
+
+    if let Some(function) = module.get_function("boxed_any_from_comparison") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_from_comparison as usize);
     }
 
     if let Some(function) = module.get_function("boxed_any_none") {
@@ -1701,6 +1813,11 @@ fn register_boxed_any_jit_functions(
 
     if let Some(function) = module.get_function("boxed_any_slice") {
         engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_slice as usize);
+    }
+
+    // Length function
+    if let Some(function) = module.get_function("boxed_any_len") {
+        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_len as usize);
     }
 
     Ok(())
