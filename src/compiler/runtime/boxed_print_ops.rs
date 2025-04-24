@@ -56,13 +56,45 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
                 buffer::write_str("[");
 
                 let length = super::boxed_list::boxed_list_len(list_ptr);
+
+                // Check if this is a list of tuples
+                let mut is_list_of_tuples = length > 0;
+                for i in 0..length {
+                    let item = super::boxed_list::boxed_list_get(list_ptr, i);
+                    if item.is_null() || (*item).tag != type_tags::TUPLE {
+                        is_list_of_tuples = false;
+                        break;
+                    }
+                }
+
+                // Print the elements
                 for i in 0..length {
                     if i > 0 {
                         buffer::write_str(", ");
                     }
 
                     let item = super::boxed_list::boxed_list_get(list_ptr, i);
-                    print_boxed_any(item);
+
+                    if is_list_of_tuples {
+                        // For lists of tuples, print the tuple elements directly
+                        let tuple_ptr = (*item).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
+                        let tuple_len = super::boxed_tuple::boxed_tuple_len(tuple_ptr);
+
+                        // Print the tuple elements
+                        for j in 0..tuple_len {
+                            if j > 0 {
+                                buffer::write_str(", ");
+                            }
+                            let element = super::boxed_tuple::boxed_tuple_get(tuple_ptr, j);
+                            print_boxed_any(element);
+                        }
+                    } else if !item.is_null() && (*item).tag == type_tags::TUPLE {
+                        // For individual tuples in a mixed list, print normally
+                        print_boxed_any(item);
+                    } else {
+                        // For non-tuple elements, print normally
+                        print_boxed_any(item);
+                    }
                 }
 
                 buffer::write_str("]");
