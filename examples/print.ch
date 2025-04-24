@@ -1,8 +1,15 @@
-def main():
-    print("hi")
-    print(42)
-    print(3.14)
-    print(True)
-    print("Multiple values:", 123, 4.56, False)
+a = []
+b = [1, 2, 3]
+c = [1.1, 2.2, 3.3]
+d = ["one", "two", "three"]
+e = [True, False, True]
+f = [None, None, None]
+g = [a, b, c, d, e, f]
 
-main()
+print(a)
+print(b)
+print(c)
+print(d)
+print(e)
+print(f)
+print(g)
