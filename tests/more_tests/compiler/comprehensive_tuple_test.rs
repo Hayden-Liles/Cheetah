@@ -247,6 +247,7 @@ sum2 = x + z + w
 # Test tuple in control flow
 t5 = (1, 2)
 p, q = t5
+result = 0
 if p < q:
     result = p + q
 else:

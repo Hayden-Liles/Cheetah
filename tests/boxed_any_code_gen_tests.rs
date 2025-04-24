@@ -23,22 +23,22 @@ mod boxed_any_code_gen_tests {
         let context = Context::create();
         let mut ctx = setup_context(&context);
         create_function(&mut ctx, "test_boxed_any_integer");
-        
+
         // Register the BoxedAny functions
         cheetah::compiler::runtime::boxed_any::register_boxed_any_functions(&context, &mut ctx.module);
-        
+
         // Create an integer expression
         let integer_expr = Expr::Num {
             value: Number::Integer(42),
             line: 1, column: 1
         };
-        
+
         // Compile the expression
         let (int_val, int_type) = ctx.compile_expr(&integer_expr).unwrap();
-        
+
         // Check the type
-        assert!(matches!(int_type, Type::Int));
-        
+        assert!(matches!(int_type, Type::Any));
+
         // Check that the value is a pointer (BoxedAny)
         assert!(int_val.is_pointer_value());
     }
@@ -48,22 +48,22 @@ mod boxed_any_code_gen_tests {
         let context = Context::create();
         let mut ctx = setup_context(&context);
         create_function(&mut ctx, "test_boxed_any_float");
-        
+
         // Register the BoxedAny functions
         cheetah::compiler::runtime::boxed_any::register_boxed_any_functions(&context, &mut ctx.module);
-        
+
         // Create a float expression
         let float_expr = Expr::Num {
             value: Number::Float(3.14),
             line: 1, column: 1
         };
-        
+
         // Compile the expression
         let (float_val, float_type) = ctx.compile_expr(&float_expr).unwrap();
-        
+
         // Check the type
-        assert!(matches!(float_type, Type::Float));
-        
+        assert!(matches!(float_type, Type::Any));
+
         // Check that the value is a pointer (BoxedAny)
         assert!(float_val.is_pointer_value());
     }
@@ -73,22 +73,22 @@ mod boxed_any_code_gen_tests {
         let context = Context::create();
         let mut ctx = setup_context(&context);
         create_function(&mut ctx, "test_boxed_any_bool");
-        
+
         // Register the BoxedAny functions
         cheetah::compiler::runtime::boxed_any::register_boxed_any_functions(&context, &mut ctx.module);
-        
+
         // Create a boolean expression (True)
         let true_expr = Expr::NameConstant {
             value: NameConstant::True,
             line: 1, column: 1
         };
-        
+
         // Compile the expression
         let (bool_val, bool_type) = ctx.compile_expr(&true_expr).unwrap();
-        
+
         // Check the type
-        assert!(matches!(bool_type, Type::Bool));
-        
+        assert!(matches!(bool_type, Type::Any));
+
         // Check that the value is a pointer (BoxedAny)
         assert!(bool_val.is_pointer_value());
     }
@@ -98,22 +98,22 @@ mod boxed_any_code_gen_tests {
         let context = Context::create();
         let mut ctx = setup_context(&context);
         create_function(&mut ctx, "test_boxed_any_none");
-        
+
         // Register the BoxedAny functions
         cheetah::compiler::runtime::boxed_any::register_boxed_any_functions(&context, &mut ctx.module);
-        
+
         // Create a None expression
         let none_expr = Expr::NameConstant {
             value: NameConstant::None,
             line: 1, column: 1
         };
-        
+
         // Compile the expression
         let (none_val, none_type) = ctx.compile_expr(&none_expr).unwrap();
-        
+
         // Check the type
-        assert!(matches!(none_type, Type::None));
-        
+        assert!(matches!(none_type, Type::Any));
+
         // Check that the value is a pointer (BoxedAny)
         assert!(none_val.is_pointer_value());
     }

@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::cell::RefCell;
 use std::thread_local;
 
+use super::boxed_any::{BoxedAny, boxed_any_to_int};
+
 
 // Constants and globals
 static RANGE_OP_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -160,14 +162,55 @@ pub fn cleanup() {
     }
 }
 
+// BoxedAny-compatible range functions
+
+#[no_mangle]
+pub extern "C" fn boxed_range_1(stop_boxed: *const BoxedAny) -> i64 {
+    if stop_boxed.is_null() {
+        return 0;
+    }
+    let stop = boxed_any_to_int(stop_boxed);
+    range_1(stop)
+}
+
+#[no_mangle]
+pub extern "C" fn boxed_range_2(start_boxed: *const BoxedAny, stop_boxed: *const BoxedAny) -> i64 {
+    if start_boxed.is_null() || stop_boxed.is_null() {
+        return 0;
+    }
+    let start = boxed_any_to_int(start_boxed);
+    let stop = boxed_any_to_int(stop_boxed);
+    range_2(start, stop)
+}
+
+#[no_mangle]
+pub extern "C" fn boxed_range_3(start_boxed: *const BoxedAny, stop_boxed: *const BoxedAny, step_boxed: *const BoxedAny) -> i64 {
+    if start_boxed.is_null() || stop_boxed.is_null() || step_boxed.is_null() {
+        return 0;
+    }
+    let start = boxed_any_to_int(start_boxed);
+    let stop = boxed_any_to_int(stop_boxed);
+    let step = boxed_any_to_int(step_boxed);
+    range_3(start, stop, step)
+}
+
 // Registration
 
 pub fn register_range_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
     use inkwell::AddressSpace;
+    // Original range functions
     module.add_function("range_1", context.i64_type().fn_type(&[context.i64_type().into()], false), None);
     module.add_function("range_2", context.i64_type().fn_type(&[context.i64_type().into(), context.i64_type().into()], false), None);
     module.add_function("range_3", context.i64_type().fn_type(&[context.i64_type().into(), context.i64_type().into(), context.i64_type().into()], false), None);
     module.add_function("range_cleanup", context.void_type().fn_type(&[], false), None);
+
+    // BoxedAny-compatible range functions
+    let boxed_any_ptr_type = context.ptr_type(AddressSpace::default());
+    module.add_function("boxed_range_1", context.i64_type().fn_type(&[boxed_any_ptr_type.into()], false), None);
+    module.add_function("boxed_range_2", context.i64_type().fn_type(&[boxed_any_ptr_type.into(), boxed_any_ptr_type.into()], false), None);
+    module.add_function("boxed_range_3", context.i64_type().fn_type(&[boxed_any_ptr_type.into(), boxed_any_ptr_type.into(), boxed_any_ptr_type.into()], false), None);
+
+    // Range iterator functions
     module.add_function("range_iterator_1", context.ptr_type(AddressSpace::default()).fn_type(&[context.i64_type().into()], false), None);
     module.add_function("range_iterator_2", context.ptr_type(AddressSpace::default()).fn_type(&[context.i64_type().into(), context.i64_type().into()], false), None);
     module.add_function("range_iterator_3", context.ptr_type(AddressSpace::default()).fn_type(&[context.i64_type().into(), context.i64_type().into(), context.i64_type().into()], false), None);

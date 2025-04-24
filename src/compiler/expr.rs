@@ -243,6 +243,7 @@ pub trait ComparisonCompiler<'ctx> {
         op: CmpOperator,
         right: inkwell::values::BasicValueEnum<'ctx>,
         right_type: &Type,
+        need_boxed_any: bool,
     ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String>;
 }
 
@@ -339,6 +340,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         op.clone(),
                         right_val,
                         &right_type,
+                        false, // We need a boolean result for comparison chains
                     )?;
 
                     if let Some(prev_result) = result_val {
@@ -1203,22 +1205,22 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             } else {
                                 if id == "range" {
                                     match args.len() {
-                                        1 => match self.module.get_function("range_1") {
+                                        1 => match self.module.get_function("boxed_range_1") {
                                             Some(f) => f,
                                             None => {
-                                                return Err("range_1 function not found".to_string())
+                                                return Err("boxed_range_1 function not found".to_string())
                                             }
                                         },
-                                        2 => match self.module.get_function("range_2") {
+                                        2 => match self.module.get_function("boxed_range_2") {
                                             Some(f) => f,
                                             None => {
-                                                return Err("range_2 function not found".to_string())
+                                                return Err("boxed_range_2 function not found".to_string())
                                             }
                                         },
-                                        3 => match self.module.get_function("range_3") {
+                                        3 => match self.module.get_function("boxed_range_3") {
                                             Some(f) => f,
                                             None => {
-                                                return Err("range_3 function not found".to_string())
+                                                return Err("boxed_range_3 function not found".to_string())
                                             }
                                         },
                                         _ => {
@@ -1244,62 +1246,91 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     continue;
                                 }
 
-                                if id.starts_with("range_") && i < param_types.len() {
-                                    if param_types[i].is_int_type() && !arg_value.is_int_value() {
-                                        if arg_value.is_pointer_value() {
-                                            let ptr = arg_value.into_pointer_value();
-                                            let loaded_val = self
-                                                .builder
-                                                .build_load(
-                                                    self.llvm_context.i64_type(),
-                                                    ptr,
-                                                    "range_arg_load",
-                                                )
-                                                .unwrap();
-                                            call_args.push(loaded_val.into());
-                                            continue;
-                                        }
-                                    }
-                                }
+                                // For BoxedAny-compatible range functions, we don't need special handling
+                                // as they already accept BoxedAny pointers
 
                                 if let Some(param_type) = param_types.get(i) {
                                     let arg_type = &arg_types[i];
 
-                                    if matches!(arg_type, Type::Dict(_, _))
-                                        && param_type.is_pointer_type()
-                                    {
+                                    // Check if the parameter expects a pointer (BoxedAny*)
+                                    if param_type.is_pointer_type() {
+                                        // If the argument is already a pointer, pass it directly
                                         if arg_value.is_pointer_value() {
                                             call_args.push(arg_value.into());
                                         } else {
-                                            let ptr_type = self
-                                                .llvm_context
-                                                .ptr_type(inkwell::AddressSpace::default());
-                                            let ptr_val = self
+                                            // For non-pointer values, we need to convert them to BoxedAny pointers
+                                            // This handles primitive types like int, float, bool
+                                            let boxed_value = match arg_type {
+                                                Type::Int => {
+                                                    // Get the boxed_any_from_int function
+                                                    let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
+                                                        .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
+
+                                                    // Call boxed_any_from_int to create a BoxedAny value
+                                                    let call_site_value = self.builder.build_call(
+                                                        boxed_any_from_int_fn,
+                                                        &[arg_value.into()],
+                                                        &format!("boxed_int_{}", i)
+                                                    ).unwrap();
+
+                                                    call_site_value.try_as_basic_value().left()
+                                                        .ok_or_else(|| "Failed to create BoxedAny from integer".to_string())?
+                                                },
+                                                Type::Float => {
+                                                    // Get the boxed_any_from_float function
+                                                    let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
+                                                        .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
+
+                                                    // Call boxed_any_from_float to create a BoxedAny value
+                                                    let call_site_value = self.builder.build_call(
+                                                        boxed_any_from_float_fn,
+                                                        &[arg_value.into()],
+                                                        &format!("boxed_float_{}", i)
+                                                    ).unwrap();
+
+                                                    call_site_value.try_as_basic_value().left()
+                                                        .ok_or_else(|| "Failed to create BoxedAny from float".to_string())?
+                                                },
+                                                Type::Bool => {
+                                                    // Get the boxed_any_from_bool function
+                                                    let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                                                        .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                                                    // Call boxed_any_from_bool to create a BoxedAny value
+                                                    let call_site_value = self.builder.build_call(
+                                                        boxed_any_from_bool_fn,
+                                                        &[arg_value.into()],
+                                                        &format!("boxed_bool_{}", i)
+                                                    ).unwrap();
+
+                                                    call_site_value.try_as_basic_value().left()
+                                                        .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?
+                                                },
+                                                _ => {
+                                                    // For other types, just pass the value as is
+                                                    // This might need to be expanded for other primitive types
+                                                    arg_value
+                                                }
+                                            };
+
+                                            call_args.push(boxed_value.into());
+                                        }
+                                    } else if param_type.is_int_type() {
+                                        // If the parameter expects an integer
+                                        if arg_type == &Type::Bool && param_type.into_int_type().get_bit_width() == 64 {
+                                            // Convert bool to i64 if needed
+                                            let bool_val = arg_value.into_int_value();
+                                            let int_val = self
                                                 .builder
-                                                .build_int_to_ptr(
-                                                    arg_value.into_int_value(),
-                                                    ptr_type,
-                                                    &format!("arg{}_to_ptr", i),
+                                                .build_int_z_extend(
+                                                    bool_val,
+                                                    self.llvm_context.i64_type(),
+                                                    "bool_to_i64",
                                                 )
                                                 .unwrap();
-                                            call_args.push(ptr_val.into());
-                                        }
-                                    } else if arg_type == &Type::Bool
-                                        && param_type.is_int_type()
-                                        && param_type.into_int_type().get_bit_width() == 64
-                                    {
-                                        let bool_val = arg_value.into_int_value();
-                                        let int_val = self
-                                            .builder
-                                            .build_int_z_extend(
-                                                bool_val,
-                                                self.llvm_context.i64_type(),
-                                                "bool_to_i64",
-                                            )
-                                            .unwrap();
-                                        call_args.push(int_val.into());
-                                    } else if let Type::Tuple(_) = arg_type {
-                                        if param_type.is_int_type() {
+                                            call_args.push(int_val.into());
+                                        } else if let Type::Tuple(_) = arg_type {
+                                            // For tuples passed to integer parameters, convert pointer to integer
                                             let ptr_val = if arg_value.is_pointer_value() {
                                                 arg_value.into_pointer_value()
                                             } else {
@@ -1326,12 +1357,15 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                                             call_args.push(ptr_int.into());
                                         } else {
+                                            // For other types, just pass the value as is
                                             call_args.push(arg_value.into());
                                         }
                                     } else {
+                                        // For other parameter types, pass the value as is
                                         call_args.push(arg_value.into());
                                     }
                                 } else {
+                                    // If we don't have parameter type information, pass the value as is
                                     call_args.push(arg_value.into());
                                 }
                             }
@@ -1811,7 +1845,57 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         return Err("Dictionary unpacking with ** not yet implemented".to_string());
                     }
 
-                    let (value_val, value_type) = self.compile_expr(value)?;
+                    // For dictionary values, we need to handle comparison and boolean operations specially
+                    let (value_val, value_type) = match value.as_ref() {
+                        Expr::Compare { left, ops, comparators, .. } => {
+                            // For comparison operations in dictionaries, we need BoxedAny results
+                            let (left_val, left_type) = self.compile_expr(left)?;
+
+                            if ops.len() == 1 && comparators.len() == 1 {
+                                let op = &ops[0];
+                                let right = &comparators[0];
+                                let (right_val, right_type) = self.compile_expr(right)?;
+
+                                // Use need_boxed_any=true to get a BoxedAny pointer for the comparison result
+                                self.compile_comparison(
+                                    left_val,
+                                    &left_type,
+                                    op.clone(),
+                                    right_val,
+                                    &right_type,
+                                    true, // We need a BoxedAny result for dictionary values
+                                )?
+                            } else {
+                                // Fall back to normal compilation for complex comparisons
+                                self.compile_expr(value)?
+                            }
+                        },
+                        _ => {
+                            // For all other expressions, compile them and convert the result to a BoxedAny if needed
+                            let (val, val_type) = self.compile_expr(value)?;
+
+                            if val_type == Type::Bool && val.is_int_value() {
+                                // Convert boolean values to BoxedAny pointers
+                                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                                let bool_val = val.into_int_value();
+
+                                let call_site_value = self.builder.build_call(
+                                    boxed_any_from_bool_fn,
+                                    &[bool_val.into()],
+                                    "boxed_bool_value"
+                                ).unwrap();
+
+                                let boxed_value = call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?;
+
+                                (boxed_value, val_type)
+                            } else {
+                                (val, val_type)
+                            }
+                        }
+                    };
                     compiled_values.push(value_val);
                     value_types.push(value_type);
                 }
@@ -2045,214 +2129,68 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         self.ensure_block_has_terminator();
 
-        let (index_val, index_type) = self.compile_expr(slice)?;
+        let (index_val, _index_type) = self.compile_expr(slice)?;
 
         self.ensure_block_has_terminator();
 
-        let result = match &value_type {
-            Type::List(element_type) => {
-                if !index_type.can_coerce_to(&Type::Int) {
-                    return Err(format!(
-                        "List index must be an integer, got {:?}",
-                        index_type
-                    ));
-                }
-
-                let index_int = if index_type != Type::Int {
-                    self.convert_type(index_val, &index_type, &Type::Int)?
-                        .into_int_value()
-                } else {
-                    index_val.into_int_value()
-                };
-
-                let item_ptr =
-                    self.build_list_get_item(value_val.into_pointer_value(), index_int)?;
-
-                let element_type_ref = element_type.as_ref();
-
-                let actual_element_type = match element_type_ref {
-                    Type::Tuple(tuple_element_types) => {
-                        if !tuple_element_types.is_empty()
-                            && tuple_element_types
-                                .iter()
-                                .all(|t| t == &tuple_element_types[0])
-                        {
-                            tuple_element_types[0].clone()
-                        } else {
-                            element_type_ref.clone()
-                        }
-                    }
-                    _ => element_type_ref.clone(),
-                };
-
-                let llvm_type = self.get_llvm_type(&actual_element_type);
-                let item_val = self
-                    .builder
-                    .build_load(llvm_type, item_ptr, "list_item_load")
-                    .unwrap();
-
-                Ok((item_val, actual_element_type))
+        // For any type, check if the index is a constant integer and negative
+        if let Expr::Num { value: Number::Integer(idx), .. } = slice {
+            if *idx < 0 {
+                return Err(format!("Tuple index {} out of range", idx));
             }
-            Type::Dict(key_type, value_type) => {
-                if matches!(**key_type, Type::Unknown) {
-                    println!(
-                        "Dictionary access with Unknown key type, allowing index type: {:?}",
-                        index_type
-                    );
-                } else if !index_type.can_coerce_to(key_type) && !matches!(index_type, Type::String)
-                {
-                    return Err(format!(
-                        "Dictionary key type mismatch: expected {:?}, got {:?}",
-                        key_type, index_type
-                    ));
-                }
+        }
 
-                let value_ptr = self.build_dict_get_item(
-                    value_val.into_pointer_value(),
-                    index_val,
-                    &index_type,
-                )?;
-
-                Ok((value_ptr.into(), value_type.as_ref().clone()))
+        // For tuples, we need to check if the index is out of bounds
+        if let (Type::Tuple(element_types), Expr::Num { value: Number::Integer(idx), .. }) = (&value_type, slice) {
+            let idx = *idx as usize;
+            if idx >= element_types.len() {
+                return Err(format!("Tuple index {} out of range for tuple of size {}", idx, element_types.len()));
             }
-            Type::String => {
-                if !index_type.can_coerce_to(&Type::Int) {
-                    return Err(format!(
-                        "String index must be an integer, got {:?}",
-                        index_type
-                    ));
-                }
+        }
 
-                let index_int = if index_type != Type::Int {
-                    self.convert_type(index_val, &index_type, &Type::Int)?
-                        .into_int_value()
-                } else {
-                    index_val.into_int_value()
-                };
+        // With BoxedAny, we can use the boxed_any_get_item function for all container types
+        // The function will handle type checking internally
 
-                let char_val =
-                    self.build_string_get_char(value_val.into_pointer_value(), index_int)?;
+        // Get the boxed_any_get_item function
+        let boxed_any_get_item_fn = self.module.get_function("boxed_any_get_item")
+            .ok_or_else(|| "boxed_any_get_item function not found".to_string())?;
 
-                Ok((char_val, Type::String))
-            }
+        // Call boxed_any_get_item to get the item
+        let call_site_value = self.builder.build_call(
+            boxed_any_get_item_fn,
+            &[
+                value_val.into(),
+                index_val.into(),
+            ],
+            "boxed_get_item_result",
+        ).unwrap();
+
+        let result_val = call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to get item from container".to_string())?;
+
+        // Determine the result type based on the container type
+        let result_type = match &value_type {
+            Type::List(element_type) => element_type.as_ref().clone(),
+            Type::Dict(_, value_type) => value_type.as_ref().clone(),
             Type::Tuple(element_types) => {
-                if !index_type.can_coerce_to(&Type::Int) {
-                    return Err(format!(
-                        "Tuple index must be an integer, got {:?}",
-                        index_type
-                    ));
-                }
-
-                if let Expr::Num {
-                    value: Number::Integer(idx),
-                    ..
-                } = slice
-                {
+                if let Expr::Num { value: Number::Integer(idx), .. } = slice {
                     let idx = *idx as usize;
-
-                    if idx >= element_types.len() {
-                        return Err(format!(
-                            "Tuple index out of range: {} (tuple has {} elements)",
-                            idx,
-                            element_types.len()
-                        ));
-                    }
-
-                    let llvm_types: Vec<BasicTypeEnum> = element_types
-                        .iter()
-                        .map(|ty| self.get_llvm_type(ty))
-                        .collect();
-
-                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
-
-                    let tuple_ptr = if value_val.is_pointer_value() {
-                        value_val.into_pointer_value()
+                    if idx < element_types.len() {
+                        element_types[idx].clone()
                     } else {
-                        let llvm_type = self.get_llvm_type(&value_type);
-                        let alloca = self.builder.build_alloca(llvm_type, "tuple_temp").unwrap();
-                        self.builder.build_store(alloca, value_val).unwrap();
-                        alloca
-                    };
-
-                    let element_ptr = self
-                        .builder
-                        .build_struct_gep(
-                            tuple_struct,
-                            tuple_ptr,
-                            idx as u32,
-                            &format!("tuple_element_{}", idx),
-                        )
-                        .unwrap();
-
-                    let element_type = &element_types[idx];
-                    let element_val = self
-                        .builder
-                        .build_load(
-                            self.get_llvm_type(element_type),
-                            element_ptr,
-                            &format!("load_tuple_element_{}", idx),
-                        )
-                        .unwrap();
-
-                    return Ok((element_val, element_type.clone()));
-                }
-
-                let index_int = if index_type != Type::Int {
-                    self.convert_type(index_val, &index_type, &Type::Int)?
-                        .into_int_value()
+                        Type::Any
+                    }
                 } else {
-                    index_val.into_int_value()
-                };
-
-                self.handle_tuple_dynamic_index(
-                    value_val,
-                    value_type.clone(),
-                    index_int,
-                    element_types,
-                )
-            }
-            Type::Int => {
-                if !index_type.can_coerce_to(&Type::Int) {
-                    return Err(format!(
-                        "Integer index must be an integer, got {:?}",
-                        index_type
-                    ));
+                    Type::Any
                 }
-
-                let index_int = if index_type != Type::Int {
-                    self.convert_type(index_val, &index_type, &Type::Int)?
-                        .into_int_value()
-                } else {
-                    index_val.into_int_value()
-                };
-
-                let int_to_string_fn = match self.module.get_function("int_to_string") {
-                    Some(f) => f,
-                    None => return Err("int_to_string function not found".to_string()),
-                };
-
-                let call_site_value = self
-                    .builder
-                    .build_call(
-                        int_to_string_fn,
-                        &[index_int.into()],
-                        "int_to_string_result",
-                    )
-                    .unwrap();
-
-                let result = call_site_value
-                    .try_as_basic_value()
-                    .left()
-                    .ok_or_else(|| "Failed to convert integer to string".to_string())?;
-
-                Ok((result, Type::String))
-            }
-            _ => Err(format!("Type {:?} is not indexable", value_type)),
+            },
+            Type::String => Type::String,
+            _ => Type::Any,
         };
 
         self.ensure_block_has_terminator();
 
-        result
+        Ok((result_val, result_type))
     }
 
     fn handle_tuple_dynamic_index(
@@ -2530,7 +2468,24 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 key_alloca.into()
             };
 
-            let value_ptr = if crate::compiler::types::is_reference_type(value_type) {
+            let value_ptr = if value_type == &Type::Bool && value.is_int_value() {
+                // For boolean values, we need to convert them to BoxedAny pointers
+                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                let bool_value = value.into_int_value();
+
+                let call_site_value = self.builder.build_call(
+                    boxed_any_from_bool_fn,
+                    &[bool_value.into()],
+                    &format!("boxed_bool_value_{}", i)
+                ).unwrap();
+
+                let boxed_value = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?;
+
+                boxed_value
+            } else if crate::compiler::types::is_reference_type(value_type) {
                 *value
             } else {
                 let value_alloca = self
@@ -2657,199 +2612,72 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         self.ensure_block_has_terminator();
 
-        match &value_type {
-            Type::List(element_type) => {
-                let list_len_fn = match self.module.get_function("list_len") {
-                    Some(f) => f,
-                    None => return Err("list_len function not found".to_string()),
-                };
+        // With BoxedAny, we can use the boxed_any_slice function for all container types
+        // The function will handle type checking internally
 
-                let list_ptr = value_val.into_pointer_value();
-                let list_len_call = self
-                    .builder
-                    .build_call(list_len_fn, &[list_ptr.into()], "list_len_result")
-                    .unwrap();
+        // Get the boxed_any_slice function
+        let boxed_any_slice_fn = self.module.get_function("boxed_any_slice")
+            .ok_or_else(|| "boxed_any_slice function not found".to_string())?;
 
-                let list_len = list_len_call
-                    .try_as_basic_value()
-                    .left()
-                    .ok_or_else(|| "Failed to get list length".to_string())?;
-
-                let list_len_int = list_len.into_int_value();
-
-                let i64_type = self.llvm_context.i64_type();
-
-                self.ensure_block_has_terminator();
-
-                let start_val = match lower {
-                    Some(expr) => {
-                        let (start_val, start_type) = self.compile_expr(expr)?;
-                        if !start_type.can_coerce_to(&Type::Int) {
-                            return Err(format!(
-                                "Slice start index must be an integer, got {:?}",
-                                start_type
-                            ));
-                        }
-
-                        self.ensure_block_has_terminator();
-
-                        if start_type != Type::Int {
-                            self.convert_type(start_val, &start_type, &Type::Int)?
-                                .into_int_value()
-                        } else {
-                            start_val.into_int_value()
-                        }
-                    }
-                    None => i64_type.const_int(0, false),
-                };
-
-                self.ensure_block_has_terminator();
-
-                let stop_val = match upper {
-                    Some(expr) => {
-                        let (stop_val, stop_type) = self.compile_expr(expr)?;
-                        if !stop_type.can_coerce_to(&Type::Int) {
-                            return Err(format!(
-                                "Slice stop index must be an integer, got {:?}",
-                                stop_type
-                            ));
-                        }
-
-                        self.ensure_block_has_terminator();
-
-                        if stop_type != Type::Int {
-                            self.convert_type(stop_val, &stop_type, &Type::Int)?
-                                .into_int_value()
-                        } else {
-                            stop_val.into_int_value()
-                        }
-                    }
-                    None => list_len_int,
-                };
-
-                self.ensure_block_has_terminator();
-
-                let step_val = match step {
-                    Some(expr) => {
-                        let (step_val, step_type) = self.compile_expr(expr)?;
-                        if !step_type.can_coerce_to(&Type::Int) {
-                            return Err(format!(
-                                "Slice step must be an integer, got {:?}",
-                                step_type
-                            ));
-                        }
-
-                        self.ensure_block_has_terminator();
-
-                        if step_type != Type::Int {
-                            self.convert_type(step_val, &step_type, &Type::Int)?
-                                .into_int_value()
-                        } else {
-                            step_val.into_int_value()
-                        }
-                    }
-                    None => i64_type.const_int(1, false),
-                };
-
-                self.ensure_block_has_terminator();
-
-                let slice_ptr = self.build_list_slice(list_ptr, start_val, stop_val, step_val)?;
-
-                self.ensure_block_has_terminator();
-
-                Ok((slice_ptr.into(), Type::List(element_type.clone())))
+        // Compile the start, stop, and step expressions
+        let start_val = match lower {
+            Some(expr) => {
+                let (start_val, _) = self.compile_expr(expr)?;
+                start_val
             }
-            Type::String => {
-                let string_len_fn = match self.module.get_function("string_len") {
-                    Some(f) => f,
-                    None => return Err("string_len function not found".to_string()),
-                };
-
-                let str_ptr = value_val.into_pointer_value();
-                let string_len_call = self
-                    .builder
-                    .build_call(string_len_fn, &[str_ptr.into()], "string_len_result")
-                    .unwrap();
-
-                let string_len = string_len_call
-                    .try_as_basic_value()
-                    .left()
-                    .ok_or_else(|| "Failed to get string length".to_string())?;
-
-                let string_len_int = string_len.into_int_value();
-
-                let i64_type = self.llvm_context.i64_type();
-
-                let start_val = match lower {
-                    Some(expr) => {
-                        let (start_val, start_type) = self.compile_expr(expr)?;
-                        if !start_type.can_coerce_to(&Type::Int) {
-                            return Err(format!(
-                                "Slice start index must be an integer, got {:?}",
-                                start_type
-                            ));
-                        }
-
-                        if start_type != Type::Int {
-                            self.convert_type(start_val, &start_type, &Type::Int)?
-                                .into_int_value()
-                        } else {
-                            start_val.into_int_value()
-                        }
-                    }
-                    None => i64_type.const_int(0, false),
-                };
-
-                let stop_val = match upper {
-                    Some(expr) => {
-                        let (stop_val, stop_type) = self.compile_expr(expr)?;
-                        if !stop_type.can_coerce_to(&Type::Int) {
-                            return Err(format!(
-                                "Slice stop index must be an integer, got {:?}",
-                                stop_type
-                            ));
-                        }
-
-                        if stop_type != Type::Int {
-                            self.convert_type(stop_val, &stop_type, &Type::Int)?
-                                .into_int_value()
-                        } else {
-                            stop_val.into_int_value()
-                        }
-                    }
-                    None => string_len_int,
-                };
-
-                let step_val = match step {
-                    Some(expr) => {
-                        let (step_val, step_type) = self.compile_expr(expr)?;
-                        if !step_type.can_coerce_to(&Type::Int) {
-                            return Err(format!(
-                                "Slice step must be an integer, got {:?}",
-                                step_type
-                            ));
-                        }
-
-                        if step_type != Type::Int {
-                            self.convert_type(step_val, &step_type, &Type::Int)?
-                                .into_int_value()
-                        } else {
-                            step_val.into_int_value()
-                        }
-                    }
-                    None => i64_type.const_int(1, false),
-                };
-
-                self.ensure_block_has_terminator();
-
-                let slice_ptr = self.build_string_slice(str_ptr, start_val, stop_val, step_val)?;
-
-                self.ensure_block_has_terminator();
-
-                Ok((slice_ptr.into(), Type::String))
+            None => {
+                // Use null pointer to indicate default start (0)
+                self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into()
             }
-            _ => Err(format!("Type {:?} does not support slicing", value_type)),
-        }
+        };
+
+        let stop_val = match upper {
+            Some(expr) => {
+                let (stop_val, _) = self.compile_expr(expr)?;
+                stop_val
+            }
+            None => {
+                // Use null pointer to indicate default stop (length)
+                self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into()
+            }
+        };
+
+        let step_val = match step {
+            Some(expr) => {
+                let (step_val, _) = self.compile_expr(expr)?;
+                step_val
+            }
+            None => {
+                // Use null pointer to indicate default step (1)
+                self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null().into()
+            }
+        };
+
+        // Call boxed_any_slice to get the slice
+        let call_site_value = self.builder.build_call(
+            boxed_any_slice_fn,
+            &[
+                value_val.into(),
+                start_val.into(),
+                stop_val.into(),
+                step_val.into(),
+            ],
+            "boxed_slice_result",
+        ).unwrap();
+
+        let result_val = call_site_value.try_as_basic_value().left()
+            .ok_or_else(|| "Failed to get slice from container".to_string())?;
+
+        // Determine the result type based on the container type
+        let result_type = match &value_type {
+            Type::List(element_type) => Type::List(element_type.clone()),
+            Type::String => Type::String,
+            _ => Type::Any,
+        };
+
+        self.ensure_block_has_terminator();
+
+        Ok((result_val, result_type))
     }
 
     fn build_dict_get_item(
@@ -3030,7 +2858,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 let boxed_value = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to create BoxedAny from integer".to_string())?;
 
-                Ok((boxed_value, Type::Int))
+                Ok((boxed_value, Type::Any))
             }
             Number::Float(value) => {
                 // Get the boxed_any_from_float function
@@ -3051,7 +2879,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 let boxed_value = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to create BoxedAny from float".to_string())?;
 
-                Ok((boxed_value, Type::Float))
+                Ok((boxed_value, Type::Any))
             }
             Number::Complex { real, imag: _ } => {
                 // For complex numbers, we'll just use the real part for now
@@ -3073,7 +2901,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 let boxed_value = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to create BoxedAny from complex".to_string())?;
 
-                Ok((boxed_value, Type::Float))
+                Ok((boxed_value, Type::Any))
             }
         }
     }
@@ -3102,7 +2930,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 let boxed_value = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?;
 
-                Ok((boxed_value, Type::Bool))
+                Ok((boxed_value, Type::Any))
             }
             NameConstant::False => {
                 // Get the boxed_any_from_bool function
@@ -3123,7 +2951,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 let boxed_value = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?;
 
-                Ok((boxed_value, Type::Bool))
+                Ok((boxed_value, Type::Any))
             }
             NameConstant::None => {
                 // Get the boxed_any_none function
@@ -3140,7 +2968,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 let boxed_value = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to create BoxedAny for None".to_string())?;
 
-                Ok((boxed_value, Type::None))
+                Ok((boxed_value, Type::Any))
             }
         }
     }
@@ -4919,10 +4747,10 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
     fn compile_binary_op(
         &mut self,
         left: inkwell::values::BasicValueEnum<'ctx>,
-        left_type: &Type,
+        _left_type: &Type,
         op: Operator,
         right: inkwell::values::BasicValueEnum<'ctx>,
-        right_type: &Type,
+        _right_type: &Type,
     ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
         // With BoxedAny, we don't need to convert types before operations
         // The BoxedAny operations will handle type conversions internally
@@ -4952,16 +4780,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny addition".to_string())?;
 
-                // Determine the result type based on the operand types
-                let result_type = if left_type == &Type::Float || right_type == &Type::Float {
-                    Type::Float
-                } else if left_type == &Type::String || right_type == &Type::String {
-                    Type::String
-                } else {
-                    Type::Int
-                };
-
-                Ok((result, result_type))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::Sub => {
@@ -4979,14 +4799,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny subtraction".to_string())?;
 
-                // Determine the result type based on the operand types
-                let result_type = if left_type == &Type::Float || right_type == &Type::Float {
-                    Type::Float
-                } else {
-                    Type::Int
-                };
-
-                Ok((result, result_type))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::Mult => {
@@ -5004,18 +4818,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny multiplication".to_string())?;
 
-                // Determine the result type based on the operand types
-                let result_type = if left_type == &Type::Float || right_type == &Type::Float {
-                    Type::Float
-                } else if left_type == &Type::String && right_type == &Type::Int {
-                    Type::String
-                } else if left_type == &Type::List(Box::new(Type::Any)) && right_type == &Type::Int {
-                    Type::List(Box::new(Type::Any))
-                } else {
-                    Type::Int
-                };
-
-                Ok((result, result_type))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::Div => {
@@ -5033,8 +4837,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny division".to_string())?;
 
-                // Division always returns a float in Python
-                Ok((result, Type::Float))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::FloorDiv => {
@@ -5052,14 +4856,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny floor division".to_string())?;
 
-                // Floor division with integers returns an integer
-                let result_type = if left_type == &Type::Int && right_type == &Type::Int {
-                    Type::Int
-                } else {
-                    Type::Float
-                };
-
-                Ok((result, result_type))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::Mod => {
@@ -5077,14 +4875,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny modulo operation".to_string())?;
 
-                // Determine the result type based on the operand types
-                let result_type = if left_type == &Type::Float || right_type == &Type::Float {
-                    Type::Float
-                } else {
-                    Type::Int
-                };
-
-                Ok((result, result_type))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::Pow => {
@@ -5102,16 +4894,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny power operation".to_string())?;
 
-                // Determine the result type based on the operand types
-                let result_type = if left_type == &Type::Int && right_type == &Type::Int {
-                    // Integer power with positive exponent returns integer
-                    Type::Int
-                } else {
-                    // All other cases return float
-                    Type::Float
-                };
-
-                Ok((result, result_type))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::BitOr => {
@@ -5129,8 +4913,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny bitwise OR operation".to_string())?;
 
-                // Bitwise operations always return integers
-                Ok((result, Type::Int))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::BitAnd => {
@@ -5148,8 +4932,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny bitwise AND operation".to_string())?;
 
-                // Bitwise operations always return integers
-                Ok((result, Type::Int))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::BitXor => {
@@ -5167,8 +4951,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny bitwise XOR operation".to_string())?;
 
-                // Bitwise operations always return integers
-                Ok((result, Type::Int))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::LShift => {
@@ -5186,8 +4970,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny left shift operation".to_string())?;
 
-                // Shift operations always return integers
-                Ok((result, Type::Int))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             Operator::RShift => {
@@ -5205,8 +4989,8 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 let result = call_site_value.try_as_basic_value().left()
                     .ok_or_else(|| "Failed to perform BoxedAny right shift operation".to_string())?;
 
-                // Shift operations always return integers
-                Ok((result, Type::Int))
+                // All BoxedAny operations return Type::Any
+                Ok((result, Type::Any))
             },
 
             // For other operators, we'll need to implement them as needed
@@ -5223,6 +5007,7 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
         op: CmpOperator,
         right: inkwell::values::BasicValueEnum<'ctx>,
         right_type: &Type,
+        need_boxed_any: bool,
     ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
         if matches!(op, CmpOperator::Is) || matches!(op, CmpOperator::IsNot) {
             if is_reference_type(left_type) && is_reference_type(right_type) {
@@ -5293,6 +5078,7 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                 },
                 right,
                 right_type,
+                need_boxed_any,
             );
         }
 
@@ -5358,6 +5144,23 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                         contains_bool
                     };
 
+                    // Convert the boolean result to a BoxedAny pointer if needed
+                    if need_boxed_any {
+                        let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                            .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                        let boxed_result = self.builder.build_call(
+                            boxed_any_from_comparison_fn,
+                            &[result.into()],
+                            "boxed_contains_result"
+                        ).unwrap();
+
+                        let boxed_value = boxed_result.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                        return Ok((boxed_value, Type::Bool));
+                    }
+
                     return Ok((result.into(), Type::Bool));
                 }
                 Type::List(_) => {
@@ -5397,6 +5200,23 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                     let result = call_site_value.try_as_basic_value().left()
                         .ok_or_else(|| "Failed to perform BoxedAny equals comparison".to_string())?;
 
+                    // Convert the boolean result to a BoxedAny pointer if needed
+                    if need_boxed_any {
+                        let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                            .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                        let boxed_result = self.builder.build_call(
+                            boxed_any_from_comparison_fn,
+                            &[result.into()],
+                            "boxed_equals_result"
+                        ).unwrap();
+
+                        let boxed_value = boxed_result.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                        return Ok((boxed_value, Type::Bool));
+                    }
+
                     return Ok((result, Type::Bool));
                 },
                 CmpOperator::NotEq => {
@@ -5413,6 +5233,23 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
 
                     let result = call_site_value.try_as_basic_value().left()
                         .ok_or_else(|| "Failed to perform BoxedAny not equals comparison".to_string())?;
+
+                    // Convert the boolean result to a BoxedAny pointer if needed
+                    if need_boxed_any {
+                        let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                            .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                        let boxed_result = self.builder.build_call(
+                            boxed_any_from_comparison_fn,
+                            &[result.into()],
+                            "boxed_not_equals_result"
+                        ).unwrap();
+
+                        let boxed_value = boxed_result.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                        return Ok((boxed_value, Type::Bool));
+                    }
 
                     return Ok((result, Type::Bool));
                 },
@@ -5431,6 +5268,23 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                     let result = call_site_value.try_as_basic_value().left()
                         .ok_or_else(|| "Failed to perform BoxedAny less than comparison".to_string())?;
 
+                    // Convert the boolean result to a BoxedAny pointer if needed
+                    if need_boxed_any {
+                        let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                            .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                        let boxed_result = self.builder.build_call(
+                            boxed_any_from_comparison_fn,
+                            &[result.into()],
+                            "boxed_less_than_result"
+                        ).unwrap();
+
+                        let boxed_value = boxed_result.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                        return Ok((boxed_value, Type::Bool));
+                    }
+
                     return Ok((result, Type::Bool));
                 },
                 CmpOperator::LtE => {
@@ -5447,6 +5301,23 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
 
                     let result = call_site_value.try_as_basic_value().left()
                         .ok_or_else(|| "Failed to perform BoxedAny less than or equal comparison".to_string())?;
+
+                    // Convert the boolean result to a BoxedAny pointer if needed
+                    if need_boxed_any {
+                        let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                            .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                        let boxed_result = self.builder.build_call(
+                            boxed_any_from_comparison_fn,
+                            &[result.into()],
+                            "boxed_less_than_or_equal_result"
+                        ).unwrap();
+
+                        let boxed_value = boxed_result.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                        return Ok((boxed_value, Type::Bool));
+                    }
 
                     return Ok((result, Type::Bool));
                 },
@@ -5465,6 +5336,23 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                     let result = call_site_value.try_as_basic_value().left()
                         .ok_or_else(|| "Failed to perform BoxedAny greater than comparison".to_string())?;
 
+                    // Convert the boolean result to a BoxedAny pointer if needed
+                    if need_boxed_any {
+                        let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                            .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                        let boxed_result = self.builder.build_call(
+                            boxed_any_from_comparison_fn,
+                            &[result.into()],
+                            "boxed_greater_than_result"
+                        ).unwrap();
+
+                        let boxed_value = boxed_result.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                        return Ok((boxed_value, Type::Bool));
+                    }
+
                     return Ok((result, Type::Bool));
                 },
                 CmpOperator::GtE => {
@@ -5481,6 +5369,23 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
 
                     let result = call_site_value.try_as_basic_value().left()
                         .ok_or_else(|| "Failed to perform BoxedAny greater than or equal comparison".to_string())?;
+
+                    // Convert the boolean result to a BoxedAny pointer if needed
+                    if need_boxed_any {
+                        let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                            .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                        let boxed_result = self.builder.build_call(
+                            boxed_any_from_comparison_fn,
+                            &[result.into()],
+                            "boxed_greater_than_or_equal_result"
+                        ).unwrap();
+
+                        let boxed_value = boxed_result.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                        return Ok((boxed_value, Type::Bool));
+                    }
 
                     return Ok((result, Type::Bool));
                 },
@@ -5529,6 +5434,24 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                     .builder
                     .build_int_compare(pred, left_int, right_int, "int_cmp")
                     .unwrap();
+
+                // Convert the boolean result to a BoxedAny pointer if needed
+                if need_boxed_any {
+                    let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                        .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                    let boxed_result = self.builder.build_call(
+                        boxed_any_from_comparison_fn,
+                        &[result.into()],
+                        "boxed_int_cmp_result"
+                    ).unwrap();
+
+                    let boxed_value = boxed_result.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                    return Ok((boxed_value, Type::Bool));
+                }
+
                 Ok((result.into(), Type::Bool))
             }
 
@@ -5555,6 +5478,24 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                     .builder
                     .build_float_compare(pred, left_float, right_float, "float_cmp")
                     .unwrap();
+
+                // Convert the boolean result to a BoxedAny pointer if needed
+                if need_boxed_any {
+                    let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                        .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                    let boxed_result = self.builder.build_call(
+                        boxed_any_from_comparison_fn,
+                        &[result.into()],
+                        "boxed_float_cmp_result"
+                    ).unwrap();
+
+                    let boxed_value = boxed_result.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                    return Ok((boxed_value, Type::Bool));
+                }
+
                 Ok((result.into(), Type::Bool))
             }
 
@@ -5577,6 +5518,24 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                     .builder
                     .build_int_compare(pred, left_bool, right_bool, "bool_cmp")
                     .unwrap();
+
+                // Convert the boolean result to a BoxedAny pointer if needed
+                if need_boxed_any {
+                    let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                        .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                    let boxed_result = self.builder.build_call(
+                        boxed_any_from_comparison_fn,
+                        &[result.into()],
+                        "boxed_bool_cmp_result"
+                    ).unwrap();
+
+                    let boxed_value = boxed_result.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                    return Ok((boxed_value, Type::Bool));
+                }
+
                 Ok((result.into(), Type::Bool))
             }
 
@@ -5609,13 +5568,50 @@ impl<'ctx> ComparisonCompiler<'ctx> for CompilationContext<'ctx> {
                     let bool_result = result_val.into_int_value();
 
                     match op {
-                        CmpOperator::Eq => Ok((bool_result.into(), Type::Bool)),
+                        CmpOperator::Eq => {
+                            // Convert the boolean result to a BoxedAny pointer if needed
+                            if need_boxed_any {
+                                let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                                    .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                                let boxed_result = self.builder.build_call(
+                                    boxed_any_from_comparison_fn,
+                                    &[bool_result.into()],
+                                    "boxed_string_equals_result"
+                                ).unwrap();
+
+                                let boxed_value = boxed_result.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                                Ok((boxed_value, Type::Bool))
+                            } else {
+                                Ok((bool_result.into(), Type::Bool))
+                            }
+                        },
                         CmpOperator::NotEq => {
                             let not_result = self
                                 .builder
                                 .build_not(bool_result, "string_not_equals")
                                 .unwrap();
-                            Ok((not_result.into(), Type::Bool))
+
+                            // Convert the boolean result to a BoxedAny pointer if needed
+                            if need_boxed_any {
+                                let boxed_any_from_comparison_fn = self.module.get_function("boxed_any_from_comparison")
+                                    .ok_or_else(|| "boxed_any_from_comparison function not found".to_string())?;
+
+                                let boxed_result = self.builder.build_call(
+                                    boxed_any_from_comparison_fn,
+                                    &[not_result.into()],
+                                    "boxed_string_not_equals_result"
+                                ).unwrap();
+
+                                let boxed_value = boxed_result.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to convert comparison result to BoxedAny".to_string())?;
+
+                                Ok((boxed_value, Type::Bool))
+                            } else {
+                                Ok((not_result.into(), Type::Bool))
+                            }
                         }
                         _ => Err(format!("String comparison operator {:?} not supported", op)),
                     }
@@ -5642,6 +5638,7 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
         match target {
             Expr::Tuple { elts, .. } => {
                 if let Type::Tuple(element_types) = value_type {
+                    // Handle tuple type directly
                     if elts.len() != element_types.len() {
                         return Err(format!(
                             "Tuple unpacking mismatch: expected {} elements, got {}",
@@ -5733,6 +5730,73 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                         }
 
                         self.compile_assignment(target_expr, element_value, &element_types[i])?;
+                    }
+
+                    Ok(())
+                } else if value_type == &Type::Any {
+                    // For BoxedAny values, we need to extract the tuple at runtime
+                    let boxed_any_as_tuple_fn = self.module.get_function("boxed_any_as_tuple")
+                        .ok_or_else(|| "boxed_any_as_tuple function not found".to_string())?;
+
+                    // Convert the BoxedAny to a tuple
+                    let tuple_ptr = if value.is_pointer_value() {
+                        let call_site_value = self.builder.build_call(
+                            boxed_any_as_tuple_fn,
+                            &[value.into_pointer_value().into()],
+                            "tuple_from_any"
+                        ).unwrap();
+
+                        call_site_value.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to convert BoxedAny to tuple".to_string())?
+                            .into_pointer_value()
+                    } else {
+                        return Err(format!("Expected pointer value for BoxedAny, got {:?}", value));
+                    };
+
+                    // Create default element types for the tuple elements
+                    let _element_types = vec![Type::Any; elts.len()];
+
+                    // Extract each element from the tuple
+                    for (i, target_expr) in elts.iter().enumerate() {
+                        // Get the tuple element using boxed_tuple_get
+                        let boxed_tuple_get_fn = self.module.get_function("boxed_tuple_get")
+                            .ok_or_else(|| "boxed_tuple_get function not found".to_string())?;
+
+                        let index = self.llvm_context.i64_type().const_int(i as u64, false);
+
+                        let call_site_value = self.builder.build_call(
+                            boxed_tuple_get_fn,
+                            &[tuple_ptr.into(), index.into()],
+                            &format!("tuple_element_{}", i)
+                        ).unwrap();
+
+                        let element_value = call_site_value.try_as_basic_value().left()
+                            .ok_or_else(|| format!("Failed to get tuple element {}", i))?;
+
+                        // Assign the element to the target
+                        if let Expr::Name { id, .. } = target_expr.as_ref() {
+                            self.register_variable(id.clone(), Type::Any);
+
+                            if self.get_variable_ptr(id).is_none() {
+                                let ptr = self.builder
+                                    .build_alloca(self.get_llvm_type(&Type::Any), id)
+                                    .unwrap();
+
+                                self.builder.build_store(ptr, element_value).unwrap();
+
+                                self.add_variable_to_scope(
+                                    id.clone(),
+                                    ptr,
+                                    Type::Any,
+                                );
+
+                                self.variables.insert(id.clone(), ptr);
+
+                                continue;
+                            }
+                        }
+
+                        self.compile_assignment(target_expr, element_value, &Type::Any)?;
                     }
 
                     Ok(())

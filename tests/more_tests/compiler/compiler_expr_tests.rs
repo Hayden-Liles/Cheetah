@@ -5,7 +5,80 @@ use cheetah::compiler::types::Type;
 use inkwell::context::Context;
 
 fn setup_context<'ctx>(context: &'ctx Context) -> CompilationContext<'ctx> {
-    CompilationContext::new(context, "test_module")
+    let mut ctx = CompilationContext::new(context, "test_module");
+    register_boxed_any_functions(&mut ctx);
+    ctx
+}
+
+fn register_boxed_any_functions<'ctx>(ctx: &mut CompilationContext<'ctx>) {
+    let ptr_type = ctx.llvm_context.ptr_type(inkwell::AddressSpace::default());
+    let i64_type = ctx.llvm_context.i64_type();
+    let f64_type = ctx.llvm_context.f64_type();
+    let bool_type = ctx.llvm_context.bool_type();
+
+    // Register boxed_any_from_int
+    let boxed_any_from_int_type = ptr_type.fn_type(&[i64_type.into()], false);
+    ctx.module.add_function("boxed_any_from_int", boxed_any_from_int_type, None);
+
+    // Register boxed_any_from_float
+    let boxed_any_from_float_type = ptr_type.fn_type(&[f64_type.into()], false);
+    ctx.module.add_function("boxed_any_from_float", boxed_any_from_float_type, None);
+
+    // Register boxed_any_from_bool
+    let boxed_any_from_bool_type = ptr_type.fn_type(&[bool_type.into()], false);
+    ctx.module.add_function("boxed_any_from_bool", boxed_any_from_bool_type, None);
+
+    // Register boxed_any_to_bool
+    let boxed_any_to_bool_type = bool_type.fn_type(&[ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_to_bool", boxed_any_to_bool_type, None);
+
+    // Register boxed_any_less_than
+    let boxed_any_less_than_type = bool_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_less_than", boxed_any_less_than_type, None);
+
+    // Register boxed_any_negate
+    let boxed_any_negate_type = ptr_type.fn_type(&[ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_negate", boxed_any_negate_type, None);
+
+    // Register boxed_any_not
+    let boxed_any_not_type = ptr_type.fn_type(&[ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_not", boxed_any_not_type, None);
+
+    // Register boxed_any_add
+    let boxed_any_add_type = ptr_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_add", boxed_any_add_type, None);
+
+    // Register boxed_any_subtract
+    let boxed_any_subtract_type = ptr_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_subtract", boxed_any_subtract_type, None);
+
+    // Register boxed_any_multiply
+    let boxed_any_multiply_type = ptr_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_multiply", boxed_any_multiply_type, None);
+
+    // Register boxed_any_divide
+    let boxed_any_divide_type = ptr_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_divide", boxed_any_divide_type, None);
+
+    // Register boxed_any_equals
+    let boxed_any_equals_type = bool_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_equals", boxed_any_equals_type, None);
+
+    // Register boxed_any_not_equals
+    let boxed_any_not_equals_type = bool_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_not_equals", boxed_any_not_equals_type, None);
+
+    // Register boxed_any_greater_than
+    let boxed_any_greater_than_type = bool_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_greater_than", boxed_any_greater_than_type, None);
+
+    // Register boxed_any_greater_than_or_equal
+    let boxed_any_greater_than_or_equal_type = bool_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_greater_than_or_equal", boxed_any_greater_than_or_equal_type, None);
+
+    // Register boxed_any_less_than_or_equal
+    let boxed_any_less_than_or_equal_type = bool_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    ctx.module.add_function("boxed_any_less_than_or_equal", boxed_any_less_than_or_equal_type, None);
 }
 
 fn create_function<'ctx>(ctx: &mut CompilationContext<'ctx>, name: &str) {
@@ -21,7 +94,7 @@ fn test_nested_expressions() {
     let context = Context::create();
     let mut ctx = setup_context(&context);
     create_function(&mut ctx, "test_nested_expr");
-    
+
     // Create a nested expression: (10 + 20) * (5 - 2)
     let left = Expr::BinOp {
         left: Box::new(Expr::Num {
@@ -35,7 +108,7 @@ fn test_nested_expressions() {
         }),
         line: 1, column: 3
     };
-    
+
     let right = Expr::BinOp {
         left: Box::new(Expr::Num {
             value: Number::Integer(5),
@@ -48,21 +121,21 @@ fn test_nested_expressions() {
         }),
         line: 1, column: 13
     };
-    
+
     let expr = Expr::BinOp {
         left: Box::new(left),
         op: Operator::Mult,
         right: Box::new(right),
         line: 1, column: 8
     };
-    
+
     // Compile the nested expression
     let (val, ty) = ctx.compile_expr(&expr).unwrap();
-    
+
     // The result should be an integer
     assert!(matches!(ty, Type::Int));
     assert!(val.is_int_value());
-    
+
     // If the compiler does constant folding correctly, the result should be (10+20)*(5-2) = 30*3 = 90
     if let Some(const_val) = val.into_int_value().get_zero_extended_constant() {
         assert_eq!(const_val, 90);
@@ -74,21 +147,21 @@ fn test_comparison_chains() {
     let context = Context::create();
     let mut ctx = setup_context(&context);
     create_function(&mut ctx, "test_comparison_chains");
-    
+
     // Create variables to use in the comparison
     let var_a = "a".to_string();
     let var_b = "b".to_string();
     let var_c = "c".to_string();
-    
+
     // Allocate and initialize variables: a = 10, b = 20, c = 30
     let a_ptr = ctx.allocate_variable(var_a.clone(), &Type::Int);
     let b_ptr = ctx.allocate_variable(var_b.clone(), &Type::Int);
     let c_ptr = ctx.allocate_variable(var_c.clone(), &Type::Int);
-    
+
     ctx.builder.build_store(a_ptr, ctx.llvm_context.i64_type().const_int(10, false)).unwrap();
     ctx.builder.build_store(b_ptr, ctx.llvm_context.i64_type().const_int(20, false)).unwrap();
     ctx.builder.build_store(c_ptr, ctx.llvm_context.i64_type().const_int(30, false)).unwrap();
-    
+
     // Create a comparison chain: a < b < c
     let expr = Expr::Compare {
         left: Box::new(Expr::Name {
@@ -111,10 +184,10 @@ fn test_comparison_chains() {
         ],
         line: 1, column: 3
     };
-    
+
     // Compile the comparison chain
     let (val, ty) = ctx.compile_expr(&expr).unwrap();
-    
+
     // The result should be a boolean
     assert!(matches!(ty, Type::Bool));
     assert!(val.is_int_value());
@@ -125,7 +198,7 @@ fn test_mixed_type_operations() {
     let context = Context::create();
     let mut ctx = setup_context(&context);
     create_function(&mut ctx, "test_mixed_types");
-    
+
     // Create mixed-type expressions: 10 + 3.14
     let expr = Expr::BinOp {
         left: Box::new(Expr::Num {
@@ -139,10 +212,10 @@ fn test_mixed_type_operations() {
         }),
         line: 1, column: 3
     };
-    
+
     // Compile the expression
     let (val, ty) = ctx.compile_expr(&expr).unwrap();
-    
+
     // The result should be a float (due to type coercion)
     assert!(matches!(ty, Type::Float));
     assert!(val.is_float_value());
@@ -153,7 +226,7 @@ fn test_boolean_operations() {
     let context = Context::create();
     let mut ctx = setup_context(&context);
     create_function(&mut ctx, "test_boolean_ops");
-    
+
     // Test boolean "not" operator
     let not_expr = Expr::UnaryOp {
         op: UnaryOperator::Not,
@@ -163,11 +236,12 @@ fn test_boolean_operations() {
         }),
         line: 1, column: 1
     };
-    
+
     let (not_val, not_type) = ctx.compile_expr(&not_expr).unwrap();
-    assert!(matches!(not_type, Type::Bool));
-    assert!(not_val.is_int_value());
-    
+    // With BoxedAny, the result is a pointer to a BoxedAny value
+    assert!(matches!(not_type, Type::Any));
+    assert!(not_val.is_pointer_value());
+
     // Test boolean operation on non-boolean type (should convert to bool)
     let non_bool_not = Expr::UnaryOp {
         op: UnaryOperator::Not,
@@ -177,10 +251,11 @@ fn test_boolean_operations() {
         }),
         line: 1, column: 1
     };
-    
+
     let (val, ty) = ctx.compile_expr(&non_bool_not).unwrap();
-    assert!(matches!(ty, Type::Bool));
-    assert!(val.is_int_value());
+    // With BoxedAny, the result is a pointer to a BoxedAny value
+    assert!(matches!(ty, Type::Any));
+    assert!(val.is_pointer_value());
 }
 
 #[test]
@@ -188,24 +263,24 @@ fn test_variable_updates() {
     let context = Context::create();
     let mut ctx = setup_context(&context);
     create_function(&mut ctx, "test_var_updates");
-    
+
     // Create a variable x = 10
     let var_name = "x".to_string();
     let var_ptr = ctx.allocate_variable(var_name.clone(), &Type::Int);
     ctx.builder.build_store(var_ptr, ctx.llvm_context.i64_type().const_int(10, false)).unwrap();
-    
+
     // Create reference to the variable
     let var_expr = Expr::Name {
         id: var_name.clone(),
         ctx: ExprContext::Load,
         line: 1, column: 1
     };
-    
+
     // Compile the variable reference
     let (val, ty) = ctx.compile_expr(&var_expr).unwrap();
     assert!(matches!(ty, Type::Int));
     assert!(val.is_int_value());
-    
+
     // The value should be 10
     if let Some(const_val) = val.into_int_value().get_zero_extended_constant() {
         assert_eq!(const_val, 10);

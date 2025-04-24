@@ -483,6 +483,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
 
                         self.builder.position_at_end(then_block);
 
+                        // Push a new scope for the then block
+                        self.push_scope(false, false, false);
+
                         for stmt in body {
                             if self
                                 .builder
@@ -499,6 +502,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             }
                         }
 
+                        // Pop the scope for the then block
+                        self.pop_scope();
+
                         if !self
                             .builder
                             .get_insert_block()
@@ -510,6 +516,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
 
                         self.builder.position_at_end(else_block);
+
+                        // Push a new scope for the else block
+                        self.push_scope(false, false, false);
 
                         for stmt in orelse {
                             if self
@@ -526,6 +535,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                                 return Err(e);
                             }
                         }
+
+                        // Pop the scope for the else block
+                        self.pop_scope();
 
                         if !self
                             .builder

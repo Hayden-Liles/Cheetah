@@ -72,8 +72,11 @@ pub struct CompilationContext<'ctx> {
 impl<'ctx> CompilationContext<'ctx> {
     /// Create a new compilation context
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
-        let module = context.create_module(module_name);
+        let mut module = context.create_module(module_name);
         let builder = context.create_builder();
+
+        // Register runtime functions
+        crate::compiler::runtime::register_runtime_functions(context, &mut module);
 
         Self {
             llvm_context: context,
@@ -540,6 +543,23 @@ impl<'ctx> CompilationContext<'ctx> {
 
             (Type::String, Type::Bool) => {
                 self.build_string_to_bool_call(value.into_pointer_value())
+            }
+
+            (Type::Any, Type::Bool) => {
+                // Convert Any to Bool using boxed_any_to_bool
+                let boxed_any_to_bool_fn = self.module.get_function("boxed_any_to_bool")
+                    .ok_or_else(|| "boxed_any_to_bool function not found".to_string())?;
+
+                let call_site_value = self.builder.build_call(
+                    boxed_any_to_bool_fn,
+                    &[value.into()],
+                    "any_to_bool_result"
+                ).unwrap();
+
+                let result = call_site_value.try_as_basic_value().left()
+                    .ok_or_else(|| "Failed to convert Any to Bool".to_string())?;
+
+                Ok(result.into())
             }
 
             _ => Err(format!(

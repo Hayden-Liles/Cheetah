@@ -226,6 +226,12 @@ fn test_dict_conditional_values() {
 # Dictionary with conditional values
 x = 10
 y = 20
+
+# Initialize variables before conditionals
+comparison_value = "initial"
+parity_value = "initial"
+range_value = "initial"
+
 # Conditional expressions not supported in dict literals yet
 if x > y:
     comparison_value = "x > y"
