@@ -86,270 +86,65 @@ impl<'ctx> CompilationContext<'ctx> {
         println!("In compile_print_call with {} arguments", args.len());
         println!("use_boxed_values = {}", self.use_boxed_values);
 
-        // Get the necessary print functions
-        let print_str_fn = match self.module.get_function("print_string") {
-            Some(f) => {
-                println!("Found print_string function");
-                f
-            },
-            None => {
-                println!("print_string function not found, registering it");
-                let ctx = self.llvm_context;
-                let t = ctx.void_type().fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
-                self.module.add_function("print_string", t, None)
-            }
-        };
-
-        let print_int_fn = match self.module.get_function("print_int") {
-            Some(f) => {
-                println!("Found print_int function");
-                f
-            },
-            None => {
-                println!("print_int function not found, registering it");
-                let ctx = self.llvm_context;
-                let t = ctx.void_type().fn_type(&[ctx.i64_type().into()], false);
-                self.module.add_function("print_int", t, None)
-            }
-        };
-
-        let print_flt_fn = match self.module.get_function("print_float") {
-            Some(f) => {
-                println!("Found print_float function");
-                f
-            },
-            None => {
-                println!("print_float function not found, registering it");
-                let ctx = self.llvm_context;
-                let t = ctx.void_type().fn_type(&[ctx.f64_type().into()], false);
-                self.module.add_function("print_float", t, None)
-            }
-        };
-
-        let print_bool_fn = match self.module.get_function("print_bool") {
-            Some(f) => {
-                println!("Found print_bool function");
-                f
-            },
-            None => {
-                println!("print_bool function not found, registering it");
-                let ctx = self.llvm_context;
-                let t = ctx.void_type().fn_type(&[ctx.bool_type().into()], false);
-                self.module.add_function("print_bool", t, None)
-            }
-        };
-
-        let println_fn = match self.module.get_function("println_string") {
-            Some(f) => {
-                println!("Found println_string function");
-                f
-            },
-            None => {
-                println!("println_string function not found, registering it");
-                let ctx = self.llvm_context;
-                let t = ctx.void_type().fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
-                self.module.add_function("println_string", t, None)
-            }
-        };
-
-        // Get BoxedAny print functions if we're using BoxedAny values
-        let print_boxed_any_fn = if self.use_boxed_values {
-            match self.module.get_function("print_boxed_any") {
-                Some(f) => {
-                    println!("Found print_boxed_any function");
-                    Some(f)
-                },
-                None => {
-                    println!("print_boxed_any function not found, registering it");
-                    let ctx = self.llvm_context;
-                    let t = ctx.void_type().fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
-                    Some(self.module.add_function("print_boxed_any", t, None))
-                }
-            }
-        } else {
-            println!("Not using BoxedAny values, skipping print_boxed_any function");
-            None
-        };
+        // Get the print function based on whether we're using BoxedAny values
+        let print_fn = self.module.get_function(
+            if self.use_boxed_values { "print_boxed_any" } else { "print_string" }
+        ).ok_or("print runtime missing")?;
 
         // If we have no arguments, just print a newline
         if args.is_empty() {
             let nl = self.make_cstr("nl", b"\n\0");
-            let _ = self.builder.build_call(println_fn, &[nl.into()], "print_nl");
+
+            if self.use_boxed_values {
+                // Box the newline string and print it
+                let (boxed_nl, _) = self.maybe_box(nl.into(), &Type::String)?;
+                self.builder.build_call(print_fn, &[boxed_nl.into()], "print_nl")
+                    .map_err(|e| format!("Failed to call print function: {}", e))?;
+            } else {
+                // Use the regular println_string function
+                let println_fn = self.module.get_function("println_string")
+                    .ok_or("println_string function not found")?;
+                self.builder.build_call(println_fn, &[nl.into()], "print_nl")
+                    .map_err(|e| format!("Failed to call println function: {}", e))?;
+            }
+
             return Ok((self.llvm_context.i64_type().const_zero().into(), Type::None));
         }
 
+        // Process each argument
         for (i, arg) in args.iter().enumerate() {
             let (val, ty) = self.compile_expr(arg)?;
 
-            if self.use_boxed_values && print_boxed_any_fn.is_some() {
-                // If we're using BoxedAny values, convert the value to a BoxedAny and use print_boxed_any
-                let boxed_val = match ty {
-                    Type::String => {
-                        // Convert string to BoxedAny
-                        let boxed_any_from_string_fn = self.module.get_function("boxed_any_from_string")
-                            .ok_or("boxed_any_from_string function not found".to_string())?;
+            // Box the value if needed
+            let (boxed_val, _) = self.maybe_box(val, &ty)?;
 
-                        let ptr = val.into_pointer_value();
-                        let call = self.builder.build_call(
-                            boxed_any_from_string_fn,
-                            &[ptr.into()],
-                            "string_to_boxed_any"
-                        ).unwrap();
-
-                        call.try_as_basic_value().left()
-                            .ok_or("Failed to convert string to BoxedAny".to_string())?
-                    },
-                    Type::Int => {
-                        // Convert int to BoxedAny
-                        let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                            .ok_or("boxed_any_from_int function not found".to_string())?;
-
-                        let call = self.builder.build_call(
-                            boxed_any_from_int_fn,
-                            &[val.into()],
-                            "int_to_boxed_any"
-                        ).unwrap();
-
-                        call.try_as_basic_value().left()
-                            .ok_or("Failed to convert int to BoxedAny".to_string())?
-                    },
-                    Type::Float => {
-                        // Convert float to BoxedAny
-                        let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
-                            .ok_or("boxed_any_from_float function not found".to_string())?;
-
-                        let call = self.builder.build_call(
-                            boxed_any_from_float_fn,
-                            &[val.into()],
-                            "float_to_boxed_any"
-                        ).unwrap();
-
-                        call.try_as_basic_value().left()
-                            .ok_or("Failed to convert float to BoxedAny".to_string())?
-                    },
-                    Type::Bool => {
-                        // Convert bool to BoxedAny
-                        let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
-                            .ok_or("boxed_any_from_bool function not found".to_string())?;
-
-                        let call = self.builder.build_call(
-                            boxed_any_from_bool_fn,
-                            &[val.into()],
-                            "bool_to_boxed_any"
-                        ).unwrap();
-
-                        call.try_as_basic_value().left()
-                            .ok_or("Failed to convert bool to BoxedAny".to_string())?
-                    },
-                    Type::Any => {
-                        // Already a BoxedAny, use it directly
-                        val
-                    },
-                    _ => {
-                        // For other types, create a placeholder string and convert to BoxedAny
-                        let placeholder = format!("<{:?}>\0", ty);
-                        let ptr = self.make_cstr("ph", placeholder.as_bytes());
-
-                        let boxed_any_from_string_fn = self.module.get_function("boxed_any_from_string")
-                            .ok_or("boxed_any_from_string function not found".to_string())?;
-
-                        let call = self.builder.build_call(
-                            boxed_any_from_string_fn,
-                            &[ptr.into()],
-                            "placeholder_to_boxed_any"
-                        ).unwrap();
-
-                        call.try_as_basic_value().left()
-                            .ok_or("Failed to convert placeholder to BoxedAny".to_string())?
-                    }
-                };
-
-                // Call print_boxed_any with the boxed value
-                let _ = self.builder.build_call(
-                    print_boxed_any_fn.unwrap(),
-                    &[boxed_val.into()],
-                    "print_boxed_any_call"
-                );
-            } else {
-                // If we're not using BoxedAny values, use the appropriate print function based on type
-                match ty {
-                    Type::String => {
-                        let ptr = val.into_pointer_value();
-                        let _ = self.builder.build_call(print_str_fn, &[ptr.into()], "print_str");
-                    }
-                    Type::Int => {
-                        let _ = self.builder.build_call(print_int_fn, &[val.into()], "print_int");
-                    }
-                    Type::Float => {
-                        let _ = self.builder.build_call(print_flt_fn, &[val.into()], "print_flt");
-                    }
-                    Type::Bool => {
-                        let _ = self.builder.build_call(print_bool_fn, &[val.into()], "print_bool");
-                    }
-                    other => {
-                        // Fallback: print a placeholder for unsupported types
-                        let placeholder = format!("<{:?}>\0", other);
-                        let ptr = self.make_cstr("ph", placeholder.as_bytes());
-                        let _ = self.builder.build_call(print_str_fn, &[ptr.into()], "print_ph");
-                    }
-                }
-            }
+            // Call the print function
+            self.builder.build_call(print_fn, &[boxed_val.into()], "call_print")
+                .map_err(|e| format!("Failed to call print function: {}", e))?;
 
             // Add space between arguments
             if i + 1 < args.len() {
-                if self.use_boxed_values && print_boxed_any_fn.is_some() {
-                    // Create a space string as BoxedAny and print it
-                    let space_str = self.make_cstr("sp", b" \0");
-                    let boxed_any_from_string_fn = self.module.get_function("boxed_any_from_string")
-                        .ok_or("boxed_any_from_string function not found".to_string())?;
-
-                    let call = self.builder.build_call(
-                        boxed_any_from_string_fn,
-                        &[space_str.into()],
-                        "space_to_boxed_any"
-                    ).unwrap();
-
-                    let boxed_space = call.try_as_basic_value().left()
-                        .ok_or("Failed to convert space to BoxedAny".to_string())?;
-
-                    let _ = self.builder.build_call(
-                        print_boxed_any_fn.unwrap(),
-                        &[boxed_space.into()],
-                        "print_space"
-                    );
-                } else {
-                    // Use the regular print_string function
-                    let ptr = self.make_cstr("sp", b" \0");
-                    let _ = self.builder.build_call(print_str_fn, &[ptr.into()], "print_sp");
-                }
+                let space_str = self.make_cstr("sp", b" \0");
+                let (boxed_space, _) = self.maybe_box(space_str.into(), &Type::String)?;
+                self.builder.build_call(print_fn, &[boxed_space.into()], "print_space")
+                    .map_err(|e| format!("Failed to call print function for space: {}", e))?;
             }
         }
 
         // Add final newline
-        if self.use_boxed_values && print_boxed_any_fn.is_some() {
-            // Create a newline string as BoxedAny and print it
-            let nl = self.make_cstr("nl", b"\n\0");
-            let boxed_any_from_string_fn = self.module.get_function("boxed_any_from_string")
-                .ok_or("boxed_any_from_string function not found".to_string())?;
+        let nl = self.make_cstr("nl", b"\n\0");
 
-            let call = self.builder.build_call(
-                boxed_any_from_string_fn,
-                &[nl.into()],
-                "newline_to_boxed_any"
-            ).unwrap();
-
-            let boxed_nl = call.try_as_basic_value().left()
-                .ok_or("Failed to convert newline to BoxedAny".to_string())?;
-
-            let _ = self.builder.build_call(
-                print_boxed_any_fn.unwrap(),
-                &[boxed_nl.into()],
-                "print_newline"
-            );
+        if self.use_boxed_values {
+            // Box the newline string and print it
+            let (boxed_nl, _) = self.maybe_box(nl.into(), &Type::String)?;
+            self.builder.build_call(print_fn, &[boxed_nl.into()], "print_newline")
+                .map_err(|e| format!("Failed to call print function for newline: {}", e))?;
         } else {
             // Use the regular println_string function
-            let nl = self.make_cstr("nl", b"\n\0");
-            let _ = self.builder.build_call(println_fn, &[nl.into()], "print_nl");
+            let println_fn = self.module.get_function("println_string")
+                .ok_or("println_string function not found")?;
+            self.builder.build_call(println_fn, &[nl.into()], "print_nl")
+                .map_err(|e| format!("Failed to call println function: {}", e))?;
         }
 
         Ok((self.llvm_context.i64_type().const_zero().into(), Type::None))

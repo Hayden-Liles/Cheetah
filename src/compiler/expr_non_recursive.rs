@@ -212,107 +212,39 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     Expr::Name { id, .. } => {
                         self.ensure_block_has_terminator();
 
-                        // Get the variable pointer and type
-                        let (var_ptr, var_type) = if let Some(ptr) = self.scope_stack.get_variable_respecting_declarations(id) {
-                            if let Some(ty) = self.scope_stack.get_type_respecting_declarations(id) {
-                                (*ptr, ty)
-                            } else {
-                                return Err(format!("Variable found but type unknown: {}", id));
-                            }
-                        } else if let Some(var_ptr) = self.variables.get(id) {
-                            if let Some(var_type) = self.type_env.get(id) {
-                                (*var_ptr, var_type.clone())
-                            } else {
-                                return Err(format!("Global variable found but type unknown: {}", id));
-                            }
-                        } else {
-                            // If the variable doesn't exist, create a new BoxedAny None value
-                            // This mimics Python's behavior of creating variables on first use
-
-                            // Get the boxed_any_none function
-                            let boxed_any_none_fn = self.module.get_function("boxed_any_none")
-                                .ok_or_else(|| "boxed_any_none function not found".to_string())?;
-
-                            // Call boxed_any_none to create a None value
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_none_fn,
-                                &[],
-                                &format!("none_for_{}", id)
-                            ).unwrap();
-
-                            let none_val = call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| format!("Failed to create None value for {}", id))?;
-
-                            // Allocate storage for the variable
-                            let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                            let var_ptr = self.builder.build_alloca(ptr_type, id).unwrap();
-
-                            // Store the None value
-                            self.builder.build_store(var_ptr, none_val).unwrap();
-
-                            // Register the variable
-                            self.register_variable(id.to_string(), Type::Any);
-                            self.variables.insert(id.to_string(), var_ptr);
-
-                            if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                                current_scope.add_variable(id.to_string(), var_ptr, Type::Any);
-                            }
-
-                            result_stack.push(ExprResult {
-                                value: none_val,
-                                ty: Type::Any,
-                            });
-                            continue;
-                        };
-
-                        // Handle different types appropriately
-                        match var_type {
-                            Type::Int => {
-                                // For integers, load the actual integer value
-                                let i64_type = self.llvm_context.i64_type();
-                                let var_val = self.builder
-                                    .build_load(i64_type, var_ptr, &format!("load_{}", id))
-                                    .unwrap();
-
+                        // Try to load the variable using the new load_var helper
+                        match self.load_var(id) {
+                            Ok((val, ty)) => {
+                                // Variable exists, push the loaded value onto the stack
                                 result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: Type::Int,
+                                    value: val,
+                                    ty,
                                 });
                             },
-                            Type::Float => {
-                                // For floats, load the actual float value
-                                let f64_type = self.llvm_context.f64_type();
-                                let var_val = self.builder
-                                    .build_load(f64_type, var_ptr, &format!("load_{}", id))
-                                    .unwrap();
+                            Err(_) => {
+                                // If the variable doesn't exist, create a new BoxedAny None value
+                                // This mimics Python's behavior of creating variables on first use
+
+                                // Get the boxed_any_none function
+                                let boxed_any_none_fn = self.module.get_function("boxed_any_none")
+                                    .ok_or_else(|| "boxed_any_none function not found".to_string())?;
+
+                                // Call boxed_any_none to create a None value
+                                let call_site_value = self.builder.build_call(
+                                    boxed_any_none_fn,
+                                    &[],
+                                    &format!("none_for_{}", id)
+                                ).unwrap();
+
+                                let none_val = call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| format!("Failed to create None value for {}", id))?;
+
+                                // Store the None value using store_var
+                                self.store_var(id, none_val, &Type::Any)?;
 
                                 result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: Type::Float,
-                                });
-                            },
-                            Type::Bool => {
-                                // For booleans, load the actual boolean value
-                                let bool_type = self.llvm_context.bool_type();
-                                let var_val = self.builder
-                                    .build_load(bool_type, var_ptr, &format!("load_{}", id))
-                                    .unwrap();
-
-                                result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: Type::Bool,
-                                });
-                            },
-                            _ => {
-                                // For other types (including BoxedAny), load the pointer
-                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                                let var_val = self.builder
-                                    .build_load(ptr_type, var_ptr, &format!("load_{}", id))
-                                    .unwrap();
-
-                                result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: var_type,
+                                    value: none_val,
+                                    ty: Type::Any,
                                 });
                             }
                         }

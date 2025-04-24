@@ -52,29 +52,29 @@ pub trait ExprCompiler<'ctx> {
         index_val: inkwell::values::IntValue<'ctx>,
         element_types: &[Type],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String>;
-    fn build_empty_list(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_empty_list(&mut self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn build_list(
-        &self,
+        &mut self,
         elements: Vec<BasicValueEnum<'ctx>>,
         element_type: &Type,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String>;
-    fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_empty_tuple(&mut self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn build_tuple(
-        &self,
+        &mut self,
         elements: Vec<BasicValueEnum<'ctx>>,
         element_types: &[Type],
     ) -> Result<inkwell::values::PointerValue<'ctx>, String>;
-    fn build_empty_dict(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_empty_dict(&mut self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn build_dict(
-        &self,
+        &mut self,
         keys: Vec<BasicValueEnum<'ctx>>,
         values: Vec<BasicValueEnum<'ctx>>,
         key_type: &Type,
         value_type: &Type,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String>;
-    fn build_empty_set(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
+    fn build_empty_set(&mut self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn build_set(
-        &self,
+        &mut self,
         elements: Vec<BasicValueEnum<'ctx>>,
         element_type: &Type,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String>;
@@ -2060,115 +2060,178 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         }
     }
 
-    fn build_empty_list(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let list_new_fn = match self.module.get_function("list_new") {
+    fn build_empty_list(&mut self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let list_new_fn_name = if self.use_boxed_values { "boxed_list_new" } else { "list_new" };
+        let list_new_fn = match self.module.get_function(list_new_fn_name) {
             Some(f) => f,
-            None => return Err("list_new function not found".to_string()),
+            None => return Err(format!("{} function not found", list_new_fn_name)),
         };
 
-        let call_site_value = self.builder.build_call(list_new_fn, &[], name).unwrap();
+        let call_site_value = self.builder.build_call(list_new_fn, &[], name)
+            .map_err(|e| format!("Failed to call {}: {}", list_new_fn_name, e))?;
+
         let list_ptr = call_site_value
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| "Failed to create empty list".to_string())?;
+            .try_as_basic_value().left()
+            .ok_or_else(|| format!("Failed to create empty list with {}", list_new_fn_name))?;
 
         Ok(list_ptr.into_pointer_value())
     }
 
     fn build_list(
-        &self,
+        &mut self,
         elements: Vec<BasicValueEnum<'ctx>>,
         element_type: &Type,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let list_with_capacity_fn = match self.module.get_function("list_with_capacity") {
-            Some(f) => f,
-            None => return Err("list_with_capacity function not found".to_string()),
+        // Choose the appropriate functions based on whether we're using boxed values
+        let (with_capacity_fn_name, append_fn_name) = if self.use_boxed_values {
+            ("boxed_list_with_capacity", "boxed_list_append")
+        } else {
+            ("list_with_capacity", "list_append")
         };
 
+        // Get the list_with_capacity function
+        let list_with_capacity_fn = match self.module.get_function(with_capacity_fn_name) {
+            Some(f) => f,
+            None => return Err(format!("{} function not found", with_capacity_fn_name)),
+        };
+
+        // Create the list with capacity
         let len = elements.len() as u64;
         let len_value = self.llvm_context.i64_type().const_int(len, false);
 
-        let call_site_value = self
-            .builder
+        let call_site_value = self.builder
             .build_call(
                 list_with_capacity_fn,
                 &[len_value.into()],
                 "list_with_capacity",
             )
-            .unwrap();
+            .map_err(|e| format!("Failed to call {}: {}", with_capacity_fn_name, e))?;
+
         let list_ptr = call_site_value
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| "Failed to create list with capacity".to_string())?;
+            .try_as_basic_value().left()
+            .ok_or_else(|| format!("Failed to create list with capacity using {}", with_capacity_fn_name))?;
 
         let list_ptr = list_ptr.into_pointer_value();
 
-        let list_append_fn = match self.module.get_function("list_append") {
+        // Get the list_append function
+        let list_append_fn = match self.module.get_function(append_fn_name) {
             Some(f) => f,
-            None => return Err("list_append function not found".to_string()),
+            None => return Err(format!("{} function not found", append_fn_name)),
         };
 
+        // Add each element to the list
         for (i, element) in elements.iter().enumerate() {
-            let element_ptr = if crate::compiler::types::is_reference_type(element_type) {
-                *element
+            let element_val = if self.use_boxed_values {
+                // Box the element if we're using boxed values
+                let (boxed_val, _) = self.maybe_box(*element, element_type)?;
+                boxed_val
             } else {
-                let element_alloca = self
-                    .builder
-                    .build_alloca(element.get_type(), &format!("list_element_{}", i))
-                    .unwrap();
-                self.builder.build_store(element_alloca, *element).unwrap();
-                element_alloca.into()
+                // For non-boxed mode, handle as before
+                if crate::compiler::types::is_reference_type(element_type) {
+                    *element
+                } else {
+                    let element_alloca = self.builder
+                        .build_alloca(element.get_type(), &format!("list_element_{}", i))
+                        .map_err(|e| format!("Failed to allocate list element: {}", e))?;
+
+                    self.builder.build_store(element_alloca, *element)
+                        .map_err(|e| format!("Failed to store list element: {}", e))?;
+
+                    element_alloca.into()
+                }
             };
 
+            // Append the element to the list
             self.builder
                 .build_call(
                     list_append_fn,
-                    &[list_ptr.into(), element_ptr.into()],
+                    &[list_ptr.into(), element_val.into()],
                     &format!("list_append_{}", i),
                 )
-                .unwrap();
+                .map_err(|e| format!("Failed to append element to list: {}", e))?;
         }
 
         Ok(list_ptr)
     }
 
-    fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+    fn build_empty_tuple(&mut self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         let tuple_type = self.llvm_context.struct_type(&[], false);
 
-        let tuple_ptr = self.builder.build_alloca(tuple_type, name).unwrap();
+        let tuple_ptr = self.builder.build_alloca(tuple_type, name)
+            .map_err(|e| format!("Failed to allocate empty tuple: {}", e))?;
 
         Ok(tuple_ptr)
     }
 
     fn build_tuple(
-        &self,
+        &mut self,
         elements: Vec<BasicValueEnum<'ctx>>,
         element_types: &[Type],
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let llvm_types: Vec<BasicTypeEnum> = element_types
-            .iter()
-            .map(|ty| self.get_llvm_type(ty))
-            .collect();
+        // Choose the appropriate functions based on whether we're using boxed values
+        if self.use_boxed_values {
+            // For boxed mode, use boxed_tuple_new and boxed_tuple_append
+            let boxed_tuple_new_fn = self.module.get_function("boxed_tuple_new")
+                .ok_or_else(|| "boxed_tuple_new function not found".to_string())?;
 
-        let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+            // Create a new boxed tuple
+            let call_site_value = self.builder.build_call(
+                boxed_tuple_new_fn,
+                &[],
+                "boxed_tuple_new"
+            ).map_err(|e| format!("Failed to call boxed_tuple_new: {}", e))?;
 
-        let tuple_ptr = self.builder.build_alloca(tuple_struct, "tuple").unwrap();
+            let tuple_ptr = call_site_value.try_as_basic_value().left()
+                .ok_or_else(|| "Failed to create boxed tuple".to_string())?
+                .into_pointer_value();
 
-        for (i, element) in elements.iter().enumerate() {
-            let element_ptr = self
-                .builder
-                .build_struct_gep(
-                    tuple_struct,
-                    tuple_ptr,
-                    i as u32,
-                    &format!("tuple_element_{}", i),
-                )
-                .unwrap();
+            // Get the boxed_tuple_append function
+            let boxed_tuple_append_fn = self.module.get_function("boxed_tuple_append")
+                .ok_or_else(|| "boxed_tuple_append function not found".to_string())?;
 
-            self.builder.build_store(element_ptr, *element).unwrap();
+            // Add each element to the tuple
+            for (i, (element, element_type)) in elements.iter().zip(element_types.iter()).enumerate() {
+                // Box the element
+                let (boxed_val, _) = self.maybe_box(*element, element_type)?;
+
+                // Append the boxed element to the tuple
+                self.builder.build_call(
+                    boxed_tuple_append_fn,
+                    &[tuple_ptr.into(), boxed_val.into()],
+                    &format!("boxed_tuple_append_{}", i)
+                ).map_err(|e| format!("Failed to append element to boxed tuple: {}", e))?;
+            }
+
+            // Return the boxed tuple pointer
+            Ok(tuple_ptr)
+        } else {
+            // For non-boxed mode, use the original implementation
+            let llvm_types: Vec<BasicTypeEnum> = element_types
+                .iter()
+                .map(|ty| self.get_llvm_type(ty))
+                .collect();
+
+            let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+
+            let tuple_ptr = self.builder.build_alloca(tuple_struct, "tuple")
+                .map_err(|e| format!("Failed to allocate tuple: {}", e))?;
+
+            for (i, element) in elements.iter().enumerate() {
+                let element_ptr = self.builder
+                    .build_struct_gep(
+                        tuple_struct,
+                        tuple_ptr,
+                        i as u32,
+                        &format!("tuple_element_{}", i),
+                    )
+                    .map_err(|e| format!("Failed to get tuple element pointer: {}", e))?;
+
+                self.builder.build_store(element_ptr, *element)
+                    .map_err(|e| format!("Failed to store tuple element: {}", e))?;
+            }
+
+            Ok(tuple_ptr)
         }
-
-        Ok(tuple_ptr)
     }
 
     /// Compile a subscript expression (e.g., tuple[0])
@@ -2527,189 +2590,233 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         Ok((result_val, element_types[0].clone()))
     }
 
-    fn build_empty_dict(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let dict_new_fn = match self.module.get_function("dict_new") {
+    fn build_empty_dict(&mut self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let dict_new_fn_name = if self.use_boxed_values { "boxed_dict_new" } else { "dict_new" };
+        let dict_new_fn = match self.module.get_function(dict_new_fn_name) {
             Some(f) => f,
-            None => return Err("dict_new function not found".to_string()),
+            None => return Err(format!("{} function not found", dict_new_fn_name)),
         };
 
-        let call_site_value = self.builder.build_call(dict_new_fn, &[], name).unwrap();
+        let call_site_value = self.builder.build_call(dict_new_fn, &[], name)
+            .map_err(|e| format!("Failed to call {}: {}", dict_new_fn_name, e))?;
+
         let dict_ptr = call_site_value
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| "Failed to create empty dictionary".to_string())?;
+            .try_as_basic_value().left()
+            .ok_or_else(|| format!("Failed to create empty dictionary with {}", dict_new_fn_name))?;
 
         Ok(dict_ptr.into_pointer_value())
     }
 
     fn build_dict(
-        &self,
+        &mut self,
         keys: Vec<BasicValueEnum<'ctx>>,
         values: Vec<BasicValueEnum<'ctx>>,
         key_type: &Type,
         value_type: &Type,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let dict_with_capacity_fn = match self.module.get_function("dict_with_capacity") {
-            Some(f) => f,
-            None => return Err("dict_with_capacity function not found".to_string()),
-        };
+        // Choose the appropriate functions based on whether we're using boxed values
+        if self.use_boxed_values {
+            // For boxed mode, use boxed_dict_new and boxed_dict_set
+            let boxed_dict_new_fn = self.module.get_function("boxed_dict_new")
+                .ok_or_else(|| "boxed_dict_new function not found".to_string())?;
 
-        let len = keys.len() as u64;
-        let len_value = self.llvm_context.i64_type().const_int(len, false);
+            // Create a new boxed dict
+            let call_site_value = self.builder.build_call(
+                boxed_dict_new_fn,
+                &[],
+                "boxed_dict_new"
+            ).map_err(|e| format!("Failed to call boxed_dict_new: {}", e))?;
 
-        let call_site_value = self
-            .builder
-            .build_call(
-                dict_with_capacity_fn,
-                &[len_value.into()],
-                "dict_with_capacity",
-            )
-            .unwrap();
-        let dict_ptr = call_site_value
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| "Failed to create dictionary with capacity".to_string())?;
+            let dict_ptr = call_site_value.try_as_basic_value().left()
+                .ok_or_else(|| "Failed to create boxed dict".to_string())?
+                .into_pointer_value();
 
-        let dict_ptr = dict_ptr.into_pointer_value();
+            // Get the boxed_dict_set function
+            let boxed_dict_set_fn = self.module.get_function("boxed_dict_set")
+                .ok_or_else(|| "boxed_dict_set function not found".to_string())?;
 
-        // Use dict_set to set values in the dictionary
-        let dict_set_fn = match self.module.get_function("dict_set") {
-            Some(f) => f,
-            None => return Err("dict_set function not found".to_string()),
-        };
+            // Add each key-value pair to the dict
+            for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
+                // Box the key and value
+                let (boxed_key, _) = self.maybe_box(*key, key_type)?;
+                let (boxed_value, _) = self.maybe_box(*value, value_type)?;
 
-        for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
-            // Convert key to BoxedAny pointer
-            let boxed_key = if key.is_pointer_value() && crate::compiler::types::is_reference_type(key_type) {
-                // If key is already a pointer and a reference type, assume it's a BoxedAny pointer
-                *key
-            } else if key.is_int_value() {
-                // For integer keys, convert to BoxedAny
-                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                let int_value = key.into_int_value();
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_int_fn,
-                    &[int_value.into()],
-                    &format!("boxed_int_key_{}", i)
-                ).unwrap();
-
-                call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to create BoxedAny from int".to_string())?
-            } else if key_type == &Type::Bool || (key.is_int_value() && key.get_type().is_int_type() && key.get_type().into_int_type().get_bit_width() == 1) {
-                // For boolean keys, convert to BoxedAny
-                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
-                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
-
-                let bool_value = key.into_int_value();
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_bool_fn,
-                    &[bool_value.into()],
-                    &format!("boxed_bool_key_{}", i)
-                ).unwrap();
-
-                call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?
-            } else if key_type == &Type::String && key.is_pointer_value() {
-                // String keys are already pointers, but we need to ensure they're BoxedAny pointers
-                // For now, assume they are correctly formatted
-                *key
-            } else {
-                // For other types, create a temporary alloca
-                let key_alloca = self
-                    .builder
-                    .build_alloca(key.get_type(), &format!("dict_key_{}", i))
-                    .unwrap();
-                self.builder.build_store(key_alloca, *key).unwrap();
-                key_alloca.into()
-            };
-
-            // Convert value to BoxedAny pointer
-            let boxed_value = if value.is_pointer_value() && crate::compiler::types::is_reference_type(value_type) {
-                // If value is already a pointer and a reference type, assume it's a BoxedAny pointer
-                *value
-            } else if value.is_int_value() && value_type == &Type::Int {
-                // For integer values, convert to BoxedAny
-                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                let int_value = value.into_int_value();
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_int_fn,
-                    &[int_value.into()],
-                    &format!("boxed_int_value_{}", i)
-                ).unwrap();
-
-                call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to create BoxedAny from int".to_string())?
-            } else if value_type == &Type::Bool || (value.is_int_value() && value.get_type().is_int_type() && value.get_type().into_int_type().get_bit_width() == 1) {
-                // For boolean values, convert to BoxedAny
-                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
-                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
-
-                let bool_value = value.into_int_value();
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_bool_fn,
-                    &[bool_value.into()],
-                    &format!("boxed_bool_value_{}", i)
-                ).unwrap();
-
-                call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?
-            } else if value_type == &Type::Float && value.is_float_value() {
-                // For float values, convert to BoxedAny
-                let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
-                    .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
-
-                let float_value = value.into_float_value();
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_float_fn,
-                    &[float_value.into()],
-                    &format!("boxed_float_value_{}", i)
-                ).unwrap();
-
-                call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to create BoxedAny from float".to_string())?
-            } else if value_type == &Type::String && value.is_pointer_value() {
-                // String values are already pointers, but we need to ensure they're BoxedAny pointers
-                // For now, assume they are correctly formatted
-                *value
-            } else {
-                // For other types, create a temporary alloca
-                let value_alloca = self
-                    .builder
-                    .build_alloca(value.get_type(), &format!("dict_value_{}", i))
-                    .unwrap();
-                self.builder.build_store(value_alloca, *value).unwrap();
-                value_alloca.into()
-            };
-
-            // Call dict_set with the BoxedAny pointers
-            self.builder
-                .build_call(
-                    dict_set_fn,
+                // Set the key-value pair in the dict
+                self.builder.build_call(
+                    boxed_dict_set_fn,
                     &[dict_ptr.into(), boxed_key.into(), boxed_value.into()],
-                    &format!("dict_set_{}", i),
-                )
-                .unwrap();
-        }
+                    &format!("boxed_dict_set_{}", i)
+                ).map_err(|e| format!("Failed to set key-value pair in boxed dict: {}", e))?;
+            }
 
-        Ok(dict_ptr)
+            // Return the boxed dict pointer
+            Ok(dict_ptr)
+        } else {
+            // For non-boxed mode, use the original implementation with better error handling
+            let dict_with_capacity_fn = match self.module.get_function("dict_with_capacity") {
+                Some(f) => f,
+                None => return Err("dict_with_capacity function not found".to_string()),
+            };
+
+            let len = keys.len() as u64;
+            let len_value = self.llvm_context.i64_type().const_int(len, false);
+
+            let call_site_value = self.builder
+                .build_call(
+                    dict_with_capacity_fn,
+                    &[len_value.into()],
+                    "dict_with_capacity",
+                )
+                .map_err(|e| format!("Failed to call dict_with_capacity: {}", e))?;
+
+            let dict_ptr = call_site_value
+                .try_as_basic_value().left()
+                .ok_or_else(|| "Failed to create dictionary with capacity".to_string())?
+                .into_pointer_value();
+
+            // Use dict_set to set values in the dictionary
+            let dict_set_fn = match self.module.get_function("dict_set") {
+                Some(f) => f,
+                None => return Err("dict_set function not found".to_string()),
+            };
+
+            for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
+                // Convert key to BoxedAny pointer
+                let boxed_key = if key.is_pointer_value() && crate::compiler::types::is_reference_type(key_type) {
+                    // If key is already a pointer and a reference type, assume it's a BoxedAny pointer
+                    *key
+                } else if key.is_int_value() {
+                    // For integer keys, convert to BoxedAny
+                    let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
+                        .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
+
+                    let int_value = key.into_int_value();
+
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_from_int_fn,
+                        &[int_value.into()],
+                        &format!("boxed_int_key_{}", i)
+                    ).map_err(|e| format!("Failed to call boxed_any_from_int: {}", e))?;
+
+                    call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to create BoxedAny from int".to_string())?
+                } else if key_type == &Type::Bool || (key.is_int_value() && key.get_type().is_int_type() && key.get_type().into_int_type().get_bit_width() == 1) {
+                    // For boolean keys, convert to BoxedAny
+                    let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                        .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                    let bool_value = key.into_int_value();
+
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_from_bool_fn,
+                        &[bool_value.into()],
+                        &format!("boxed_bool_key_{}", i)
+                    ).map_err(|e| format!("Failed to call boxed_any_from_bool: {}", e))?;
+
+                    call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?
+                } else if key_type == &Type::String && key.is_pointer_value() {
+                    // String keys are already pointers, but we need to ensure they're BoxedAny pointers
+                    // For now, assume they are correctly formatted
+                    *key
+                } else {
+                    // For other types, create a temporary alloca
+                    let key_alloca = self.builder
+                        .build_alloca(key.get_type(), &format!("dict_key_{}", i))
+                        .map_err(|e| format!("Failed to allocate dict key: {}", e))?;
+
+                    self.builder.build_store(key_alloca, *key)
+                        .map_err(|e| format!("Failed to store dict key: {}", e))?;
+
+                    key_alloca.into()
+                };
+
+                // Convert value to BoxedAny pointer
+                let boxed_value = if value.is_pointer_value() && crate::compiler::types::is_reference_type(value_type) {
+                    // If value is already a pointer and a reference type, assume it's a BoxedAny pointer
+                    *value
+                } else if value.is_int_value() && value_type == &Type::Int {
+                    // For integer values, convert to BoxedAny
+                    let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
+                        .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
+
+                    let int_value = value.into_int_value();
+
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_from_int_fn,
+                        &[int_value.into()],
+                        &format!("boxed_int_value_{}", i)
+                    ).map_err(|e| format!("Failed to call boxed_any_from_int: {}", e))?;
+
+                    call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to create BoxedAny from int".to_string())?
+                } else if value_type == &Type::Bool || (value.is_int_value() && value.get_type().is_int_type() && value.get_type().into_int_type().get_bit_width() == 1) {
+                    // For boolean values, convert to BoxedAny
+                    let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                        .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                    let bool_value = value.into_int_value();
+
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_from_bool_fn,
+                        &[bool_value.into()],
+                        &format!("boxed_bool_value_{}", i)
+                    ).map_err(|e| format!("Failed to call boxed_any_from_bool: {}", e))?;
+
+                    call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?
+                } else if value_type == &Type::Float && value.is_float_value() {
+                    // For float values, convert to BoxedAny
+                    let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
+                        .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
+
+                    let float_value = value.into_float_value();
+
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_from_float_fn,
+                        &[float_value.into()],
+                        &format!("boxed_float_value_{}", i)
+                    ).map_err(|e| format!("Failed to call boxed_any_from_float: {}", e))?;
+
+                    call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| "Failed to create BoxedAny from float".to_string())?
+                } else if value_type == &Type::String && value.is_pointer_value() {
+                    // String values are already pointers, but we need to ensure they're BoxedAny pointers
+                    // For now, assume they are correctly formatted
+                    *value
+                } else {
+                    // For other types, create a temporary alloca
+                    let value_alloca = self.builder
+                        .build_alloca(value.get_type(), &format!("dict_value_{}", i))
+                        .map_err(|e| format!("Failed to allocate dict value: {}", e))?;
+
+                    self.builder.build_store(value_alloca, *value)
+                        .map_err(|e| format!("Failed to store dict value: {}", e))?;
+
+                    value_alloca.into()
+                };
+
+                // Call dict_set with the BoxedAny pointers
+                self.builder
+                    .build_call(
+                        dict_set_fn,
+                        &[dict_ptr.into(), boxed_key.into(), boxed_value.into()],
+                        &format!("dict_set_{}", i),
+                    )
+                    .map_err(|e| format!("Failed to call dict_set: {}", e))?;
+            }
+
+            Ok(dict_ptr)
+        }
     }
 
-    fn build_empty_set(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+    fn build_empty_set(&mut self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         let _ = name;
         Err("Set operations require runtime support (not yet implemented)".to_string())
     }
 
     fn build_set(
-        &self,
+        &mut self,
         elements: Vec<BasicValueEnum<'ctx>>,
         element_type: &Type,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
@@ -6215,33 +6322,8 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
                 }
             }
             Expr::Name { id, .. } => {
-                // With BoxedAny, we don't need to convert types or handle different types differently
-                // We just need to store the BoxedAny pointer in the variable
-
-                // Check if the variable already exists
-                if let Some(ptr) = self.get_variable_ptr(id) {
-                    // Store the BoxedAny pointer in the variable
-                    self.builder.build_store(ptr, value).unwrap();
-                    return Ok(());
-                }
-
-                // If the variable doesn't exist, create it
-                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                let var_ptr = self.builder.build_alloca(ptr_type, id).unwrap();
-
-                // Store the BoxedAny pointer in the variable
-                self.builder.build_store(var_ptr, value).unwrap();
-
-                // Register the variable
-                self.register_variable(id.clone(), Type::Any);
-                self.variables.insert(id.clone(), var_ptr);
-
-                if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                    current_scope.add_variable(id.clone(), var_ptr, Type::Any);
-                    println!("Added variable '{}' to current scope", id);
-                }
-
-                Ok(())
+                // Use the new store_var helper which handles boxing and variable creation
+                self.store_var(id, value, value_type)
             }
 
             Expr::Subscript { value: container_expr, slice, .. } => {
