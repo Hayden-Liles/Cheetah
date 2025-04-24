@@ -16,15 +16,28 @@ use super::buffer;
 pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
     if value.is_null() {
         buffer::write_str("None");
+        buffer::flush();
         return;
     }
 
     unsafe {
         match (*value).tag {
-            type_tags::INT => buffer::write_int((*value).data.int_val),
-            type_tags::FLOAT => buffer::write_float((*value).data.float_val),
-            type_tags::BOOL => buffer::write_bool((*value).data.bool_val != 0),
-            type_tags::NONE => buffer::write_str("None"),
+            type_tags::INT => {
+                buffer::write_int((*value).data.int_val);
+                buffer::flush();
+            },
+            type_tags::FLOAT => {
+                buffer::write_float((*value).data.float_val);
+                buffer::flush();
+            },
+            type_tags::BOOL => {
+                buffer::write_bool((*value).data.bool_val != 0);
+                buffer::flush();
+            },
+            type_tags::NONE => {
+                buffer::write_str("None");
+                buffer::flush();
+            },
             type_tags::STRING => {
                 let str_ptr = (*value).data.ptr_val as *const c_char;
                 if !str_ptr.is_null() {
@@ -36,6 +49,7 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
                 } else {
                     buffer::write_str("");
                 }
+                buffer::flush();
             },
             type_tags::LIST => {
                 let list_ptr = (*value).data.ptr_val as *mut super::boxed_list::BoxedList;
@@ -52,6 +66,7 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
                 }
 
                 buffer::write_str("]");
+                buffer::flush();
             },
             type_tags::TUPLE => {
                 let tuple_ptr = (*value).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
@@ -73,6 +88,7 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
                 }
 
                 buffer::write_str(")");
+                buffer::flush();
             },
             type_tags::DICT => {
                 let dict_ptr = (*value).data.ptr_val as *mut super::boxed_dict::BoxedDict;
@@ -96,6 +112,7 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
                 }
 
                 buffer::write_str("}");
+                buffer::flush();
 
                 // Free the keys list
                 super::boxed_list::boxed_list_free(keys);
@@ -104,6 +121,7 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
                 // For other types, use a generic representation
                 let ptr_str = format!("<object at {:p}>", value);
                 buffer::write_str(&ptr_str);
+                buffer::flush();
             }
         }
     }
@@ -114,6 +132,7 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
 pub extern "C" fn println_boxed_any(value: *const BoxedAny) {
     print_boxed_any(value);
     buffer::write_str("\n");
+    buffer::flush();
 }
 
 /// Register BoxedAny print functions in the LLVM module

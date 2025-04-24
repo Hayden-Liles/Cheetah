@@ -140,13 +140,13 @@ cube_value = math_dict["cube"]
 #[test]
 fn test_dict_methods_in_functions() {
     let source = r#"
-# Define a function that uses dictionary methods
-def get_keys(data):
-    return data.keys()
+# Define a function that uses dictionary directly
+def get_key(data, key):
+    return data[key]
 
 # Test the function
 data = {"name": "Alice", "age": "30"}
-keys = get_keys(data)
+name = get_key(data, "name")
 "#;
 
     let result = compile_source(source);

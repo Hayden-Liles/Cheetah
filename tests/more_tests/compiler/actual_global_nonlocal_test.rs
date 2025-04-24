@@ -15,6 +15,9 @@ fn compile_source(source: &str) -> Result<String, String> {
     let context = Context::create();
     let mut compiler = Compiler::new(&context, "test_module");
 
+    // Set the compiler to use BoxedAny values
+    compiler.set_use_boxed_values(true);
+
     // Compile the AST without type checking
     match compiler.compile_module_without_type_checking(&ast) {
         Ok(_) => Ok(compiler.get_ir()),
@@ -27,15 +30,14 @@ fn compile_source(source: &str) -> Result<String, String> {
 #[test]
 fn test_global_statement() {
     let source = r#"
-# Define a function that returns a value
-def get_counter():
-    return 0
+# Define a variable
+counter = 0
 
 def increment():
-    # Use the function to get the counter value
-    counter = get_counter()
-    local_counter = counter + 1
-    return local_counter
+    # Use global to access the global variable
+    global counter
+    counter = counter + 1
+    return counter
 
 # Call the function
 result = increment()
@@ -50,20 +52,25 @@ result = increment()
 
 #[test]
 fn test_nonlocal_statement() {
-    // Test a simple function that returns a value
+    // Test a simple function that uses nonlocal
     let source = r#"
-# Define a function that returns a value
-def get_x():
-    return 10
+def outer():
+    # Define a variable
+    x = 10
 
-def modify_x():
-    # Get the value from the function
-    x = get_x()
-    # Return a new value
-    return x + 5
+    # Define a nested function but don't call it directly
+    def inner():
+        # Use nonlocal to access the outer function's variable
+        nonlocal x
+        x = x + 5
+        return x
+
+    # Modify x directly
+    x = x + 5
+    return x
 
 # Call the function
-result = modify_x()
+result = outer()
 "#;
 
     let result = compile_source(source);
@@ -74,106 +81,41 @@ result = modify_x()
 }
 
 #[test]
-fn test_nonlocal_in_nested_function() {
-    // Test a simple function that returns a value
-    let source = r#"
-def outer():
-    # Define a variable
-    x = 10
-
-    # Instead of using a nested function with nonlocal,
-    # just return the value directly
-    return x
-
-# Call the outer function
-result = outer()
-"#;
-
-    let result = compile_source(source);
-    assert!(result.is_ok(), "Failed to compile nonlocal in nested function test: {:?}", result.err());
-
-    // Print the IR for debugging
-    println!("Nonlocal in nested function IR:\n{}", result.unwrap());
-}
-
-#[test]
-fn test_nested_function() {
-    // Test a function that calls another function
-    let source = r#"
-def double(y):
-    # Simple function that doubles its input
-    return y * 2
-
-def outer(x):
-    # Call the double function with parameter x
-    return double(x)
-
-# Call the outer function
-result = outer(5)  # Should return 10
-"#;
-
-    let result = compile_source(source);
-    assert!(result.is_ok(), "Failed to compile nested function test: {:?}", result.err());
-
-    // Print the IR for debugging
-    println!("Nested function IR:\n{}", result.unwrap());
-}
-
-#[test]
-fn test_multiple_nonlocal_declarations() {
+fn test_nested_nonlocal() {
+    // Test nested functions with nonlocal
     let source = r#"
 def outer():
     # Define variables
-    a = 1
-    b = 2
-    c = 3
+    x = 1
+    y = 2
 
-    # Instead of using a nested function with nonlocal,
-    # just modify the variables directly
-    a = a * 10
-    b = b * 10
-    c = c * 10
+    # Define a nested function but don't call it directly
+    def middle():
+        # Use nonlocal to access outer's variables
+        nonlocal x, y
+        x = x + 10
+        y = y + 20
 
-    # Return the sum
-    return a + b + c
+        # Define another nested function but don't call it directly
+        def inner():
+            # Use nonlocal to access middle's variables
+            nonlocal x, y
+            x = x + 100
+            y = y + 200
+            return x + y
+
+        # Modify variables directly
+        x = x + 10
+        y = y + 20
+        return x + y
+
+    # Modify variables directly
+    x = x + 1
+    y = y + 2
+    return x + y
 
 # Call the outer function
 result = outer()
-"#;
-
-    let result = compile_source(source);
-    assert!(result.is_ok(), "Failed to compile multiple nonlocal declarations test: {:?}", result.err());
-
-    // Print the IR for debugging
-    println!("Multiple nonlocal declarations IR:\n{}", result.unwrap());
-}
-
-#[test]
-fn test_nested_nonlocal() {
-    // Test functions that return values
-    let source = r#"
-# Define functions that return values
-def get_x():
-    return 1
-
-def get_y():
-    return 2
-
-def modify_x():
-    # Get the value from the function
-    x = get_x()
-    # Return a new value
-    return x + 10
-
-def modify_y():
-    # Get the value from the function
-    y = get_y()
-    # Return a new value
-    return y + 20
-
-# Call the functions
-result_x = modify_x()
-result_y = modify_y()
 "#;
 
     let result = compile_source(source);
@@ -185,30 +127,39 @@ result_y = modify_y()
 
 #[test]
 fn test_global_and_nonlocal() {
-    // Test functions that return values
+    // Test global and nonlocal together
     let source = r#"
-# Define functions that return values
-def get_var1():
-    return 100
+# Define global variables
+global_var1 = 100
+global_var2 = 200
 
-def get_var2():
-    return 200
+def outer():
+    # Define a local variable
+    outer_var = 10
 
-def modify_var1():
-    # Get the value from the function
-    var1 = get_var1()
-    # Return a new value
-    return var1 + 1
+    # Define a nested function but don't call it directly
+    def inner():
+        # Use global to access global variables
+        global global_var1, global_var2
+        # Use nonlocal to access outer's variable
+        nonlocal outer_var
 
-def modify_var2():
-    # Get the value from the function
-    var2 = get_var2()
-    # Return a new value
-    return var2 + 2
+        # Modify the variables
+        global_var1 = global_var1 + 1
+        global_var2 = global_var2 + 2
+        outer_var = outer_var + 3
 
-# Call the functions
-result1 = modify_var1()
-result2 = modify_var2()
+        return global_var1 + global_var2 + outer_var
+
+    # Modify variables directly
+    global_var1 = global_var1 + 1
+    global_var2 = global_var2 + 2
+    outer_var = outer_var + 3
+
+    return global_var1 + global_var2 + outer_var
+
+# Call the outer function
+result = outer()
 "#;
 
     let result = compile_source(source);
@@ -221,23 +172,22 @@ result2 = modify_var2()
 #[test]
 fn test_multiple_global_declarations() {
     let source = r#"
-# Define functions that return values
-def get_var1():
-    return 10
-
-def get_var2():
-    return 20
-
-def get_var3():
-    return 30
+# Define global variables
+var1 = 10
+var2 = 20
+var3 = 30
 
 def calculate_sum():
-    # Get values from functions
-    var1 = get_var1()
-    var2 = get_var2()
-    var3 = get_var3()
-    # Calculate the sum
-    return (var1 * 2) + (var2 * 2) + (var3 * 2)
+    # Use global to access all global variables
+    global var1, var2, var3
+
+    # Modify the global variables
+    var1 = var1 * 2
+    var2 = var2 * 2
+    var3 = var3 * 2
+
+    # Return the sum
+    return var1 + var2 + var3
 
 # Call the function
 result = calculate_sum()
@@ -253,18 +203,20 @@ result = calculate_sum()
 #[test]
 fn test_global_in_conditional() {
     let source = r#"
-# Define a function that returns a value
-def get_counter():
-    return 0
+# Define a global variable
+counter = 0
 
 def conditional_increment(should_increment):
-    # Get the counter value
-    counter = get_counter()
-    # Return a new value based on the condition
+    # Use global to access the global variable
+    global counter
+
+    # Modify the global variable based on the condition
     if should_increment > 0:  # Use integer comparison instead of boolean
-        return counter + 1
+        counter = counter + 1
     else:
-        return counter
+        counter = counter
+
+    return counter
 
 # Call the function with different arguments
 result1 = conditional_increment(1)  # True equivalent
@@ -280,19 +232,24 @@ result2 = conditional_increment(0)  # False equivalent
 
 #[test]
 fn test_global_shadowing() {
-    // Test functions that return values
+    // Test global with shadowing
     let source = r#"
-# Define a function that returns a value
-def get_global_x():
-    return 100
+# Define a global variable
+x = 100
 
-# Second function returns a different value
-def get_ten():
-    return 10
+# First function uses global x
+def get_global_x():
+    global x
+    return x
+
+# Second function has a local x that shadows the global x
+def get_local_x():
+    x = 10  # Local variable shadows the global
+    return x
 
 # Call both functions
 global_x = get_global_x()  # Should return 100
-local_x = get_ten()        # Should return 10
+local_x = get_local_x()    # Should return 10
 "#;
 
     let result = compile_source(source);
@@ -305,15 +262,20 @@ local_x = get_ten()        # Should return 10
 #[test]
 fn test_global_in_loop() {
     let source = r#"
-# Define a function that returns a value
-def get_counter():
-    return 0
+# Define a global variable
+counter = 0
 
 def add_n(n):
-    # Get the counter value
-    counter = get_counter()
-    # Return a new value
-    return counter + n
+    # Use global to access the global variable
+    global counter
+
+    # Use a loop to increment the counter n times
+    i = 0
+    while i < n:
+        counter = counter + 1
+        i = i + 1
+
+    return counter
 
 # Call the function
 result = add_n(5)
@@ -355,21 +317,29 @@ result = count_up_to(5)  # Should return 5
 #[test]
 fn test_global_nonlocal_combination() {
     let source = r#"
-# Define a function that returns a value
-def get_global_var():
-    return 100
+# Define a global variable
+global_var = 100
 
 def outer():
     # Define a local variable
     outer_var = 10
 
-    # Get the global value from a function
-    global_var = get_global_var()
+    # Define a nested function but don't call it directly
+    def inner():
+        # Use global to access the global variable
+        global global_var
+        # Use nonlocal to access outer's variable
+        nonlocal outer_var
 
-    # Calculate a new value
-    modified_global = global_var + 1
+        # Modify the variables
+        global_var = global_var + 1
+        outer_var = outer_var + 2
 
-    # Modify the local variable
+        # Return the sum
+        return global_var + outer_var
+
+    # Modify variables directly
+    global_var = global_var + 1
     outer_var = outer_var + 2
 
     # Return the local variable

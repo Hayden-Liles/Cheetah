@@ -9,7 +9,7 @@ thread_local! {
 }
 
 /// Print a string to stdout (C-compatible wrapper)
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn print_string(value: *const c_char) {
     unsafe {
         if let Ok(s) = CStr::from_ptr(value).to_str() {
@@ -18,65 +18,30 @@ pub extern "C" fn print_string(value: *const c_char) {
             } else {
                 super::buffer::write_str(s);
             }
+            // Always flush after printing
+            super::buffer::flush();
         }
     }
 }
 
 /// Print a string with a newline to stdout (C-compatible wrapper)
 /// This function is now implemented to avoid double newlines
-#[unsafe(no_mangle)]
+#[no_mangle]
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn println_string(value: *const c_char) {
     unsafe {
         if !value.is_null() {
             let c_str = CStr::from_ptr(value);
             if let Ok(str_slice) = c_str.to_str() {
-                match str_slice {
-                    "" => {
-                        super::buffer::write_str("\n");
-                        super::buffer::flush();
-                        return;
-                    }
-                    "Hello World" | "Hello" => {
-                        super::buffer::write_str(str_slice);
-                        super::buffer::write_newline();
-                        return;
-                    }
-                    _ => {
-                        let is_repeat = LAST_PRINTED.with(|last| {
-                            let last_str = last.borrow();
-                            str_slice == last_str.as_str()
-                        });
-
-                        if is_repeat {
-                            super::buffer::write_str(str_slice);
-                            super::buffer::write_newline();
-                            return;
-                        }
-
-                        if !str_slice.contains('\n') {
-                            super::buffer::write_str(str_slice);
-                            super::buffer::write_newline();
-
-                            LAST_PRINTED.with(|last| {
-                                *last.borrow_mut() = str_slice.to_string();
-                            });
-                        } else {
-                            if let Some(first_line) = str_slice.split('\n').next() {
-                                super::buffer::write_str(first_line);
-                                super::buffer::write_newline();
-
-                                LAST_PRINTED.with(|last| {
-                                    *last.borrow_mut() = first_line.to_string();
-                                });
-                            } else {
-                                super::buffer::write_str("\n");
-                                super::buffer::flush();
-                            }
-                        }
-                    }
-                }
+                // Simplified implementation that always flushes
+                super::buffer::write_str(str_slice);
+                super::buffer::write_newline();
+                super::buffer::flush();
             }
+        } else {
+            // Just print a newline if null
+            super::buffer::write_newline();
+            super::buffer::flush();
         }
     }
 }
@@ -85,18 +50,21 @@ pub extern "C" fn println_string(value: *const c_char) {
 #[no_mangle]
 pub extern "C" fn print_int(value: i64) {
     super::buffer::write_int(value);
+    super::buffer::flush();
 }
 
 /// Print a float to stdout (C-compatible wrapper)
 #[no_mangle]
 pub extern "C" fn print_float(value: f64) {
     super::buffer::write_float(value);
+    super::buffer::flush();
 }
 
 /// Print a boolean to stdout (C-compatible wrapper)
 #[no_mangle]
 pub extern "C" fn print_bool(value: bool) {
     super::buffer::write_bool(value);
+    super::buffer::flush();
 }
 
 /// Register print operation functions in the module

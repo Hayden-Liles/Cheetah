@@ -92,19 +92,49 @@ pub extern "C" fn exception_free(exception: *mut Exception) {
 
 static mut GLOBAL_EXCEPTION: *mut Exception = ptr::null_mut();
 
+// For AOT compilation, we need to use weak symbols to avoid multiple definitions
+// This is because the LLVM module also defines these functions
+
 /// Get current exception
+#[cfg(feature = "aot")]
 #[no_mangle]
+#[link_section = ".text.get_current_exception.weak"]
 pub extern "C" fn get_current_exception() -> *mut Exception {
     unsafe { GLOBAL_EXCEPTION }
 }
 
 /// Set current exception
+#[cfg(feature = "aot")]
 #[no_mangle]
+#[link_section = ".text.set_current_exception.weak"]
 pub extern "C" fn set_current_exception(exc: *mut Exception) {
     unsafe { GLOBAL_EXCEPTION = exc; }
 }
 
 /// Clear current exception
+#[cfg(feature = "aot")]
+#[no_mangle]
+#[link_section = ".text.clear_current_exception.weak"]
+pub extern "C" fn clear_current_exception() {
+    unsafe { GLOBAL_EXCEPTION = ptr::null_mut(); }
+}
+
+/// Get current exception (non-AOT version)
+#[cfg(not(feature = "aot"))]
+#[no_mangle]
+pub extern "C" fn get_current_exception() -> *mut Exception {
+    unsafe { GLOBAL_EXCEPTION }
+}
+
+/// Set current exception (non-AOT version)
+#[cfg(not(feature = "aot"))]
+#[no_mangle]
+pub extern "C" fn set_current_exception(exc: *mut Exception) {
+    unsafe { GLOBAL_EXCEPTION = exc; }
+}
+
+/// Clear current exception (non-AOT version)
+#[cfg(not(feature = "aot"))]
 #[no_mangle]
 pub extern "C" fn clear_current_exception() {
     unsafe { GLOBAL_EXCEPTION = ptr::null_mut(); }
@@ -170,44 +200,30 @@ pub fn register_exception_state<'ctx>(
     // Global variable
     let global = module.add_global(ptr_t, None, "__current_exception");
     global.set_initializer(&ptr_t.const_null());
-    // get_current_exception
-    let get_fn = module.add_function(
-        "get_current_exception",
-        ptr_t.fn_type(&[], false),
-        None,
-    );
-    {
-        let entry = context.append_basic_block(get_fn, "entry");
-        let builder = context.create_builder();
-        builder.position_at_end(entry);
-        let val = builder.build_load(ptr_t, global.as_pointer_value(), "val").unwrap();
-        builder.build_return(Some(&val)).unwrap();
+
+    // Always declare the functions as external for AOT compilation
+    // This avoids multiple definitions during linking
+    if module.get_function("get_current_exception").is_none() {
+        module.add_function(
+            "get_current_exception",
+            ptr_t.fn_type(&[], false),
+            Some(inkwell::module::Linkage::External),
+        );
     }
-    // set_current_exception
-    let set_fn = module.add_function(
-        "set_current_exception",
-        context.void_type().fn_type(&[ptr_t.into()], false),
-        None,
-    );
-    {
-        let entry = context.append_basic_block(set_fn, "entry");
-        let builder = context.create_builder();
-        builder.position_at_end(entry);
-        let exc = set_fn.get_nth_param(0).unwrap().into_pointer_value();
-        let _ = builder.build_store(global.as_pointer_value(), exc);
-        builder.build_return(None).unwrap();
+
+    if module.get_function("set_current_exception").is_none() {
+        module.add_function(
+            "set_current_exception",
+            context.void_type().fn_type(&[ptr_t.into()], false),
+            Some(inkwell::module::Linkage::External),
+        );
     }
-    // clear_current_exception
-    let clear_fn = module.add_function(
-        "clear_current_exception",
-        context.void_type().fn_type(&[], false),
-        None,
-    );
-    {
-        let entry = context.append_basic_block(clear_fn, "entry");
-        let builder = context.create_builder();
-        builder.position_at_end(entry);
-        let _ = builder.build_store(global.as_pointer_value(), ptr_t.const_null());
-        builder.build_return(None).unwrap();
+
+    if module.get_function("clear_current_exception").is_none() {
+        module.add_function(
+            "clear_current_exception",
+            context.void_type().fn_type(&[], false),
+            Some(inkwell::module::Linkage::External),
+        );
     }
 }

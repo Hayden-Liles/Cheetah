@@ -738,4 +738,46 @@ pub fn register_boxed_any_functions<'ctx>(context: &'ctx Context, module: &mut M
 
     let unary_op_type = boxed_any_ptr_type.fn_type(&[boxed_any_ptr_type.into()], false);
     module.add_function("boxed_any_not", unary_op_type, None);
+
+    // Length function
+    let len_type = i64_type.fn_type(&[boxed_any_ptr_type.into()], false);
+    module.add_function("boxed_any_len", len_type, None);
+}
+
+/// Get the length of a BoxedAny value
+#[no_mangle]
+pub extern "C" fn boxed_any_len(value: *const BoxedAny) -> i64 {
+    if value.is_null() {
+        return 0;
+    }
+
+    unsafe {
+        match (*value).tag {
+            type_tags::STRING => {
+                if (*value).data.ptr_val.is_null() {
+                    0
+                } else {
+                    let c_str = CStr::from_ptr((*value).data.ptr_val as *const c_char);
+                    c_str.to_bytes().len() as i64
+                }
+            },
+            type_tags::LIST => {
+                if (*value).data.ptr_val.is_null() {
+                    0
+                } else {
+                    // Call the boxed_list_len function
+                    super::boxed_list::boxed_list_len((*value).data.ptr_val as *mut super::boxed_list::BoxedList)
+                }
+            },
+            type_tags::DICT => {
+                if (*value).data.ptr_val.is_null() {
+                    0
+                } else {
+                    // Call the boxed_dict_len function
+                    super::boxed_dict::boxed_dict_len((*value).data.ptr_val as *mut super::boxed_dict::BoxedDict)
+                }
+            },
+            _ => 0, // Other types don't have a length
+        }
+    }
 }

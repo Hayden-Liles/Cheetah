@@ -174,6 +174,7 @@ impl<'ctx> ClosureEnvironment<'ctx> {
                 .map(|(name, _)| {
                     let ty = &self.captured_types[name];
                     match ty {
+                        Type::Any => context.ptr_type(inkwell::AddressSpace::default()).into(),
                         Type::Int => context.i64_type().into(),
                         Type::Float => context.f64_type().into(),
                         Type::Bool => context.bool_type().into(),

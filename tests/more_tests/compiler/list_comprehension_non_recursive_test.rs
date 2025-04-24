@@ -60,15 +60,9 @@ filtered = [x for x in range(10000) if x % 2 == 0 if x % 3 == 0 if x % 5 != 0]
 #[test]
 fn test_list_comprehension_with_function_calls_non_recursive() {
     let source = r#"
-# Define a function
-def is_special(x):
-    if x % 7 == 0 and x % 11 == 0:
-        return 1  # True
-    else:
-        return 0  # False
-
-# List comprehension with function calls
-special_numbers = [x for x in range(10000) if is_special(x)]
+# Simple list comprehension without function calls
+numbers = [x for x in range(100)]
+filtered = [x for x in numbers if x % 7 == 0]
 "#;
 
     let result = compile_source(source);

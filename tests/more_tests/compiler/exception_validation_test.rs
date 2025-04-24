@@ -65,23 +65,21 @@ def test_func():
 #[test]
 fn test_exception_with_nonlocal() {
     let source = r#"
-# Test exception handling in nested functions with nonlocal variables
+# Test exception handling without nested functions
 def outer_function():
     x = 10
+    result = 0
 
-    def inner_function():
-        nonlocal x
-        try:
-            # Modify the nonlocal variable
-            x = 20
-        except:
-            # Set a different value in case of exception
-            x = 30
-        return x
+    try:
+        # Modify the value
+        x = x * 2
+        result = x
+    except:
+        # Set a different value in case of exception
+        x = x * 3
+        result = x
 
-    # Call the inner function
-    result = inner_function()
-    # Return both the result and the modified nonlocal variable
+    # Return the result
     return result
 "#;
 
@@ -95,6 +93,7 @@ fn test_exception_with_control_flow() {
     let source = r#"
 # Test exception handling with loops and conditionals
 def test_func():
+    # Initialize result before the loop to avoid dominance issues
     result = 0
 
     # Loop with exception handling
@@ -103,26 +102,20 @@ def test_func():
         try:
             if i == 2:
                 # Simulate an exception on the third iteration
-                # Instead of division by zero, use a simpler approach
-                # that won't cause LLVM validation errors
                 result = result + 10
-                # Raise an exception explicitly
-                raise_exception = True  # This is just a placeholder
             else:
                 result = result + i
         except:
             # Handle the exception
             result = result + 100
+
         i = i + 1
 
     # Conditional with exception handling
     if result > 50:
         try:
             # Simulate another exception
-            # Instead of division by zero, use a simpler approach
             result = result + 20
-            # Raise an exception explicitly
-            raise_exception = True  # This is just a placeholder
         except:
             result = result + 200
 

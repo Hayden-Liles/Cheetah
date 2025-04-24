@@ -7,7 +7,7 @@ use crate::compiler::expr::{AssignmentCompiler, BinaryOpCompiler, ExprCompiler};
 use crate::compiler::stmt::StmtCompiler;
 use crate::compiler::types::Type;
 use inkwell::values::BasicValueEnum;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 // This trait is used to extend the CompilationContext with non-recursive statement compilation
 pub trait StmtNonRecursive<'ctx> {
@@ -92,6 +92,10 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                 if id == "range" {
                     let i64_type = self.llvm_context.i64_type();
 
+                    // Get the boxed_any_to_int function for converting BoxedAny pointers to integers
+                    let boxed_any_to_int_fn = self.module.get_function("boxed_any_to_int")
+                        .ok_or_else(|| "boxed_any_to_int function not found".to_string())?;
+
                     match args.len() {
                         1 => {
                             // range(stop)
@@ -102,10 +106,25 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             let stop_val = if stop_type != Type::Int {
                                 self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
                             } else if stop_val.is_pointer_value() {
-                                self.builder
-                                    .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
-                                    .unwrap()
-                                    .into_int_value()
+                                // Check if it's a BoxedAny pointer
+                                if stop_type == Type::Any {
+                                    // Convert BoxedAny to int
+                                    let call_site_value = self.builder.build_call(
+                                        boxed_any_to_int_fn,
+                                        &[stop_val.into()],
+                                        "boxed_to_int"
+                                    ).unwrap();
+
+                                    call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert BoxedAny to int".to_string())?
+                                        .into_int_value()
+                                } else {
+                                    // Regular pointer, load the value
+                                    self.builder
+                                        .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
+                                        .unwrap()
+                                        .into_int_value()
+                                }
                             } else {
                                 stop_val.into_int_value()
                             };
@@ -118,13 +137,104 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             let (stop_val, stop_type) = self.compile_expr(&args[1])?;
                             let step_val = i64_type.const_int(1, false);  // step = 1
 
+                            // Check if we should use boxed_range_2 instead
+                            if start_type == Type::Any || stop_type == Type::Any {
+                                // Convert the values to BoxedAny pointers if needed
+                                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
+                                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
+
+                                let boxed_start_val = if start_type == Type::Any {
+                                    start_val
+                                } else {
+                                    // Convert to BoxedAny
+                                    let int_start_val = if start_type != Type::Int {
+                                        self.convert_type(start_val, &start_type, &Type::Int)?.into_int_value()
+                                    } else if start_val.is_pointer_value() {
+                                        self.builder
+                                            .build_load(i64_type, start_val.into_pointer_value(), "range_start")
+                                            .unwrap()
+                                            .into_int_value()
+                                    } else {
+                                        start_val.into_int_value()
+                                    };
+
+                                    self.builder.build_call(
+                                        boxed_any_from_int_fn,
+                                        &[int_start_val.into()],
+                                        "boxed_start"
+                                    ).unwrap().try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
+                                };
+
+                                let boxed_stop_val = if stop_type == Type::Any {
+                                    stop_val
+                                } else {
+                                    // Convert to BoxedAny
+                                    let int_stop_val = if stop_type != Type::Int {
+                                        self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
+                                    } else if stop_val.is_pointer_value() {
+                                        self.builder
+                                            .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
+                                            .unwrap()
+                                            .into_int_value()
+                                    } else {
+                                        stop_val.into_int_value()
+                                    };
+
+                                    self.builder.build_call(
+                                        boxed_any_from_int_fn,
+                                        &[int_stop_val.into()],
+                                        "boxed_stop"
+                                    ).unwrap().try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
+                                };
+
+                                // Use boxed_range_2 instead of range_2
+                                let boxed_range_2_fn = match self.module.get_function("boxed_range_2") {
+                                    Some(f) => f,
+                                    None => {
+                                        return Err("boxed_range_2 function not found".to_string())
+                                    }
+                                };
+
+                                let call_site_value = self.builder.build_call(
+                                    boxed_range_2_fn,
+                                    &[boxed_start_val.into(), boxed_stop_val.into()],
+                                    "boxed_range_2_result"
+                                ).unwrap();
+
+                                let range_val = call_site_value
+                                    .try_as_basic_value()
+                                    .left()
+                                    .ok_or_else(|| "Failed to get range value".to_string())?
+                                    .into_int_value();
+
+                                return Ok(Some((i64_type.const_int(0, false), range_val, i64_type.const_int(1, false))));
+                            }
+
+                            // Regular case with integer values
                             let start_val = if start_type != Type::Int {
                                 self.convert_type(start_val, &start_type, &Type::Int)?.into_int_value()
                             } else if start_val.is_pointer_value() {
-                                self.builder
-                                    .build_load(i64_type, start_val.into_pointer_value(), "range_start")
-                                    .unwrap()
-                                    .into_int_value()
+                                // Check if it's a BoxedAny pointer
+                                if start_type == Type::Any {
+                                    // Convert BoxedAny to int
+                                    let call_site_value = self.builder.build_call(
+                                        boxed_any_to_int_fn,
+                                        &[start_val.into()],
+                                        "boxed_to_int"
+                                    ).unwrap();
+
+                                    call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert BoxedAny to int".to_string())?
+                                        .into_int_value()
+                                } else {
+                                    // Regular pointer, load the value
+                                    self.builder
+                                        .build_load(i64_type, start_val.into_pointer_value(), "range_start")
+                                        .unwrap()
+                                        .into_int_value()
+                                }
                             } else {
                                 start_val.into_int_value()
                             };
@@ -132,10 +242,25 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             let stop_val = if stop_type != Type::Int {
                                 self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
                             } else if stop_val.is_pointer_value() {
-                                self.builder
-                                    .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
-                                    .unwrap()
-                                    .into_int_value()
+                                // Check if it's a BoxedAny pointer
+                                if stop_type == Type::Any {
+                                    // Convert BoxedAny to int
+                                    let call_site_value = self.builder.build_call(
+                                        boxed_any_to_int_fn,
+                                        &[stop_val.into()],
+                                        "boxed_to_int"
+                                    ).unwrap();
+
+                                    call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert BoxedAny to int".to_string())?
+                                        .into_int_value()
+                                } else {
+                                    // Regular pointer, load the value
+                                    self.builder
+                                        .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
+                                        .unwrap()
+                                        .into_int_value()
+                                }
                             } else {
                                 stop_val.into_int_value()
                             };
@@ -148,13 +273,128 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             let (stop_val, stop_type) = self.compile_expr(&args[1])?;
                             let (step_val, step_type) = self.compile_expr(&args[2])?;
 
+                            // Check if we should use boxed_range_3 instead
+                            if start_type == Type::Any || stop_type == Type::Any || step_type == Type::Any {
+                                // Convert the values to BoxedAny pointers if needed
+                                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
+                                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
+
+                                let boxed_start_val = if start_type == Type::Any {
+                                    start_val
+                                } else {
+                                    // Convert to BoxedAny
+                                    let int_start_val = if start_type != Type::Int {
+                                        self.convert_type(start_val, &start_type, &Type::Int)?.into_int_value()
+                                    } else if start_val.is_pointer_value() {
+                                        self.builder
+                                            .build_load(i64_type, start_val.into_pointer_value(), "range_start")
+                                            .unwrap()
+                                            .into_int_value()
+                                    } else {
+                                        start_val.into_int_value()
+                                    };
+
+                                    self.builder.build_call(
+                                        boxed_any_from_int_fn,
+                                        &[int_start_val.into()],
+                                        "boxed_start"
+                                    ).unwrap().try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
+                                };
+
+                                let boxed_stop_val = if stop_type == Type::Any {
+                                    stop_val
+                                } else {
+                                    // Convert to BoxedAny
+                                    let int_stop_val = if stop_type != Type::Int {
+                                        self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
+                                    } else if stop_val.is_pointer_value() {
+                                        self.builder
+                                            .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
+                                            .unwrap()
+                                            .into_int_value()
+                                    } else {
+                                        stop_val.into_int_value()
+                                    };
+
+                                    self.builder.build_call(
+                                        boxed_any_from_int_fn,
+                                        &[int_stop_val.into()],
+                                        "boxed_stop"
+                                    ).unwrap().try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
+                                };
+
+                                let boxed_step_val = if step_type == Type::Any {
+                                    step_val
+                                } else {
+                                    // Convert to BoxedAny
+                                    let int_step_val = if step_type != Type::Int {
+                                        self.convert_type(step_val, &step_type, &Type::Int)?.into_int_value()
+                                    } else if step_val.is_pointer_value() {
+                                        self.builder
+                                            .build_load(i64_type, step_val.into_pointer_value(), "range_step")
+                                            .unwrap()
+                                            .into_int_value()
+                                    } else {
+                                        step_val.into_int_value()
+                                    };
+
+                                    self.builder.build_call(
+                                        boxed_any_from_int_fn,
+                                        &[int_step_val.into()],
+                                        "boxed_step"
+                                    ).unwrap().try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
+                                };
+
+                                // Use boxed_range_3 instead of range_3
+                                let boxed_range_3_fn = match self.module.get_function("boxed_range_3") {
+                                    Some(f) => f,
+                                    None => {
+                                        return Err("boxed_range_3 function not found".to_string())
+                                    }
+                                };
+
+                                let call_site_value = self.builder.build_call(
+                                    boxed_range_3_fn,
+                                    &[boxed_start_val.into(), boxed_stop_val.into(), boxed_step_val.into()],
+                                    "boxed_range_3_result"
+                                ).unwrap();
+
+                                let range_val = call_site_value
+                                    .try_as_basic_value()
+                                    .left()
+                                    .ok_or_else(|| "Failed to get range value".to_string())?
+                                    .into_int_value();
+
+                                // We return a dummy start and step value since the range_val already contains the full range
+                                return Ok(Some((i64_type.const_int(0, false), range_val, i64_type.const_int(1, false))));
+                            }
+
+                            // Regular case with integer values
                             let start_val = if start_type != Type::Int {
                                 self.convert_type(start_val, &start_type, &Type::Int)?.into_int_value()
                             } else if start_val.is_pointer_value() {
-                                self.builder
-                                    .build_load(i64_type, start_val.into_pointer_value(), "range_start")
-                                    .unwrap()
-                                    .into_int_value()
+                                // Check if it's a BoxedAny pointer
+                                if start_type == Type::Any {
+                                    // Convert BoxedAny to int
+                                    let call_site_value = self.builder.build_call(
+                                        boxed_any_to_int_fn,
+                                        &[start_val.into()],
+                                        "boxed_to_int"
+                                    ).unwrap();
+
+                                    call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert BoxedAny to int".to_string())?
+                                        .into_int_value()
+                                } else {
+                                    // Regular pointer, load the value
+                                    self.builder
+                                        .build_load(i64_type, start_val.into_pointer_value(), "range_start")
+                                        .unwrap()
+                                        .into_int_value()
+                                }
                             } else {
                                 start_val.into_int_value()
                             };
@@ -162,10 +402,25 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             let stop_val = if stop_type != Type::Int {
                                 self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
                             } else if stop_val.is_pointer_value() {
-                                self.builder
-                                    .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
-                                    .unwrap()
-                                    .into_int_value()
+                                // Check if it's a BoxedAny pointer
+                                if stop_type == Type::Any {
+                                    // Convert BoxedAny to int
+                                    let call_site_value = self.builder.build_call(
+                                        boxed_any_to_int_fn,
+                                        &[stop_val.into()],
+                                        "boxed_to_int"
+                                    ).unwrap();
+
+                                    call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert BoxedAny to int".to_string())?
+                                        .into_int_value()
+                                } else {
+                                    // Regular pointer, load the value
+                                    self.builder
+                                        .build_load(i64_type, stop_val.into_pointer_value(), "range_stop")
+                                        .unwrap()
+                                        .into_int_value()
+                                }
                             } else {
                                 stop_val.into_int_value()
                             };
@@ -173,10 +428,25 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             let step_val = if step_type != Type::Int {
                                 self.convert_type(step_val, &step_type, &Type::Int)?.into_int_value()
                             } else if step_val.is_pointer_value() {
-                                self.builder
-                                    .build_load(i64_type, step_val.into_pointer_value(), "range_step")
-                                    .unwrap()
-                                    .into_int_value()
+                                // Check if it's a BoxedAny pointer
+                                if step_type == Type::Any {
+                                    // Convert BoxedAny to int
+                                    let call_site_value = self.builder.build_call(
+                                        boxed_any_to_int_fn,
+                                        &[step_val.into()],
+                                        "boxed_to_int"
+                                    ).unwrap();
+
+                                    call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to convert BoxedAny to int".to_string())?
+                                        .into_int_value()
+                                } else {
+                                    // Regular pointer, load the value
+                                    self.builder
+                                        .build_load(i64_type, step_val.into_pointer_value(), "range_step")
+                                        .unwrap()
+                                        .into_int_value()
+                                }
                             } else {
                                 step_val.into_int_value()
                             };
@@ -754,13 +1024,22 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                                             self.builder.position_at_end(entry_block);
                                         }
 
-                                        let local_ptr = self
-                                            .builder
-                                            .build_alloca(
-                                                self.get_llvm_type(&var_type).into_int_type(),
-                                                &unique_name,
-                                            )
-                                            .unwrap();
+                                        // If we're using BoxedAny values, use a pointer type for the local variable
+                                        let local_ptr = if self.use_boxed_values {
+                                            self.builder
+                                                .build_alloca(
+                                                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                                    &unique_name,
+                                                )
+                                                .unwrap()
+                                        } else {
+                                            self.builder
+                                                .build_alloca(
+                                                    self.get_llvm_type(&var_type).into_int_type(),
+                                                    &unique_name,
+                                                )
+                                                .unwrap()
+                                        };
 
                                         self.builder.position_at_end(current_position);
 
@@ -804,23 +1083,45 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                                     };
 
                                 if !var_exists_in_global {
-                                    let var_type = Type::Int;
+                                    let var_type = if self.use_boxed_values {
+                                        Type::Any
+                                    } else {
+                                        Type::Int
+                                    };
+
                                     self.register_variable(name.clone(), var_type.clone());
 
-                                    let global_var = self.module.add_global(
-                                        self.get_llvm_type(&var_type).into_int_type(),
-                                        None,
-                                        &name,
-                                    );
+                                    let global_var = if self.use_boxed_values {
+                                        // For BoxedAny, we use a pointer type
+                                        self.module.add_global(
+                                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                            None,
+                                            &name,
+                                        )
+                                    } else {
+                                        // For regular values, we use the original type
+                                        self.module.add_global(
+                                            self.get_llvm_type(&var_type).into_int_type(),
+                                            None,
+                                            &name,
+                                        )
+                                    };
 
-                                    global_var.set_initializer(
-                                        &self.llvm_context.i64_type().const_zero(),
-                                    );
+                                    if self.use_boxed_values {
+                                        // Initialize with null pointer (None)
+                                        global_var.set_initializer(
+                                            &self.llvm_context.ptr_type(inkwell::AddressSpace::default()).const_null(),
+                                        );
+                                    } else {
+                                        // Initialize with zero
+                                        global_var.set_initializer(
+                                            &self.llvm_context.i64_type().const_zero(),
+                                        );
+                                    }
 
                                     let ptr = global_var.as_pointer_value();
 
-                                    if let Some(global_scope) = self.scope_stack.global_scope_mut()
-                                    {
+                                    if let Some(global_scope) = self.scope_stack.global_scope_mut() {
                                         global_scope.add_variable(
                                             name.clone(),
                                             ptr,
@@ -829,7 +1130,6 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                                     }
 
                                     self.variables.insert(name.clone(), ptr);
-
                                     self.type_env.insert(name.clone(), var_type.clone());
                                 }
                             }
@@ -1402,7 +1702,76 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             let return_type = current_function.get_type().get_return_type();
 
                             if let Some(ret_type) = return_type {
-                                if ret_type.is_int_type() && ret_val.is_pointer_value() {
+                                // Check if the function returns a pointer (BoxedAny)
+                                if ret_type.is_pointer_type() {
+                                    // If the return value is already a pointer, return it directly
+                                    if ret_val.is_pointer_value() {
+                                        self.builder.build_return(Some(&ret_val)).unwrap();
+                                        return Ok(());
+                                    } else {
+                                        // Convert the value to a BoxedAny pointer
+                                        let boxed_val = match value_type {
+                                            Some(Type::Int) => {
+                                                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
+                                                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
+
+                                                let call_site_value = self.builder.build_call(
+                                                    boxed_any_from_int_fn,
+                                                    &[ret_val.into()],
+                                                    "boxed_return"
+                                                ).unwrap();
+
+                                                call_site_value.try_as_basic_value().left()
+                                                    .ok_or_else(|| "Failed to create BoxedAny from int".to_string())?
+                                            },
+                                            Some(Type::Float) => {
+                                                let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
+                                                    .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
+
+                                                let call_site_value = self.builder.build_call(
+                                                    boxed_any_from_float_fn,
+                                                    &[ret_val.into()],
+                                                    "boxed_return"
+                                                ).unwrap();
+
+                                                call_site_value.try_as_basic_value().left()
+                                                    .ok_or_else(|| "Failed to create BoxedAny from float".to_string())?
+                                            },
+                                            Some(Type::Bool) => {
+                                                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                                                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                                                let call_site_value = self.builder.build_call(
+                                                    boxed_any_from_bool_fn,
+                                                    &[ret_val.into()],
+                                                    "boxed_return"
+                                                ).unwrap();
+
+                                                call_site_value.try_as_basic_value().left()
+                                                    .ok_or_else(|| "Failed to create BoxedAny from bool".to_string())?
+                                            },
+                                            _ => {
+                                                // For other types, return None
+                                                let boxed_any_none_fn = self.module.get_function("boxed_any_none")
+                                                    .ok_or_else(|| "boxed_any_none function not found".to_string())?;
+
+                                                let call_site_value = self.builder.build_call(
+                                                    boxed_any_none_fn,
+                                                    &[],
+                                                    "none_return"
+                                                ).unwrap();
+
+                                                call_site_value.try_as_basic_value().left()
+                                                    .ok_or_else(|| "Failed to create None value for return".to_string())?
+                                            }
+                                        };
+
+                                        self.builder.build_return(Some(&boxed_val)).unwrap();
+                                        return Ok(());
+                                    }
+                                } else if ret_type.is_int_type() && ret_val.is_pointer_value() {
+                                    // If the function returns an integer but we have a pointer,
+                                    // try to load the integer value from the pointer
                                     let loaded_val = self
                                         .builder
                                         .build_load(
@@ -1427,8 +1796,35 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             }
                         }
 
+                        // Default case: just return the value as is
                         self.builder.build_return(Some(&ret_val)).unwrap();
                     } else {
+                        // No return value, return None
+                        if let Some(current_function) = self.current_function {
+                            let return_type = current_function.get_type().get_return_type();
+
+                            if let Some(ret_type) = return_type {
+                                if ret_type.is_pointer_type() {
+                                    // If the function returns a pointer, return None as a BoxedAny
+                                    let boxed_any_none_fn = self.module.get_function("boxed_any_none")
+                                        .ok_or_else(|| "boxed_any_none function not found".to_string())?;
+
+                                    let call_site_value = self.builder.build_call(
+                                        boxed_any_none_fn,
+                                        &[],
+                                        "none_return"
+                                    ).unwrap();
+
+                                    let none_val = call_site_value.try_as_basic_value().left()
+                                        .ok_or_else(|| "Failed to create None value for return".to_string())?;
+
+                                    self.builder.build_return(Some(&none_val)).unwrap();
+                                    return Ok(());
+                                }
+                            }
+                        }
+
+                        // Default case: return void
                         self.builder.build_return(None).unwrap();
                     }
                 }
@@ -1439,25 +1835,119 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                     body,
                     is_nested,
                 } => {
-                    if is_nested {
-                        self.declare_nested_function(&name, params)?;
-                    } else {
-                        self.declare_nested_function(&name, params)?;
+                    // Create a custom function declaration for the non-recursive implementation
+                    // that uses BoxedAny pointers for parameters and return value
+                    let context = self.llvm_context;
+
+                    // Create parameter types - all parameters are BoxedAny pointers
+                    let mut param_types = Vec::new();
+                    for _ in params {
+                        param_types.push(context.ptr_type(inkwell::AddressSpace::default()).into());
                     }
 
+                    // Add environment pointer for nested functions
                     if is_nested {
-                        let result = self.compile_nested_function_body(&name, params, body);
-
-                        if let Err(e) = result {
-                            return Err(e);
-                        }
-                    } else {
-                        let result = self.compile_nested_function_body(&name, params, body);
-
-                        if let Err(e) = result {
-                            return Err(e);
-                        }
+                        let env_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+                        param_types.push(env_ptr_type.into());
                     }
+
+                    // Return type is also a BoxedAny pointer
+                    let return_type = context.ptr_type(inkwell::AddressSpace::default());
+                    let function_type = return_type.fn_type(&param_types, false);
+
+                    // Add the function to the module
+                    let function = self.module.add_function(&name, function_type, None);
+                    self.functions.insert(name.clone(), function);
+
+                    // If this is a nested function, register it with the parent function name
+                    if is_nested {
+                        println!("Registered nested function: {}", name);
+                    }
+
+                    // Create the function body
+                    let basic_block = context.append_basic_block(function, "entry");
+                    let current_block = self.builder.get_insert_block();
+                    self.builder.position_at_end(basic_block);
+
+                    // Push a new scope for the function
+                    self.push_scope(true, false, false);
+
+                    // Store the parameters in local variables
+                    let mut local_vars = HashMap::new();
+                    for (i, param) in params.iter().enumerate() {
+                        let param_value = function.get_nth_param(i as u32).unwrap();
+
+                        // Allocate space for the parameter
+                        let alloca = self.builder
+                            .build_alloca(
+                                context.ptr_type(inkwell::AddressSpace::default()),
+                                &param.name
+                            )
+                            .unwrap();
+
+                        // Store the parameter value
+                        self.builder.build_store(alloca, param_value).unwrap();
+
+                        // Add the parameter to the scope
+                        local_vars.insert(param.name.clone(), alloca);
+                        self.add_variable_to_scope(param.name.clone(), alloca, Type::Any);
+                        self.register_variable(param.name.clone(), Type::Any);
+                    }
+
+                    // Handle environment pointer for nested functions
+                    if is_nested {
+                        let env_param = function.get_nth_param(params.len() as u32).unwrap();
+                        let env_alloca = self.builder
+                            .build_alloca(
+                                context.ptr_type(inkwell::AddressSpace::default()),
+                                "env_ptr"
+                            )
+                            .unwrap();
+
+                        self.builder.build_store(env_alloca, env_param).unwrap();
+                    }
+
+                    // Save the current function and local variables
+                    let old_function = self.current_function;
+                    let old_local_vars = std::mem::replace(&mut self.local_vars, local_vars);
+
+                    // Set the current function
+                    self.current_function = Some(function);
+
+                    // Compile the function body
+                    for stmt in body {
+                        self.compile_stmt_non_recursive(stmt.as_ref())?;
+                    }
+
+                    // Add a default return if the function doesn't have one
+                    if !self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                        // Return None as the default value
+                        let boxed_any_none_fn = self.module.get_function("boxed_any_none")
+                            .ok_or_else(|| "boxed_any_none function not found".to_string())?;
+
+                        let call_site_value = self.builder.build_call(
+                            boxed_any_none_fn,
+                            &[],
+                            "default_return"
+                        ).unwrap();
+
+                        let none_val = call_site_value.try_as_basic_value().left()
+                            .ok_or_else(|| "Failed to create None value for default return".to_string())?;
+
+                        self.builder.build_return(Some(&none_val)).unwrap();
+                    }
+
+                    // Restore the previous function and local variables
+                    self.current_function = old_function;
+                    self.local_vars = old_local_vars;
+
+                    // Restore the previous insertion point
+                    if let Some(block) = current_block {
+                        self.builder.position_at_end(block);
+                    }
+
+                    // Pop the function scope
+                    self.pop_scope();
                 }
             }
         }

@@ -67,6 +67,10 @@ mod variable_scoping_test;
 #[path = "more_tests/compiler/global_nonlocal_test.rs"]
 mod global_nonlocal_test;
 
+// Include the actual global and nonlocal statement tests
+#[path = "more_tests/compiler/actual_global_nonlocal_test.rs"]
+mod actual_global_nonlocal_test;
+
 // Include the closure tests
 #[path = "more_tests/compiler/closure_test.rs"]
 mod closure_test;
@@ -206,3 +210,7 @@ mod list_comprehension_tuple_test;
 // Include the range optimization tests
 #[path = "more_tests/compiler/range_optimization_test.rs"]
 mod range_optimization_test;
+
+// Include the list membership tests
+#[path = "more_tests/compiler/list_membership_test.rs"]
+mod list_membership_test;
