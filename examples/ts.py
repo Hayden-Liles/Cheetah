@@ -6,4 +6,4 @@ def fibonacci(n):
         fib_sequence.append(fib_sequence[-1] + fib_sequence[-2])
     return fib_sequence
 
-print(fibonacci(15000))
+print(fibonacci(150000))

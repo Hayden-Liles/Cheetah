@@ -27,6 +27,7 @@ pub mod type_tags {
     pub const SET: i32 = 10;
     pub const FUNCTION: i32 = 11;
     pub const CLASS: i32 = 12;
+    pub const BIGINT: i32 = 13;
 }
 
 /// A tagged union representing any Cheetah value
@@ -157,6 +158,13 @@ pub extern "C" fn boxed_any_free(value: *mut BoxedAny) {
                     super::boxed_dict::boxed_dict_free(dict_ptr);
                 }
             },
+            type_tags::BIGINT => {
+                // Free the big integer structure
+                if !(*value).data.ptr_val.is_null() {
+                    let bigint_ptr = (*value).data.ptr_val as *mut super::boxed_bigint::BigIntRaw;
+                    super::boxed_bigint::bigint_free(bigint_ptr);
+                }
+            },
             _ => {
                 // Other types don't have heap-allocated data
             }
@@ -207,6 +215,21 @@ pub extern "C" fn boxed_any_to_string(value: *const BoxedAny) -> *mut c_char {
                 } else {
                     let c_str = CStr::from_ptr((*value).data.ptr_val as *const c_char);
                     let s = c_str.to_str().unwrap_or("").to_string();
+                    CString::new(s).unwrap().into_raw()
+                }
+            },
+            type_tags::BIGINT => {
+                if (*value).data.ptr_val.is_null() {
+                    CString::new("0").unwrap().into_raw()
+                } else {
+                    let bigint_ptr = (*value).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                    let str_ptr = super::boxed_bigint::bigint_to_string(bigint_ptr);
+                    let c_str = CStr::from_ptr(str_ptr);
+                    let s = c_str.to_str().unwrap_or("0").to_string();
+
+                    // Free the temporary string
+                    free(str_ptr as *mut c_void);
+
                     CString::new(s).unwrap().into_raw()
                 }
             },
@@ -309,6 +332,12 @@ pub extern "C" fn boxed_any_clone(value: *const BoxedAny) -> *mut BoxedAny {
 
                 super::boxed_dict::boxed_any_from_dict(new_dict)
             },
+            type_tags::BIGINT => {
+                // Deep clone a big integer
+                let bigint_ptr = (*value).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let new_bigint = super::boxed_bigint::bigint_clone(bigint_ptr);
+                super::boxed_bigint::boxed_any_from_bigint(new_bigint)
+            },
             _ => {
                 // For other types, create a shallow copy
                 let boxed = malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny;
@@ -331,8 +360,51 @@ pub extern "C" fn boxed_any_add(a: *const BoxedAny, b: *const BoxedAny) -> *mut 
     unsafe {
         match ((*a).tag, (*b).tag) {
             (type_tags::INT, type_tags::INT) => {
-                let result = (*a).data.int_val + (*b).data.int_val;
-                boxed_any_from_int(result)
+                let x = (*a).data.int_val;
+                let y = (*b).data.int_val;
+
+                // Check for overflow
+                match x.checked_add(y) {
+                    Some(result) => boxed_any_from_int(result),
+                    None => {
+                        // Overflow occurred, promote to BigInt
+                        let big_a = super::boxed_bigint::bigint_from_i64(x);
+                        let big_b = super::boxed_bigint::bigint_from_i64(y);
+                        let big_result = super::boxed_bigint::bigint_add(big_a, big_b);
+
+                        // Free the temporary BigInts
+                        super::boxed_bigint::bigint_free(big_a);
+                        super::boxed_bigint::bigint_free(big_b);
+
+                        super::boxed_bigint::boxed_any_from_bigint(big_result)
+                    }
+                }
+            },
+            (type_tags::BIGINT, type_tags::BIGINT) => {
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_result = super::boxed_bigint::bigint_add(big_a, big_b);
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
+            },
+            (type_tags::BIGINT, type_tags::INT) => {
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_b = super::boxed_bigint::bigint_from_i64((*b).data.int_val);
+                let big_result = super::boxed_bigint::bigint_add(big_a, big_b);
+
+                // Free the temporary BigInt
+                super::boxed_bigint::bigint_free(big_b);
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
+            },
+            (type_tags::INT, type_tags::BIGINT) => {
+                let big_a = super::boxed_bigint::bigint_from_i64((*a).data.int_val);
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_result = super::boxed_bigint::bigint_add(big_a, big_b);
+
+                // Free the temporary BigInt
+                super::boxed_bigint::bigint_free(big_a);
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
             },
             (type_tags::FLOAT, type_tags::FLOAT) => {
                 let result = (*a).data.float_val + (*b).data.float_val;
@@ -344,6 +416,38 @@ pub extern "C" fn boxed_any_add(a: *const BoxedAny, b: *const BoxedAny) -> *mut 
             },
             (type_tags::FLOAT, type_tags::INT) => {
                 let result = (*a).data.float_val + (*b).data.int_val as f64;
+                boxed_any_from_float(result)
+            },
+            (type_tags::FLOAT, type_tags::BIGINT) => {
+                // Convert BigInt to float (may lose precision for very large values)
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let b_str = super::boxed_bigint::bigint_to_string(big_b);
+                let b_float = std::ffi::CStr::from_ptr(b_str)
+                    .to_str()
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+
+                // Free the temporary string
+                libc::free(b_str as *mut c_void);
+
+                let result = (*a).data.float_val + b_float;
+                boxed_any_from_float(result)
+            },
+            (type_tags::BIGINT, type_tags::FLOAT) => {
+                // Convert BigInt to float (may lose precision for very large values)
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let a_str = super::boxed_bigint::bigint_to_string(big_a);
+                let a_float = std::ffi::CStr::from_ptr(a_str)
+                    .to_str()
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+
+                // Free the temporary string
+                libc::free(a_str as *mut c_void);
+
+                let result = a_float + (*b).data.float_val;
                 boxed_any_from_float(result)
             },
             (type_tags::STRING, type_tags::STRING) => {
@@ -408,8 +512,51 @@ pub extern "C" fn boxed_any_subtract(a: *const BoxedAny, b: *const BoxedAny) -> 
     unsafe {
         match ((*a).tag, (*b).tag) {
             (type_tags::INT, type_tags::INT) => {
-                let result = (*a).data.int_val - (*b).data.int_val;
-                boxed_any_from_int(result)
+                let x = (*a).data.int_val;
+                let y = (*b).data.int_val;
+
+                // Check for overflow
+                match x.checked_sub(y) {
+                    Some(result) => boxed_any_from_int(result),
+                    None => {
+                        // Overflow occurred, promote to BigInt
+                        let big_a = super::boxed_bigint::bigint_from_i64(x);
+                        let big_b = super::boxed_bigint::bigint_from_i64(y);
+                        let big_result = super::boxed_bigint::bigint_subtract(big_a, big_b);
+
+                        // Free the temporary BigInts
+                        super::boxed_bigint::bigint_free(big_a);
+                        super::boxed_bigint::bigint_free(big_b);
+
+                        super::boxed_bigint::boxed_any_from_bigint(big_result)
+                    }
+                }
+            },
+            (type_tags::BIGINT, type_tags::BIGINT) => {
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_result = super::boxed_bigint::bigint_subtract(big_a, big_b);
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
+            },
+            (type_tags::BIGINT, type_tags::INT) => {
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_b = super::boxed_bigint::bigint_from_i64((*b).data.int_val);
+                let big_result = super::boxed_bigint::bigint_subtract(big_a, big_b);
+
+                // Free the temporary BigInt
+                super::boxed_bigint::bigint_free(big_b);
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
+            },
+            (type_tags::INT, type_tags::BIGINT) => {
+                let big_a = super::boxed_bigint::bigint_from_i64((*a).data.int_val);
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_result = super::boxed_bigint::bigint_subtract(big_a, big_b);
+
+                // Free the temporary BigInt
+                super::boxed_bigint::bigint_free(big_a);
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
             },
             (type_tags::FLOAT, type_tags::FLOAT) => {
                 let result = (*a).data.float_val - (*b).data.float_val;
@@ -421,6 +568,38 @@ pub extern "C" fn boxed_any_subtract(a: *const BoxedAny, b: *const BoxedAny) -> 
             },
             (type_tags::FLOAT, type_tags::INT) => {
                 let result = (*a).data.float_val - (*b).data.int_val as f64;
+                boxed_any_from_float(result)
+            },
+            (type_tags::FLOAT, type_tags::BIGINT) => {
+                // Convert BigInt to float (may lose precision for very large values)
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let b_str = super::boxed_bigint::bigint_to_string(big_b);
+                let b_float = std::ffi::CStr::from_ptr(b_str)
+                    .to_str()
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+
+                // Free the temporary string
+                free(b_str as *mut c_void);
+
+                let result = (*a).data.float_val - b_float;
+                boxed_any_from_float(result)
+            },
+            (type_tags::BIGINT, type_tags::FLOAT) => {
+                // Convert BigInt to float (may lose precision for very large values)
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let a_str = super::boxed_bigint::bigint_to_string(big_a);
+                let a_float = std::ffi::CStr::from_ptr(a_str)
+                    .to_str()
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+
+                // Free the temporary string
+                free(a_str as *mut c_void);
+
+                let result = a_float - (*b).data.float_val;
                 boxed_any_from_float(result)
             },
             _ => {
@@ -441,8 +620,51 @@ pub extern "C" fn boxed_any_multiply(a: *const BoxedAny, b: *const BoxedAny) -> 
     unsafe {
         match ((*a).tag, (*b).tag) {
             (type_tags::INT, type_tags::INT) => {
-                let result = (*a).data.int_val * (*b).data.int_val;
-                boxed_any_from_int(result)
+                let x = (*a).data.int_val;
+                let y = (*b).data.int_val;
+
+                // Check for overflow
+                match x.checked_mul(y) {
+                    Some(result) => boxed_any_from_int(result),
+                    None => {
+                        // Overflow occurred, promote to BigInt
+                        let big_a = super::boxed_bigint::bigint_from_i64(x);
+                        let big_b = super::boxed_bigint::bigint_from_i64(y);
+                        let big_result = super::boxed_bigint::bigint_multiply(big_a, big_b);
+
+                        // Free the temporary BigInts
+                        super::boxed_bigint::bigint_free(big_a);
+                        super::boxed_bigint::bigint_free(big_b);
+
+                        super::boxed_bigint::boxed_any_from_bigint(big_result)
+                    }
+                }
+            },
+            (type_tags::BIGINT, type_tags::BIGINT) => {
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_result = super::boxed_bigint::bigint_multiply(big_a, big_b);
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
+            },
+            (type_tags::BIGINT, type_tags::INT) => {
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_b = super::boxed_bigint::bigint_from_i64((*b).data.int_val);
+                let big_result = super::boxed_bigint::bigint_multiply(big_a, big_b);
+
+                // Free the temporary BigInt
+                super::boxed_bigint::bigint_free(big_b);
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
+            },
+            (type_tags::INT, type_tags::BIGINT) => {
+                let big_a = super::boxed_bigint::bigint_from_i64((*a).data.int_val);
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_result = super::boxed_bigint::bigint_multiply(big_a, big_b);
+
+                // Free the temporary BigInt
+                super::boxed_bigint::bigint_free(big_a);
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
             },
             (type_tags::FLOAT, type_tags::FLOAT) => {
                 let result = (*a).data.float_val * (*b).data.float_val;
@@ -454,6 +676,38 @@ pub extern "C" fn boxed_any_multiply(a: *const BoxedAny, b: *const BoxedAny) -> 
             },
             (type_tags::FLOAT, type_tags::INT) => {
                 let result = (*a).data.float_val * (*b).data.int_val as f64;
+                boxed_any_from_float(result)
+            },
+            (type_tags::FLOAT, type_tags::BIGINT) => {
+                // Convert BigInt to float (may lose precision for very large values)
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let b_str = super::boxed_bigint::bigint_to_string(big_b);
+                let b_float = std::ffi::CStr::from_ptr(b_str)
+                    .to_str()
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+
+                // Free the temporary string
+                free(b_str as *mut c_void);
+
+                let result = (*a).data.float_val * b_float;
+                boxed_any_from_float(result)
+            },
+            (type_tags::BIGINT, type_tags::FLOAT) => {
+                // Convert BigInt to float (may lose precision for very large values)
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let a_str = super::boxed_bigint::bigint_to_string(big_a);
+                let a_float = std::ffi::CStr::from_ptr(a_str)
+                    .to_str()
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+
+                // Free the temporary string
+                free(a_str as *mut c_void);
+
+                let result = a_float * (*b).data.float_val;
                 boxed_any_from_float(result)
             },
             _ => {
@@ -478,8 +732,63 @@ pub extern "C" fn boxed_any_divide(a: *const BoxedAny, b: *const BoxedAny) -> *m
                     // Division by zero
                     return boxed_any_none();
                 }
-                let result = (*a).data.int_val / (*b).data.int_val;
-                boxed_any_from_int(result)
+
+                // Check if the division results in a whole number
+                if (*a).data.int_val % (*b).data.int_val == 0 {
+                    let result = (*a).data.int_val / (*b).data.int_val;
+                    boxed_any_from_int(result)
+                } else {
+                    // Convert to float for non-integer division
+                    let result = (*a).data.int_val as f64 / (*b).data.int_val as f64;
+                    boxed_any_from_float(result)
+                }
+            },
+            (type_tags::BIGINT, type_tags::BIGINT) => {
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_result = super::boxed_bigint::bigint_divide(big_a, big_b);
+
+                if big_result.is_null() {
+                    // Division by zero or error
+                    return boxed_any_none();
+                }
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
+            },
+            (type_tags::BIGINT, type_tags::INT) => {
+                if (*b).data.int_val == 0 {
+                    // Division by zero
+                    return boxed_any_none();
+                }
+
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_b = super::boxed_bigint::bigint_from_i64((*b).data.int_val);
+                let big_result = super::boxed_bigint::bigint_divide(big_a, big_b);
+
+                // Free the temporary BigInt
+                super::boxed_bigint::bigint_free(big_b);
+
+                if big_result.is_null() {
+                    // Error in division
+                    return boxed_any_none();
+                }
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
+            },
+            (type_tags::INT, type_tags::BIGINT) => {
+                let big_a = super::boxed_bigint::bigint_from_i64((*a).data.int_val);
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let big_result = super::boxed_bigint::bigint_divide(big_a, big_b);
+
+                // Free the temporary BigInt
+                super::boxed_bigint::bigint_free(big_a);
+
+                if big_result.is_null() {
+                    // Division by zero or error
+                    return boxed_any_none();
+                }
+
+                super::boxed_bigint::boxed_any_from_bigint(big_result)
             },
             (type_tags::FLOAT, type_tags::FLOAT) => {
                 if (*b).data.float_val == 0.0 {
@@ -503,6 +812,48 @@ pub extern "C" fn boxed_any_divide(a: *const BoxedAny, b: *const BoxedAny) -> *m
                     return boxed_any_none();
                 }
                 let result = (*a).data.float_val / (*b).data.int_val as f64;
+                boxed_any_from_float(result)
+            },
+            (type_tags::FLOAT, type_tags::BIGINT) => {
+                // Convert BigInt to float (may lose precision for very large values)
+                let big_b = (*b).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let b_str = super::boxed_bigint::bigint_to_string(big_b);
+                let b_float = std::ffi::CStr::from_ptr(b_str)
+                    .to_str()
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+
+                // Free the temporary string
+                free(b_str as *mut c_void);
+
+                if b_float == 0.0 {
+                    // Division by zero
+                    return boxed_any_none();
+                }
+
+                let result = (*a).data.float_val / b_float;
+                boxed_any_from_float(result)
+            },
+            (type_tags::BIGINT, type_tags::FLOAT) => {
+                if (*b).data.float_val == 0.0 {
+                    // Division by zero
+                    return boxed_any_none();
+                }
+
+                // Convert BigInt to float (may lose precision for very large values)
+                let big_a = (*a).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
+                let a_str = super::boxed_bigint::bigint_to_string(big_a);
+                let a_float = std::ffi::CStr::from_ptr(a_str)
+                    .to_str()
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .unwrap_or(0.0);
+
+                // Free the temporary string
+                free(a_str as *mut c_void);
+
+                let result = a_float / (*b).data.float_val;
                 boxed_any_from_float(result)
             },
             _ => {
