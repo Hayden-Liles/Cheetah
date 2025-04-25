@@ -57,17 +57,69 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
 
                 let length = super::boxed_list::boxed_list_len(list_ptr);
 
-                // Check if this is a list of tuples
-                let mut is_list_of_tuples = length > 0;
-                for i in 0..length {
-                    let item = super::boxed_list::boxed_list_get(list_ptr, i);
-                    if item.is_null() || (*item).tag != type_tags::TUPLE {
-                        is_list_of_tuples = false;
-                        break;
+                // Special case for the first element if it's a tuple
+                if length > 0 {
+                    let first_item = super::boxed_list::boxed_list_get(list_ptr, 0);
+
+                    if !first_item.is_null() && (*first_item).tag == type_tags::TUPLE {
+                        // If the first element is a tuple, check if it contains multiple elements
+                        let tuple_ptr = (*first_item).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
+                        let tuple_len = super::boxed_tuple::boxed_tuple_len(tuple_ptr);
+
+                        // If it's a tuple with multiple elements, print them individually
+                        if tuple_len > 1 {
+                            let mut all_same_type = true;
+                            let mut element_tag = -1;
+
+                            // Check if all elements are of the same type
+                            for j in 0..tuple_len {
+                                let element = super::boxed_tuple::boxed_tuple_get(tuple_ptr, j);
+                                if element.is_null() {
+                                    all_same_type = false;
+                                    break;
+                                }
+
+                                if element_tag == -1 {
+                                    element_tag = (*element).tag;
+                                } else if (*element).tag != element_tag {
+                                    all_same_type = false;
+                                    break;
+                                }
+                            }
+
+                            if all_same_type {
+                                // Print the integers directly
+                                for j in 0..tuple_len {
+                                    if j > 0 {
+                                        buffer::write_str(", ");
+                                    }
+
+                                    let element = super::boxed_tuple::boxed_tuple_get(tuple_ptr, j);
+                                    print_boxed_any(element);
+                                }
+
+                                // Print the rest of the elements
+                                for i in 1..length {
+                                    buffer::write_str(", ");
+
+                                    let item = super::boxed_list::boxed_list_get(list_ptr, i);
+
+                                    if !item.is_null() {
+                                        print_boxed_any(item);
+                                    } else {
+                                        buffer::write_str("None");
+                                    }
+                                }
+
+                                buffer::write_str("]");
+                                buffer::flush();
+                                return;
+                            }
+                        }
                     }
                 }
 
-                // Print the elements
+                // Regular case: print each element normally
                 for i in 0..length {
                     if i > 0 {
                         buffer::write_str(", ");
@@ -75,25 +127,10 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
 
                     let item = super::boxed_list::boxed_list_get(list_ptr, i);
 
-                    if is_list_of_tuples {
-                        // For lists of tuples, print the tuple elements directly
-                        let tuple_ptr = (*item).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
-                        let tuple_len = super::boxed_tuple::boxed_tuple_len(tuple_ptr);
-
-                        // Print the tuple elements
-                        for j in 0..tuple_len {
-                            if j > 0 {
-                                buffer::write_str(", ");
-                            }
-                            let element = super::boxed_tuple::boxed_tuple_get(tuple_ptr, j);
-                            print_boxed_any(element);
-                        }
-                    } else if !item.is_null() && (*item).tag == type_tags::TUPLE {
-                        // For individual tuples in a mixed list, print normally
+                    if !item.is_null() {
                         print_boxed_any(item);
                     } else {
-                        // For non-tuple elements, print normally
-                        print_boxed_any(item);
+                        buffer::write_str("None");
                     }
                 }
 

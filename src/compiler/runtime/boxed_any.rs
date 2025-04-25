@@ -136,13 +136,26 @@ pub extern "C" fn boxed_any_free(value: *mut BoxedAny) {
                     free((*value).data.ptr_val);
                 }
             },
-            type_tags::LIST | type_tags::TUPLE => {
-                // For lists and tuples, we need to free the list structure
-                // This will be implemented later when we update the list implementation
+            type_tags::LIST => {
+                // Free the list structure
+                if !(*value).data.ptr_val.is_null() {
+                    let list_ptr = (*value).data.ptr_val as *mut super::boxed_list::BoxedList;
+                    super::boxed_list::boxed_list_free(list_ptr);
+                }
+            },
+            type_tags::TUPLE => {
+                // Free the tuple structure
+                if !(*value).data.ptr_val.is_null() {
+                    let tuple_ptr = (*value).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
+                    super::boxed_tuple::boxed_tuple_free(tuple_ptr);
+                }
             },
             type_tags::DICT => {
-                // For dictionaries, we need to free the dict structure
-                // This will be implemented later when we update the dict implementation
+                // Free the dictionary structure
+                if !(*value).data.ptr_val.is_null() {
+                    let dict_ptr = (*value).data.ptr_val as *mut super::boxed_dict::BoxedDict;
+                    super::boxed_dict::boxed_dict_free(dict_ptr);
+                }
             },
             _ => {
                 // Other types don't have heap-allocated data
@@ -230,12 +243,74 @@ pub extern "C" fn boxed_any_clone(value: *const BoxedAny) -> *mut BoxedAny {
                 if (*value).data.ptr_val.is_null() {
                     boxed_any_from_string(ptr::null())
                 } else {
-                    boxed_any_from_string((*value).data.ptr_val as *const c_char)
+                    // Create a proper deep copy of the string
+                    let c_str = std::ffi::CStr::from_ptr((*value).data.ptr_val as *const c_char);
+                    let len = c_str.to_bytes().len();
+
+                    // Allocate memory for the string (including null terminator)
+                    let str_ptr = malloc(len + 1) as *mut c_char;
+
+                    // Copy the string content
+                    ptr::copy_nonoverlapping((*value).data.ptr_val as *const c_char, str_ptr, len + 1);
+
+                    // Create a new BoxedAny with the copied string
+                    let boxed = malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny;
+                    (*boxed).tag = type_tags::STRING;
+                    (*boxed).data.ptr_val = str_ptr as *mut c_void;
+
+                    boxed
                 }
             },
+            type_tags::LIST => {
+                // Deep clone a list
+                let list_ptr = (*value).data.ptr_val as *mut super::boxed_list::BoxedList;
+                let length = super::boxed_list::boxed_list_len(list_ptr);
+                let new_list = super::boxed_list::boxed_list_with_capacity(length);
+
+                // Clone each element
+                for i in 0..length {
+                    let item = super::boxed_list::boxed_list_get(list_ptr, i);
+                    if !item.is_null() {
+                        let item_clone = boxed_any_clone(item);
+                        super::boxed_list::boxed_list_append(new_list, item_clone);
+                    } else {
+                        super::boxed_list::boxed_list_append(new_list, boxed_any_none());
+                    }
+                }
+
+                super::boxed_list::boxed_any_from_list(new_list)
+            },
+            type_tags::TUPLE => {
+                // Deep clone a tuple
+                let tuple_ptr = (*value).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
+                let new_tuple = super::boxed_tuple::boxed_tuple_clone(tuple_ptr);
+                super::boxed_tuple::boxed_any_from_tuple(new_tuple)
+            },
+            type_tags::DICT => {
+                // Deep clone a dictionary
+                let dict_ptr = (*value).data.ptr_val as *mut super::boxed_dict::BoxedDict;
+                let keys = super::boxed_dict::boxed_dict_keys(dict_ptr);
+                let length = super::boxed_list::boxed_list_len(keys);
+                let new_dict = super::boxed_dict::boxed_dict_with_capacity(length);
+
+                // Clone each key-value pair
+                for i in 0..length {
+                    let key = super::boxed_list::boxed_list_get(keys, i);
+                    if !key.is_null() {
+                        let val = super::boxed_dict::boxed_dict_get(dict_ptr, key);
+                        let key_clone = boxed_any_clone(key);
+                        let val_clone = if !val.is_null() { boxed_any_clone(val) } else { boxed_any_none() };
+                        super::boxed_dict::boxed_dict_set(new_dict, key_clone, val_clone);
+                    }
+                }
+
+                // Free the keys list
+                super::boxed_list::boxed_list_free(keys);
+
+                super::boxed_dict::boxed_any_from_dict(new_dict)
+            },
             _ => {
-                // For other types, we'll implement deep cloning later
-                // For now, just create a shallow copy
+                // For other types, create a shallow copy
                 let boxed = malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny;
                 ptr::copy_nonoverlapping(value, boxed, 1);
                 boxed
@@ -460,15 +535,25 @@ pub extern "C" fn boxed_any_equals(a: *const BoxedAny, b: *const BoxedAny) -> bo
                 (type_tags::FLOAT, type_tags::INT) => {
                     return (*a).data.float_val == (*b).data.int_val as f64;
                 },
-                _ => return false,
+                _ => {
+                    return false;
+                },
             }
         }
 
         match (*a).tag {
-            type_tags::INT => (*a).data.int_val == (*b).data.int_val,
-            type_tags::FLOAT => (*a).data.float_val == (*b).data.float_val,
-            type_tags::BOOL => (*a).data.bool_val == (*b).data.bool_val,
-            type_tags::NONE => true, // None equals None
+            type_tags::INT => {
+                (*a).data.int_val == (*b).data.int_val
+            },
+            type_tags::FLOAT => {
+                (*a).data.float_val == (*b).data.float_val
+            },
+            type_tags::BOOL => {
+                (*a).data.bool_val == (*b).data.bool_val
+            },
+            type_tags::NONE => {
+                true // None equals None
+            },
             type_tags::STRING => {
                 if (*a).data.ptr_val.is_null() && (*b).data.ptr_val.is_null() {
                     true
@@ -477,7 +562,9 @@ pub extern "C" fn boxed_any_equals(a: *const BoxedAny, b: *const BoxedAny) -> bo
                 } else {
                     let str_a = CStr::from_ptr((*a).data.ptr_val as *const c_char);
                     let str_b = CStr::from_ptr((*b).data.ptr_val as *const c_char);
-                    str_a.to_bytes() == str_b.to_bytes()
+                    let a_bytes = str_a.to_bytes();
+                    let b_bytes = str_b.to_bytes();
+                    a_bytes == b_bytes
                 }
             },
             _ => {

@@ -1195,6 +1195,34 @@ impl Type {
                     })
                 }
             }
+            Type::List(elem_type) => match member {
+                "append" => {
+                    // append takes an element and returns None
+                    Ok(Type::Function {
+                        param_types: vec![*elem_type.clone()],
+                        param_names: vec!["item".to_string()],
+                        has_varargs: false,
+                        has_kwargs: false,
+                        default_values: vec![false],
+                        return_type: Box::new(Type::None),
+                    })
+                }
+                "len" => {
+                    // len takes no arguments and returns an int
+                    Ok(Type::Function {
+                        param_types: vec![],
+                        param_names: vec![],
+                        has_varargs: false,
+                        has_kwargs: false,
+                        default_values: vec![],
+                        return_type: Box::new(Type::Int),
+                    })
+                }
+                _ => Err(TypeError::NotAClass {
+                    expr_type: self.clone(),
+                    member: member.to_string(),
+                }),
+            },
             Type::Dict(key_type, value_type) => match member {
                 "keys" => {
                     let return_type = Type::List(key_type.clone());
@@ -1233,10 +1261,60 @@ impl Type {
                         return_type: Box::new(return_type),
                     })
                 }
+                "get" => {
+                    // get takes a key and an optional default value
+                    let mut param_types = vec![*key_type.clone()];
+                    let mut param_names = vec!["key".to_string()];
+                    let mut default_values = vec![false];
+
+                    // Add the optional default parameter
+                    param_types.push(*value_type.clone());
+                    param_names.push("default".to_string());
+                    default_values.push(true);
+
+                    Ok(Type::Function {
+                        param_types,
+                        param_names,
+                        has_varargs: false,
+                        has_kwargs: false,
+                        default_values,
+                        return_type: value_type.clone(),
+                    })
+                }
                 _ => Err(TypeError::NotAClass {
                     expr_type: self.clone(),
                     member: member.to_string(),
                 }),
+            },
+            Type::String => match member {
+                "strip" => {
+                    // strip takes no arguments and returns a string
+                    Ok(Type::Function {
+                        param_types: vec![],
+                        param_names: vec![],
+                        has_varargs: false,
+                        has_kwargs: false,
+                        default_values: vec![],
+                        return_type: Box::new(Type::String),
+                    })
+                }
+                _ => Err(TypeError::NotAClass {
+                    expr_type: self.clone(),
+                    member: member.to_string(),
+                }),
+            },
+            Type::Any => {
+                // For BoxedAny values, we'll assume the method exists and returns Any
+                // The actual method call will be handled at runtime
+                match member {
+                    "append" | "len" | "keys" | "values" | "items" | "get" | "strip" => {
+                        Ok(Type::function(vec![Type::Any], Type::Any))
+                    }
+                    _ => Err(TypeError::NotAClass {
+                        expr_type: self.clone(),
+                        member: member.to_string(),
+                    }),
+                }
             },
             _ => Err(TypeError::NotAClass {
                 expr_type: self.clone(),

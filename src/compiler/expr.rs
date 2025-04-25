@@ -4738,6 +4738,17 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 _ => Err(format!("Unknown method '{}' for unknown type", attr)),
             },
 
+            Type::Any => {
+                // For BoxedAny values, we'll create a placeholder function that will be called later
+                // The actual method call will be handled in the ProcessMethodCall task
+
+                // Create a placeholder for the function type
+                let fn_type = Type::function(vec![Type::Any], Type::Any);
+                let placeholder = self.llvm_context.i32_type().const_int(0, false);
+
+                Ok((placeholder.into(), fn_type))
+            },
+
             _ => {
                 println!("DEBUG: Type {:?} does not support attribute access for method {}", value_type, attr);
                 Err(format!(

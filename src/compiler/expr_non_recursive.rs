@@ -74,6 +74,11 @@ enum ExprTask<'a> {
     ProcessAttribute {
         attr: String,
     },
+
+    ProcessMethodCall {
+        method_name: String,
+        args_count: usize,
+    },
 }
 
 // Result of an expression evaluation
@@ -362,6 +367,29 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     }
 
                     Expr::Call { func, args, .. } => {
+                        // Check if this is a method call (e.g., obj.method())
+                        if let Expr::Attribute { value, attr, .. } = func.as_ref() {
+                            // This is a method call, so we need to evaluate the object first,
+                            // then the arguments, and finally call the method
+                            let args_count = args.len();
+
+                            // Push the method call task
+                            work_stack.push_front(ExprTask::ProcessMethodCall {
+                                method_name: attr.clone(),
+                                args_count,
+                            });
+
+                            // Push the arguments in reverse order
+                            for arg in args.iter().rev() {
+                                work_stack.push_front(ExprTask::Evaluate(arg));
+                            }
+
+                            // Push the object
+                            work_stack.push_front(ExprTask::Evaluate(value));
+
+                            continue;
+                        }
+
                         // Check if this is a call to a built-in function like print
                         if let Expr::Name { id, .. } = func.as_ref() {
                             if id == "print" {
@@ -1209,6 +1237,187 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     result_stack.push(ExprResult {
                         value: attr_val,
                         ty: attr_type,
+                    });
+                }
+                ExprTask::ProcessMethodCall { method_name, args_count } => {
+                    if result_stack.len() < args_count + 1 {
+                        return Err(format!(
+                            "Not enough arguments for method call: expected {} arguments plus object, got {}",
+                            args_count,
+                            result_stack.len()
+                        ));
+                    }
+
+                    // Get the arguments
+                    let mut arg_values = Vec::with_capacity(args_count);
+
+                    for _ in 0..args_count {
+                        let idx = result_stack.len() - 1;
+                        let arg = result_stack.remove(idx);
+
+                        // Convert primitive types to BoxedAny if needed
+                        let boxed_arg = match arg.ty {
+                            Type::Int => {
+                                // Convert Int to BoxedAny
+                                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
+                                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
+
+                                let call_site_value = self.builder.build_call(
+                                    boxed_any_from_int_fn,
+                                    &[arg.value.into()],
+                                    "int_to_boxed"
+                                ).unwrap();
+
+                                call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to convert Int to BoxedAny".to_string())?
+                            },
+                            Type::Float => {
+                                // Convert Float to BoxedAny
+                                let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
+                                    .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
+
+                                let call_site_value = self.builder.build_call(
+                                    boxed_any_from_float_fn,
+                                    &[arg.value.into()],
+                                    "float_to_boxed"
+                                ).unwrap();
+
+                                call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to convert Float to BoxedAny".to_string())?
+                            },
+                            Type::String => {
+                                // Convert String to BoxedAny
+                                let boxed_any_from_string_fn = self.module.get_function("boxed_any_from_string")
+                                    .ok_or_else(|| "boxed_any_from_string function not found".to_string())?;
+
+                                let call_site_value = self.builder.build_call(
+                                    boxed_any_from_string_fn,
+                                    &[arg.value.into()],
+                                    "string_to_boxed"
+                                ).unwrap();
+
+                                call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to convert String to BoxedAny".to_string())?
+                            },
+                            Type::Bool => {
+                                // Convert Bool to BoxedAny
+                                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
+                                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
+
+                                let call_site_value = self.builder.build_call(
+                                    boxed_any_from_bool_fn,
+                                    &[arg.value.into()],
+                                    "bool_to_boxed"
+                                ).unwrap();
+
+                                call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to convert Bool to BoxedAny".to_string())?
+                            },
+                            Type::None => {
+                                // Convert None to BoxedAny
+                                let boxed_any_none_fn = self.module.get_function("boxed_any_none")
+                                    .ok_or_else(|| "boxed_any_none function not found".to_string())?;
+
+                                let call_site_value = self.builder.build_call(
+                                    boxed_any_none_fn,
+                                    &[],
+                                    "none_to_boxed"
+                                ).unwrap();
+
+                                call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to convert None to BoxedAny".to_string())?
+                            },
+                            _ => arg.value,
+                        };
+
+                        arg_values.push(boxed_arg);
+                    }
+
+                    // Reverse the arguments to restore left-to-right order
+                    arg_values.reverse();
+
+                    // Get the object
+                    let obj_idx = result_stack.len() - 1;
+                    let obj = result_stack.remove(obj_idx);
+
+                    // Make sure the object is a BoxedAny pointer
+                    if !obj.value.is_pointer_value() {
+                        return Err("Expected pointer value for object in method call".to_string());
+                    }
+
+                    // Create a method name string constant
+                    let method_name_str = self.llvm_context.const_string(method_name.as_bytes(), true);
+                    let unique_id = self.get_unique_id();
+                    let method_name_global = self.module.add_global(
+                        method_name_str.get_type(),
+                        None,
+                        &format!("method_name_{}", unique_id)
+                    );
+                    method_name_global.set_constant(true);
+                    method_name_global.set_initializer(&method_name_str);
+                    let method_name_ptr = self.builder.build_pointer_cast(
+                        method_name_global.as_pointer_value(),
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                        "method_name_ptr"
+                    ).unwrap();
+
+                    // Create an array of BoxedAny pointers for the arguments
+                    let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                    let args_array = if args_count > 0 {
+                        // Allocate space for the arguments
+                        self.builder.build_array_alloca(
+                            ptr_type,
+                            self.llvm_context.i32_type().const_int(args_count as u64, false),
+                            "args_array"
+                        ).unwrap()
+                    } else {
+                        // If there are no arguments, just create a null pointer
+                        ptr_type.const_null()
+                    };
+
+                    // Store each argument in the array
+                    for (i, arg) in arg_values.iter().enumerate() {
+                        let arg_ptr = unsafe {
+                            self.builder.build_gep(
+                                ptr_type,
+                                args_array,
+                                &[self.llvm_context.i32_type().const_int(i as u64, false)],
+                                &format!("arg_ptr_{}", i)
+                            ).unwrap()
+                        };
+                        self.builder.build_store(arg_ptr, *arg).unwrap();
+                    }
+
+                    // Cast the array to a pointer to pointer
+                    let args_ptr = self.builder.build_pointer_cast(
+                        args_array,
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                        "args_ptr"
+                    ).unwrap();
+
+                    // Get the boxed_any_call_method function
+                    let boxed_any_call_method_fn = self.module.get_function("boxed_any_call_method")
+                        .ok_or_else(|| "boxed_any_call_method function not found".to_string())?;
+
+                    // Call boxed_any_call_method
+                    let call_site_value = self.builder.build_call(
+                        boxed_any_call_method_fn,
+                        &[
+                            obj.value.into(),
+                            method_name_ptr.into(),
+                            args_ptr.into(),
+                            self.llvm_context.i32_type().const_int(args_count as u64, false).into(),
+                        ],
+                        &format!("call_method_{}", method_name)
+                    ).unwrap();
+
+                    let result = call_site_value.try_as_basic_value().left()
+                        .ok_or_else(|| format!("Failed to call method {}", method_name))?;
+
+                    // Push the result onto the stack
+                    result_stack.push(ExprResult {
+                        value: result,
+                        ty: Type::Any,
                     });
                 }
             }
