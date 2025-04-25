@@ -69,10 +69,18 @@ pub extern "C" fn boxed_list_append(list_ptr: *mut BoxedList, value: *mut BoxedA
 pub extern "C" fn boxed_list_get(list_ptr: *mut BoxedList, index: i64) -> *mut BoxedAny {
     unsafe {
         let list = &*list_ptr;
-        if index < 0 || index >= list.length {
+
+        // Handle negative indices (Python-style)
+        let adjusted_index = if index < 0 {
+            list.length + index
+        } else {
+            index
+        };
+
+        if adjusted_index < 0 || adjusted_index >= list.length {
             ptr::null_mut()
         } else {
-            *list.data.add(index as usize)
+            *list.data.add(adjusted_index as usize)
         }
     }
 }
@@ -81,15 +89,23 @@ pub extern "C" fn boxed_list_get(list_ptr: *mut BoxedList, index: i64) -> *mut B
 pub extern "C" fn boxed_list_set(list_ptr: *mut BoxedList, index: i64, value: *mut BoxedAny) {
     unsafe {
         let list = &mut *list_ptr;
-        if index >= 0 && index < list.length {
+
+        // Handle negative indices (Python-style)
+        let adjusted_index = if index < 0 {
+            list.length + index
+        } else {
+            index
+        };
+
+        if adjusted_index >= 0 && adjusted_index < list.length {
             // Free the old value if it exists
-            let old_value = *list.data.add(index as usize);
+            let old_value = *list.data.add(adjusted_index as usize);
             if !old_value.is_null() {
                 super::boxed_any::boxed_any_free(old_value);
             }
 
             // Set the new value
-            *list.data.add(index as usize) = value;
+            *list.data.add(adjusted_index as usize) = value;
         }
     }
 }

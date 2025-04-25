@@ -1696,7 +1696,8 @@ impl ExprParser for Parser {
                             column,
                         })
                     } else {
-                        let first_expr = self.parse_expression()?;
+                        // Use parse_or_test instead of parse_expression to avoid creating tuples
+                        let first_expr = self.parse_or_test()?;
 
                         if self.match_token(TokenType::For) {
                             return self.with_context(ParserContext::Comprehension, |this| {
@@ -1819,12 +1820,21 @@ impl ExprParser for Parser {
                                 })
                             });
                         } else {
+                            // For list displays, we need to handle each element individually
+                            // to avoid creating a tuple when commas are present
                             let mut elts = vec![Box::new(first_expr)];
-                            if self.match_token(TokenType::Comma) {
-                                if !self.check(TokenType::RightBracket) {
-                                    elts.extend(self.parse_expr_list()?);
+
+                            // If there's a comma, parse additional elements
+                            while self.match_token(TokenType::Comma) {
+                                // Allow trailing comma
+                                if self.check(TokenType::RightBracket) {
+                                    break;
                                 }
+
+                                // Parse the next element
+                                elts.push(Box::new(self.parse_or_test()?));
                             }
+
                             self.consume(TokenType::RightBracket, "]")?;
                             Ok(Expr::List {
                                 elts,

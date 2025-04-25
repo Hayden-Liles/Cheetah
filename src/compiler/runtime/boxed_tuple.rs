@@ -92,11 +92,18 @@ pub extern "C" fn boxed_tuple_get(tuple: *mut BoxedTuple, index: i64) -> *mut Bo
     }
 
     unsafe {
-        if index < 0 || index >= (*tuple).length {
+        // Handle negative indices (Python-style)
+        let adjusted_index = if index < 0 {
+            (*tuple).length + index
+        } else {
+            index
+        };
+
+        if adjusted_index < 0 || adjusted_index >= (*tuple).length {
             return super::boxed_any::boxed_any_none();
         }
 
-        let value = *(*tuple).data.add(index as usize);
+        let value = *(*tuple).data.add(adjusted_index as usize);
         if value.is_null() {
             super::boxed_any::boxed_any_none()
         } else {
@@ -113,18 +120,25 @@ pub extern "C" fn boxed_tuple_set(tuple: *mut BoxedTuple, index: i64, value: *mu
     }
 
     unsafe {
-        if index < 0 || index >= (*tuple).length {
+        // Handle negative indices (Python-style)
+        let adjusted_index = if index < 0 {
+            (*tuple).length + index
+        } else {
+            index
+        };
+
+        if adjusted_index < 0 || adjusted_index >= (*tuple).length {
             return;
         }
 
         // Free the old value if it exists
-        let old_value = *(*tuple).data.add(index as usize);
+        let old_value = *(*tuple).data.add(adjusted_index as usize);
         if !old_value.is_null() {
             super::boxed_any::boxed_any_free(old_value);
         }
 
         // Set the new value
-        *(*tuple).data.add(index as usize) = value;
+        *(*tuple).data.add(adjusted_index as usize) = value;
     }
 }
 
