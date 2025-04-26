@@ -1978,6 +1978,13 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                     let current_block = self.builder.get_insert_block();
                     self.builder.position_at_end(basic_block);
 
+                    // Only reset the arena for the main function (top-level entry point)
+                    if name == "main" {
+                        if let Some(arena_reset_fn) = self.module.get_function("arena_reset") {
+                            self.builder.build_call(arena_reset_fn, &[], "reset_arena").unwrap();
+                        }
+                    }
+
                     // Push a new scope for the function
                     self.push_scope(true, false, false);
 

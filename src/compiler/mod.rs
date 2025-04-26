@@ -712,6 +712,13 @@ impl<'ctx> Compiler<'ctx> {
 
         self.context.builder.position_at_end(basic_block);
 
+        // Only reset the arena for the main function (top-level entry point)
+        if name == "main" {
+            if let Some(arena_reset_fn) = self.context.module.get_function("arena_reset") {
+                self.context.builder.build_call(arena_reset_fn, &[], "reset_arena").unwrap();
+            }
+        }
+
         self.context.push_scope(true, false, false);
 
         let mut local_vars = HashMap::new();
