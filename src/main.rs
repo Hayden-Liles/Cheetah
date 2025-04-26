@@ -21,7 +21,8 @@ use cheetah::visitor::Visitor;
 use libc;
 
 use inkwell::context;
-use inkwell::targets::{InitializationConfig, Target};
+use inkwell::passes::PassBuilderOptions;
+use inkwell::targets::{InitializationConfig, CodeModel, RelocMode, Target, TargetMachine};
 
 #[derive(ClapParser)]
 #[command(name = "cheetah")]
@@ -1192,27 +1193,23 @@ fn format_token_for_repl(token: &Token, use_color: bool) -> String {
 
 /// Apply optimization passes to the LLVM module to improve performance
 fn apply_optimization_passes(module: &inkwell::module::Module<'_>) {
-    println!(
-        "{}",
-        "Using aggressive optimization level for improved performance".bright_green()
-    );
-    println!("{}", "Stack overflow prevention enabled".bright_green());
+    // ❶ Create (or reuse) a TargetMachine – required by run_passes()
+    let triple = TargetMachine::get_default_triple();
+    let target  = Target::from_triple(&triple).expect("valid target");
+    let tm      = target.create_target_machine(
+                      &triple,                // CPU
+                      "",                     // features
+                      "",                     // features string
+                      inkwell::OptimizationLevel::Aggressive,
+                      RelocMode::Default,
+                      CodeModel::Default,
+                  ).expect("target machine");
 
-    // Create a pass manager for the module
-    let pass_manager = inkwell::passes::PassManager::create(());
-
-    // Run the pass manager on the module
-    pass_manager.run_on(module);
-
-    // Note: The optimization level is set when creating the execution engine or target machine
-    // We're using OptimizationLevel::Aggressive (O3) in the relevant places in the code
-    // This automatically enables the following passes:
-    // - LoopUnrollPass
-    // - LoopVectorizePass
-    // - SLPVectorizePass
-    // - LICMPass (Loop-Invariant Code Motion)
-
-    println!("{}", "Applied optimization passes including: LoopUnroll, LoopVectorize, SLPVectorize, LICM".bright_green());
+    // ❷ Use the new pass-manager’s default<O3> pipeline
+    let opts = PassBuilderOptions::create();   // tweak flags if desired
+    module
+        .run_passes("default<O3>", &tm, opts)  // whole O3 pipeline
+        .expect("LLVM optimisation pipeline failed");
 }
 
 fn register_runtime_functions(
