@@ -44,43 +44,6 @@ Current focus is on module support, extending built-in functions, and improving 
 ## Current Focus (High Priority)
 
 ### Core Language Features
-1. [ ] Implement a single blessed value layout
-   - [ ] Create BoxedAny struct with type tags
-     - [ ] Define BoxedAny struct in src/compiler/runtime/boxed_any.rs
-     - [ ] Define type tag constants (INT, FLOAT, BOOL, etc.)
-     - [ ] Implement ValueData union for storing different value types
-   - [ ] Implement BoxedAny creation functions
-     - [ ] boxed_any_from_int, boxed_any_from_float, boxed_any_from_bool, etc.
-     - [ ] Implement conversion functions between different types
-     - [ ] Add memory management functions (free, clone, etc.)
-   - [ ] Implement operations on BoxedAny values
-     - [ ] Arithmetic operations (add, subtract, multiply, divide)
-     - [ ] Comparison operations (equals, less than, greater than)
-     - [ ] Logical operations (and, or, not)
-     - [ ] Type conversion operations
-   - [ ] Update collection types to use BoxedAny
-     - [ ] Modify List to store BoxedAny pointers
-     - [ ] Update Dict and DictEntry to use BoxedAny
-     - [ ] Update Tuple implementation
-   - [ ] Update type system
-     - [ ] Modify Type::to_llvm_type to work with BoxedAny
-     - [ ] Update is_reference_type and other type-related functions
-   - [ ] Update code generation
-     - [ ] Modify compile_expr to create BoxedAny values
-     - [ ] Update binary operations to use BoxedAny operations
-     - [ ] Update variable access and assignment
-   - [ ] Update runtime operations
-     - [ ] Update print functions to handle BoxedAny values
-     - [ ] Update string operations
-     - [ ] Update list and dictionary operations
-   - [ ] Add JIT support for BoxedAny
-     - [ ] Register BoxedAny functions with JIT execution engine
-     - [ ] Update JIT runtime functions
-   - [ ] Add tests for BoxedAny implementation
-     - [ ] Test basic operations
-     - [ ] Test type conversions
-     - [ ] Test collections with mixed types
-     - [ ] Test error handling
 
 2. [ ] Add support for modules and imports
    - [ ] Implement basic module loading
