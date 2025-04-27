@@ -1206,7 +1206,6 @@ fn register_runtime_functions(
         }
     }
 
-    // Original range functions
     if let Some(function) = module.get_function("range_1") {
         {
             engine.add_global_mapping(&function, range::range_1 as usize);
@@ -1222,25 +1221,6 @@ fn register_runtime_functions(
     if let Some(function) = module.get_function("range_3") {
         {
             engine.add_global_mapping(&function, range::range_3 as usize);
-        }
-    }
-
-    // BoxedAny-compatible range functions
-    if let Some(function) = module.get_function("boxed_range_1") {
-        {
-            engine.add_global_mapping(&function, range::boxed_range_1 as usize);
-        }
-    }
-
-    if let Some(function) = module.get_function("boxed_range_2") {
-        {
-            engine.add_global_mapping(&function, range::boxed_range_2 as usize);
-        }
-    }
-
-    if let Some(function) = module.get_function("boxed_range_3") {
-        {
-            engine.add_global_mapping(&function, range::boxed_range_3 as usize);
         }
     }
 
@@ -1609,72 +1589,9 @@ fn register_boxed_any_jit_functions(
         engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_divide as usize);
     }
 
-    // Additional arithmetic operations
-    if let Some(function) = module.get_function("boxed_any_floor_div") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_floor_div as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_modulo") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_modulo as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_power") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_power as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_negate") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_negate as usize);
-    }
-
-    // Bitwise operations
-    if let Some(function) = module.get_function("boxed_any_bit_or") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_bit_or as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_bit_and") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_bit_and as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_bit_xor") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_bit_xor as usize);
-    }
-
-    // Shift operations
-    if let Some(function) = module.get_function("boxed_any_lshift") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_lshift as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_rshift") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_rshift as usize);
-    }
-
     // Comparison operations
     if let Some(function) = module.get_function("boxed_any_equals") {
         engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_equals as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_not_equals") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_not_equals as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_less_than") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_less_than as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_less_than_or_equal") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_less_than_or_equal as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_greater_than") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_greater_than as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_greater_than_or_equal") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_greater_than_or_equal as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_from_comparison") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_from_comparison as usize);
     }
 
     // Logical operations
@@ -1688,19 +1605,6 @@ fn register_boxed_any_jit_functions(
 
     if let Some(function) = module.get_function("boxed_any_not") {
         engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_not as usize);
-    }
-
-    // Container operations
-    if let Some(function) = module.get_function("boxed_any_get_item") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_get_item as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_set_item") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_set_item as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_slice") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any_ops::boxed_any_slice as usize);
     }
 
     Ok(())

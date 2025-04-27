@@ -18,7 +18,7 @@ pub fn compile_source(source: &str) -> Result<String, String> {
     // Non-recursive implementations are always used
 
     // Compile the AST
-    match compiler.compile_module_without_type_checking(&ast) {
+    match compiler.compile_module(&ast) {
         Ok(_) => Ok(compiler.get_ir()),
         Err(e) => {
             Err(format!("Compilation error: {}", e))
@@ -149,10 +149,17 @@ result = sum_tuple(t)
 
 #[test]
 fn test_tuple_subscript_out_of_bounds() {
-    // This test is now passing because we've fixed the issue
-    // The compiler now correctly checks for out-of-bounds tuple indices
-    // and raises an error when an index is out of bounds
-    assert!(true);
+    let source = r#"
+# Create a tuple
+t = (1, 2, 3)
+
+# Access an out-of-bounds index
+value = t[3]
+"#;
+
+    let result = compile_source(source);
+    assert!(result.is_err(), "Expected error for out-of-bounds tuple subscript");
+    assert!(result.unwrap_err().contains("out of range"), "Error message should mention out of range");
 }
 
 #[test]

@@ -441,178 +441,6 @@ pub extern "C" fn boxed_any_from_comparison(result: bool) -> *mut BoxedAny {
     boxed_any_from_bool(result)
 }
 
-/// Negate a BoxedAny value (unary minus)
-#[no_mangle]
-pub extern "C" fn boxed_any_negate(value: *const BoxedAny) -> *mut BoxedAny {
-    if value.is_null() {
-        return boxed_any_none();
-    }
-
-    unsafe {
-        match (*value).tag {
-            type_tags::INT => {
-                let result = -(*value).data.int_val;
-                boxed_any_from_int(result)
-            },
-            type_tags::FLOAT => {
-                let result = -(*value).data.float_val;
-                boxed_any_from_float(result)
-            },
-            _ => {
-                // Type error - can only negate numeric types
-                boxed_any_none()
-            }
-        }
-    }
-}
-
-/// Get an item from a container (list, dict, etc.)
-#[no_mangle]
-pub extern "C" fn boxed_any_get_item(container: *const BoxedAny, key: *const BoxedAny) -> *mut BoxedAny {
-    if container.is_null() || key.is_null() {
-        return super::boxed_any::boxed_any_none();
-    }
-
-    unsafe {
-        match (*container).tag {
-            type_tags::LIST => {
-                // For lists, we expect the key to be an integer
-                if (*key).tag == type_tags::INT {
-                    let list_ptr = (*container).data.ptr_val as *mut super::boxed_list::BoxedList;
-                    let index = (*key).data.int_val;
-
-                    // Get the item from the list
-                    let item = super::boxed_list::boxed_list_get(list_ptr, index);
-                    if item.is_null() {
-                        return super::boxed_any::boxed_any_none();
-                    }
-                    return super::boxed_any::boxed_any_clone(item);
-                }
-            },
-            type_tags::DICT => {
-                // For dictionaries, the key can be any type
-                let dict_ptr = (*container).data.ptr_val as *mut super::boxed_dict::BoxedDict;
-
-                // Get the item from the dictionary
-                let item = super::boxed_dict::boxed_dict_get(dict_ptr, key as *mut BoxedAny);
-                if !item.is_null() {
-                    return super::boxed_any::boxed_any_clone(item);
-                }
-            },
-            type_tags::TUPLE => {
-                // For tuples, we expect the key to be an integer
-                if (*key).tag == type_tags::INT {
-                    let tuple_ptr = (*container).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
-                    let index = (*key).data.int_val;
-
-                    // Get the item from the tuple
-                    let item = super::boxed_tuple::boxed_tuple_get(tuple_ptr, index);
-                    if !item.is_null() {
-                        return super::boxed_any::boxed_any_clone(item);
-                    }
-                }
-            },
-            _ => {
-                // Other types don't support item access
-                // We could print an error message here, but for now we'll just return None
-            }
-        }
-        super::boxed_any::boxed_any_none()
-    }
-}
-
-/// Get a slice of a container (list, string, etc.)
-#[no_mangle]
-pub extern "C" fn boxed_any_slice(container: *const BoxedAny, start: *const BoxedAny, end: *const BoxedAny, step: *const BoxedAny) -> *mut BoxedAny {
-    if container.is_null() {
-        return super::boxed_any::boxed_any_none();
-    }
-
-    // Default values for start, end, and step
-    let start_val = if start.is_null() { 0 } else { super::boxed_any::boxed_any_to_int(start) };
-    let end_val = if end.is_null() { i64::MAX } else { super::boxed_any::boxed_any_to_int(end) };
-    let step_val = if step.is_null() { 1 } else { super::boxed_any::boxed_any_to_int(step) };
-
-    // Step cannot be zero
-    if step_val == 0 {
-        return super::boxed_any::boxed_any_none();
-    }
-
-    unsafe {
-        match (*container).tag {
-            type_tags::LIST => {
-                let list_ptr = (*container).data.ptr_val as *mut super::boxed_list::BoxedList;
-                let list_len = super::boxed_list::boxed_list_len(list_ptr);
-
-                // Adjust negative indices
-                let adjusted_start = if start_val < 0 { list_len + start_val } else { start_val };
-                let adjusted_end = if end_val < 0 { list_len + end_val } else { end_val };
-
-                // Clamp indices to valid range
-                let clamped_start = adjusted_start.clamp(0, list_len);
-                let clamped_end = adjusted_end.clamp(0, list_len);
-
-                // Create a new list for the slice
-                let result_list = super::boxed_list::boxed_list_new();
-
-                // Copy elements to the new list
-                let mut i = clamped_start;
-                while (step_val > 0 && i < clamped_end) || (step_val < 0 && i > clamped_end) {
-                    let item = super::boxed_list::boxed_list_get(list_ptr, i);
-                    if !item.is_null() {
-                        let item_clone = super::boxed_any::boxed_any_clone(item);
-                        super::boxed_list::boxed_list_append(result_list, item_clone);
-                    }
-                    i += step_val;
-                }
-
-                // Create a BoxedAny from the list
-                let boxed_result = super::boxed_list::boxed_any_from_list(result_list);
-                return boxed_result;
-            },
-            type_tags::STRING => {
-                let str_ptr = (*container).data.ptr_val as *const std::os::raw::c_char;
-                if str_ptr.is_null() {
-                    return super::boxed_any::boxed_any_from_string(std::ptr::null());
-                }
-
-                let c_str = std::ffi::CStr::from_ptr(str_ptr);
-                let str_len = c_str.to_bytes().len() as i64;
-
-                // Adjust negative indices
-                let adjusted_start = if start_val < 0 { str_len + start_val } else { start_val };
-                let adjusted_end = if end_val < 0 { str_len + end_val } else { end_val };
-
-                // Clamp indices to valid range
-                let clamped_start = adjusted_start.clamp(0, str_len);
-                let clamped_end = adjusted_end.clamp(0, str_len);
-
-                // Get the string slice
-                let bytes = c_str.to_bytes();
-                let mut result = String::new();
-
-                // Copy characters to the new string
-                let mut i = clamped_start;
-                while (step_val > 0 && i < clamped_end) || (step_val < 0 && i > clamped_end) {
-                    if i >= 0 && i < str_len {
-                        result.push(bytes[i as usize] as char);
-                    }
-                    i += step_val;
-                }
-
-                // Create a BoxedAny from the string
-                let c_result = std::ffi::CString::new(result).unwrap();
-                let boxed_result = super::boxed_any::boxed_any_from_string(c_result.as_ptr());
-                return boxed_result;
-            },
-            _ => {
-                // Other types don't support slicing
-                return super::boxed_any::boxed_any_none();
-            }
-        }
-    }
-}
-
 /// Set an item in a container (list, dict, etc.)
 #[no_mangle]
 pub extern "C" fn boxed_any_set_item(container: *mut BoxedAny, key: *mut BoxedAny, value: *mut BoxedAny) {
@@ -645,19 +473,6 @@ pub extern "C" fn boxed_any_set_item(container: *mut BoxedAny, key: *mut BoxedAn
 
                 // Set the item in the dictionary
                 super::boxed_dict::boxed_dict_set(dict_ptr, key_clone, value_clone);
-            },
-            type_tags::TUPLE => {
-                // For tuples, we expect the key to be an integer
-                if (*key).tag == type_tags::INT {
-                    let tuple_ptr = (*container).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
-                    let index = (*key).data.int_val;
-
-                    // Clone the value to avoid double-free issues
-                    let value_clone = super::boxed_any::boxed_any_clone(value);
-
-                    // Set the item in the tuple
-                    super::boxed_tuple::boxed_tuple_set(tuple_ptr, index, value_clone);
-                }
             },
             _ => {
                 // Other types don't support item assignment
@@ -701,18 +516,6 @@ pub fn register_boxed_any_ops_functions<'ctx>(
         false,
     );
 
-    // Function type for getting an item: (BoxedAny*, BoxedAny*) -> BoxedAny*
-    let get_item_fn_type = boxed_any_ptr_type.fn_type(
-        &[boxed_any_ptr_type.into(), boxed_any_ptr_type.into()],
-        false,
-    );
-
-    // Function type for slicing: (BoxedAny*, BoxedAny*, BoxedAny*, BoxedAny*) -> BoxedAny*
-    let slice_fn_type = boxed_any_ptr_type.fn_type(
-        &[boxed_any_ptr_type.into(), boxed_any_ptr_type.into(), boxed_any_ptr_type.into(), boxed_any_ptr_type.into()],
-        false,
-    );
-
     // Register floor division function
     module.add_function("boxed_any_floor_div", binary_op_fn_type, None);
 
@@ -741,21 +544,6 @@ pub fn register_boxed_any_ops_functions<'ctx>(
     // Register function to create a BoxedAny from a comparison result
     module.add_function("boxed_any_from_comparison", from_comparison_fn_type, None);
 
-    // Function type for unary operations: (BoxedAny*) -> BoxedAny*
-    let unary_op_fn_type = boxed_any_ptr_type.fn_type(
-        &[boxed_any_ptr_type.into()],
-        false,
-    );
-
-    // Register negate function
-    module.add_function("boxed_any_negate", unary_op_fn_type, None);
-
-    // Register function to get an item from a container
-    module.add_function("boxed_any_get_item", get_item_fn_type, None);
-
     // Register function to set an item in a container
     module.add_function("boxed_any_set_item", set_item_fn_type, None);
-
-    // Register function to slice a container
-    module.add_function("boxed_any_slice", slice_fn_type, None);
 }

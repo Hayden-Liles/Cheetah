@@ -462,41 +462,21 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
 
                     let (result_value, result_type) = match op {
                         UnaryOperator::Not => {
-                            match operand_result.ty {
-                                Type::Any => {
-                                    // For Any type, use boxed_any_not function
-                                    let boxed_any_not_fn = self.module.get_function("boxed_any_not")
-                                        .ok_or_else(|| "boxed_any_not function not found".to_string())?;
+                            let bool_val = if !matches!(operand_result.ty, Type::Bool) {
+                                self.convert_type(
+                                    operand_result.value,
+                                    &operand_result.ty,
+                                    &Type::Bool,
+                                )?
+                            } else {
+                                operand_result.value
+                            };
 
-                                    let call_site_value = self.builder.build_call(
-                                        boxed_any_not_fn,
-                                        &[operand_result.value.into()],
-                                        "boxed_not_result"
-                                    ).unwrap();
-
-                                    let result = call_site_value.try_as_basic_value().left()
-                                        .ok_or_else(|| "Failed to negate BoxedAny value".to_string())?;
-
-                                    (result, Type::Any)
-                                },
-                                _ => {
-                                    let bool_val = if !matches!(operand_result.ty, Type::Bool) {
-                                        self.convert_type(
-                                            operand_result.value,
-                                            &operand_result.ty,
-                                            &Type::Bool,
-                                        )?
-                                    } else {
-                                        operand_result.value
-                                    };
-
-                                    let result = self
-                                        .builder
-                                        .build_not(bool_val.into_int_value(), "not")
-                                        .unwrap();
-                                    (result.into(), Type::Bool)
-                                }
-                            }
+                            let result = self
+                                .builder
+                                .build_not(bool_val.into_int_value(), "not")
+                                .unwrap();
+                            (result.into(), Type::Bool)
                         }
                         UnaryOperator::USub => match operand_result.ty {
                             Type::Int => {
@@ -509,22 +489,6 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                 let result =
                                     self.builder.build_float_neg(float_val, "neg").unwrap();
                                 (result.into(), Type::Float)
-                            }
-                            Type::Any => {
-                                // For Any type, use boxed_any_negate function
-                                let boxed_any_negate_fn = self.module.get_function("boxed_any_negate")
-                                    .ok_or_else(|| "boxed_any_negate function not found".to_string())?;
-
-                                let call_site_value = self.builder.build_call(
-                                    boxed_any_negate_fn,
-                                    &[operand_result.value.into()],
-                                    "boxed_negate_result"
-                                ).unwrap();
-
-                                let result = call_site_value.try_as_basic_value().left()
-                                    .ok_or_else(|| "Failed to negate BoxedAny value".to_string())?;
-
-                                (result, Type::Any)
                             }
                             _ => {
                                 return Err(format!(
@@ -578,7 +542,6 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                         op,
                         right_value,
                         &right_type,
-                        false, // We need a boolean result for comparison operations
                     )?;
 
                     if right_idx > left_idx {
@@ -799,24 +762,14 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     self.ensure_block_has_terminator();
 
                     let llvm_type = self.get_llvm_type(&result_type);
-
-                    // Allocate a variable to store the result
-                    let result_ptr = self.builder.build_alloca(llvm_type, "if_result_ptr").unwrap();
-
-                    // Create a PHI node to select the appropriate value
                     let phi = self.builder.build_phi(llvm_type, "if_result").unwrap();
+
                     phi.add_incoming(&[(&then_val, then_block), (&else_val, else_block)]);
-
-                    // Store the result in the allocated variable
-                    self.builder.build_store(result_ptr, phi.as_basic_value()).unwrap();
-
-                    // Load the result from the allocated variable
-                    let result_val = self.builder.build_load(llvm_type, result_ptr, "if_result_val").unwrap();
 
                     result_stack.remove(test_idx);
 
                     result_stack.push(ExprResult {
-                        value: result_val,
+                        value: phi.as_basic_value(),
                         ty: result_type,
                     });
                 }
