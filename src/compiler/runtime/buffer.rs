@@ -35,14 +35,8 @@ impl CircularBuffer {
     }
     fn flush(&mut self) -> io::Result<()> {
         if self.size==0 { return Ok(()) }
-        if self.read<self.write {
-            io::stdout().write_all(&self.buf[self.read..self.write])?;
-        }
-        else {
-            io::stdout().write_all(&self.buf[self.read..self.cap])?;
-            io::stdout().write_all(&self.buf[0..self.write])?;
-        }
-        // Always flush stdout
+        if self.read<self.write { io::stdout().write_all(&self.buf[self.read..self.write])?; }
+        else { io::stdout().write_all(&self.buf[self.read..self.cap])?; io::stdout().write_all(&self.buf[0..self.write])?; }
         io::stdout().flush()?;
         self.read=0; self.write=0; self.size=0; Ok(())
     }
@@ -68,78 +62,38 @@ fn write_bytes(b: &[u8]) {
     OPERATIONS.fetch_add(1,Ordering::Relaxed);
     if FORCE_DIRECT.load(Ordering::Relaxed) {
         let _=io::stdout().write_all(b);
-        let _=io::stdout().flush();
         return;
     }
     if let Err(_) = CIRC.with(|c| c.borrow_mut().write(b)) {
         let _=io::stdout().write_all(b);
-        let _=io::stdout().flush();
     }
 }
 
 /// Flush
 pub fn flush() { let _=CIRC.with(|c| c.borrow_mut().flush()); }
 
-/// Flush the buffer (C-compatible wrapper)
-#[no_mangle]
-pub extern "C" fn buffer_flush() {
-    flush();
-}
-
-/// Alias for buffer_flush to ensure it's exported with the correct name
-/// This helps with AOT compilation linking
-#[no_mangle]
-pub extern "C" fn _buffer_flush() {
-    buffer_flush();
-}
-
 /// Write string
-pub fn write_str(s: &str) {
-    write_bytes(s.as_bytes());
-    // Always flush after writing
-    let _ = io::stdout().flush();
-}
+pub fn write_str(s: &str) { write_bytes(s.as_bytes()); }
 /// Write newline
-pub fn write_newline() {
-    write_bytes(b"\n");
-    flush();
-}
+pub fn write_newline() { write_bytes(b"\n"); flush(); }
 /// Write int
 pub fn write_int(v: i64) {
     OPERATIONS.fetch_add(1,Ordering::Relaxed);
-    if FORCE_DIRECT.load(Ordering::Relaxed) {
-        let _=write!(io::stdout(),"{}",v);
-        let _ = io::stdout().flush();
-        return;
-    }
+    if FORCE_DIRECT.load(Ordering::Relaxed) { let _=write!(io::stdout(),"{}",v); return; }
     static mut ITOA_BUF: [Option<itoa::Buffer>;10] = [None,None,None,None,None,None,None,None,None,None];
     let idx = 0;
     let buf = unsafe { ITOA_BUF[idx].get_or_insert_with(|| itoa::Buffer::new()) };
     write_bytes(buf.format(v).as_bytes());
-    // Always flush after writing
-    let _ = io::stdout().flush();
 }
 
 /// Write float
-pub fn write_float(v: f64) {
-    OPERATIONS.fetch_add(1,Ordering::Relaxed);
-    if FORCE_DIRECT.load(Ordering::Relaxed) {
-        let _=write!(io::stdout(),"{}",v);
-        let _ = io::stdout().flush();
-        return;
-    }
-    let mut b=ryu::Buffer::new();
-    write_bytes(b.format(v).as_bytes());
-    // Always flush after writing
-    let _ = io::stdout().flush();
+pub fn write_float(v: f64) { OPERATIONS.fetch_add(1,Ordering::Relaxed);
+    if FORCE_DIRECT.load(Ordering::Relaxed) { let _=write!(io::stdout(),"{}",v); return; }
+    let mut b=ryu::Buffer::new(); write_bytes(b.format(v).as_bytes());
 }
 
 /// Write bool
-pub fn write_bool(v: bool) {
-    write_str(if v {"True"} else {"False"});
-    // Always flush after writing
-    let _ = io::stdout().flush();
-}
+pub fn write_bool(v: bool) { write_str(if v {"True"} else {"False"}); }
 
 /// Clean up and report
 pub fn cleanup() {
@@ -148,23 +102,4 @@ pub fn cleanup() {
     let _written=BYTES_WRITTEN.load(Ordering::Relaxed);
     let saved=BYTES_SAVED.load(Ordering::Relaxed);
     if ops>0 { eprintln!("[BUFFER] ops={}, saved={}", ops, saved); }
-}
-
-/// Register buffer functions in the module
-pub fn register_buffer_functions<'ctx>(context: &'ctx inkwell::context::Context, module: &mut inkwell::module::Module<'ctx>) {
-    // Register buffer_flush function
-    if module.get_function("buffer_flush").is_none() {
-        let fn_type = context.void_type().fn_type(&[], false);
-        let buffer_flush_fn = module.add_function("buffer_flush", fn_type, None);
-        // Ensure it's marked as external for AOT compilation
-        buffer_flush_fn.set_linkage(inkwell::module::Linkage::External);
-    }
-
-    // Register the alias function as well
-    if module.get_function("_buffer_flush").is_none() {
-        let fn_type = context.void_type().fn_type(&[], false);
-        let buffer_flush_alias_fn = module.add_function("_buffer_flush", fn_type, None);
-        // Ensure it's marked as external for AOT compilation
-        buffer_flush_alias_fn.set_linkage(inkwell::module::Linkage::External);
-    }
 }
