@@ -1515,14 +1515,6 @@ fn register_runtime_functions(
         );
     }
 
-    // Register arena functions
-    if let Err(e) = cheetah::compiler::runtime::arena::register_arena_runtime_functions(engine, module) {
-        println!(
-            "{}",
-            format!("Warning: Failed to register arena functions: {}", e).bright_yellow()
-        );
-    }
-
     Ok(())
 }
 
@@ -1823,11 +1815,6 @@ fn register_boxed_any_jit_functions(
     // Length function
     if let Some(function) = module.get_function("boxed_any_len") {
         engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_len as usize);
-    }
-
-    // Arena functions
-    if let Some(function) = module.get_function("arena_reset") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::arena::arena_reset as usize);
     }
 
     Ok(())

@@ -1,6 +1,5 @@
 // Runtime support module for the Cheetah compiler
 
-pub mod arena;
 pub mod boxed_any;
 pub mod boxed_any_ops;
 pub mod boxed_any_contains;
@@ -83,7 +82,4 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register min and max functions
     min_max_ops::register_min_max_functions(context, module);
-
-    // Register arena functions
-    arena::register_arena_functions(context, module);
 }

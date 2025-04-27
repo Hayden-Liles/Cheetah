@@ -743,75 +743,11 @@ impl<'ctx> CompilationContext<'ctx> {
         val: inkwell::values::BasicValueEnum<'ctx>,
         ty:  &Type,
     ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
-        if !self.use_boxed_values || ty == &Type::Any {
-            return Ok((val, ty.clone()));
+        if self.use_boxed_values && ty != &Type::Any {
+            Ok((self.box_value(val, ty)?, Type::Any))
+        } else {
+            Ok((val, ty.clone()))
         }
-
-        // Fast paths for primitive types
-        if ty == &Type::Int {
-            // Fast path for Int
-            let int_val = if val.is_pointer_value() {
-                // Load the integer value from the pointer
-                self.builder
-                    .build_load(self.llvm_context.i64_type(), val.into_pointer_value(), "load_int")
-                    .unwrap()
-                    .into_int_value()
-            } else {
-                val.into_int_value()
-            };
-
-            let from_int = self.module
-                .get_function("boxed_any_from_int")
-                .ok_or("boxed_any_from_int not found")?;
-            let boxed = self.builder
-                .build_call(from_int, &[int_val.into()], "box_int")
-                .unwrap()
-                .try_as_basic_value().left().unwrap();
-            return Ok((boxed, Type::Any));
-        } else if ty == &Type::Float {
-            // Fast path for Float
-            let float_val = if val.is_pointer_value() {
-                // Load the float value from the pointer
-                self.builder
-                    .build_load(self.llvm_context.f64_type(), val.into_pointer_value(), "load_float")
-                    .unwrap()
-                    .into_float_value()
-            } else {
-                val.into_float_value()
-            };
-
-            let from_float = self.module
-                .get_function("boxed_any_from_float")
-                .ok_or("boxed_any_from_float not found")?;
-            let boxed = self.builder
-                .build_call(from_float, &[float_val.into()], "box_float")
-                .unwrap()
-                .try_as_basic_value().left().unwrap();
-            return Ok((boxed, Type::Any));
-        } else if ty == &Type::Bool {
-            // Fast path for Bool
-            let bool_val = if val.is_pointer_value() {
-                // Load the bool value from the pointer
-                self.builder
-                    .build_load(self.llvm_context.bool_type(), val.into_pointer_value(), "load_bool")
-                    .unwrap()
-                    .into_int_value()
-            } else {
-                val.into_int_value()
-            };
-
-            let from_bool = self.module
-                .get_function("boxed_any_from_bool")
-                .ok_or("boxed_any_from_bool not found")?;
-            let boxed = self.builder
-                .build_call(from_bool, &[bool_val.into()], "box_bool")
-                .unwrap()
-                .try_as_basic_value().left().unwrap();
-            return Ok((boxed, Type::Any));
-        }
-
-        // Fallback to general boxing
-        Ok((self.box_value(val, ty)?, Type::Any))
     }
 
     // -----------------------------------------------------------------------
@@ -1376,8 +1312,6 @@ impl<'ctx> CompilationContext<'ctx> {
         let current_block = self.builder.get_insert_block();
 
         self.builder.position_at_end(basic_block);
-
-        // Don't reset the arena for nested functions to avoid invalidating pointers in parent frames
 
         println!("Compiling nested function body for {}", name);
         println!(

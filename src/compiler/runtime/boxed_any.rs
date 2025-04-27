@@ -13,8 +13,6 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::AddressSpace;
 
-use super::arena::{self, ARENA_FLAG};
-
 /// Type tags for BoxedAny values
 pub mod type_tags {
     pub const INT: i32 = 1;
@@ -57,7 +55,6 @@ pub union ValueData {
 /// Create a BoxedAny from an integer
 #[no_mangle]
 pub extern "C" fn boxed_any_from_int(value: i64) -> *mut BoxedAny {
-    // Temporarily use malloc instead of arena to debug
     let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
     unsafe {
         (*boxed).tag = type_tags::INT;
@@ -69,9 +66,9 @@ pub extern "C" fn boxed_any_from_int(value: i64) -> *mut BoxedAny {
 /// Create a BoxedAny from a float
 #[no_mangle]
 pub extern "C" fn boxed_any_from_float(value: f64) -> *mut BoxedAny {
-    let boxed = arena::alloc();
+    let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
     unsafe {
-        (*boxed).tag = type_tags::FLOAT | ARENA_FLAG;
+        (*boxed).tag = type_tags::FLOAT;
         (*boxed).data.float_val = value;
     }
     boxed
@@ -80,9 +77,9 @@ pub extern "C" fn boxed_any_from_float(value: f64) -> *mut BoxedAny {
 /// Create a BoxedAny from a boolean
 #[no_mangle]
 pub extern "C" fn boxed_any_from_bool(value: bool) -> *mut BoxedAny {
-    let boxed = arena::alloc();
+    let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
     unsafe {
-        (*boxed).tag = type_tags::BOOL | ARENA_FLAG;
+        (*boxed).tag = type_tags::BOOL;
         (*boxed).data.bool_val = if value { 1 } else { 0 };
     }
     boxed
@@ -91,9 +88,9 @@ pub extern "C" fn boxed_any_from_bool(value: bool) -> *mut BoxedAny {
 /// Create a BoxedAny representing None
 #[no_mangle]
 pub extern "C" fn boxed_any_none() -> *mut BoxedAny {
-    let boxed = arena::alloc();
+    let boxed = unsafe { malloc(std::mem::size_of::<BoxedAny>()) as *mut BoxedAny };
     unsafe {
-        (*boxed).tag = type_tags::NONE | ARENA_FLAG;
+        (*boxed).tag = type_tags::NONE;
         (*boxed).data.ptr_val = ptr::null_mut();
     }
     boxed
@@ -133,14 +130,8 @@ pub extern "C" fn boxed_any_free(value: *mut BoxedAny) {
     }
 
     unsafe {
-        // Check if this is an arena-owned value
-        if (*value).tag & ARENA_FLAG != 0 {
-            // Arena-owned - nothing to do
-            return;
-        }
-
         // Free any heap-allocated data based on the tag
-        match (*value).tag & !ARENA_FLAG {
+        match (*value).tag {
             type_tags::STRING | type_tags::BYTES => {
                 if !(*value).data.ptr_val.is_null() {
                     free((*value).data.ptr_val);
@@ -191,7 +182,7 @@ pub extern "C" fn boxed_any_get_type(value: *const BoxedAny) -> i32 {
         return type_tags::NONE;
     }
 
-    unsafe { (*value).tag & !ARENA_FLAG }
+    unsafe { (*value).tag }
 }
 
 /// Convert a BoxedAny to a string representation
@@ -202,7 +193,7 @@ pub extern "C" fn boxed_any_to_string(value: *const BoxedAny) -> *mut c_char {
     }
 
     unsafe {
-        match (*value).tag & !ARENA_FLAG {
+        match (*value).tag {
             type_tags::INT => {
                 let s = format!("{}", (*value).data.int_val);
                 CString::new(s).unwrap().into_raw()
@@ -258,7 +249,7 @@ pub extern "C" fn boxed_any_clone(value: *const BoxedAny) -> *mut BoxedAny {
     }
 
     unsafe {
-        match (*value).tag & !ARENA_FLAG {
+        match (*value).tag {
             type_tags::INT => {
                 boxed_any_from_int((*value).data.int_val)
             },
@@ -367,7 +358,7 @@ pub extern "C" fn boxed_any_add(a: *const BoxedAny, b: *const BoxedAny) -> *mut 
     }
 
     unsafe {
-        match ((*a).tag & !ARENA_FLAG, (*b).tag & !ARENA_FLAG) {
+        match ((*a).tag, (*b).tag) {
             (type_tags::INT, type_tags::INT) => {
                 let x = (*a).data.int_val;
                 let y = (*b).data.int_val;
@@ -519,7 +510,7 @@ pub extern "C" fn boxed_any_subtract(a: *const BoxedAny, b: *const BoxedAny) -> 
     }
 
     unsafe {
-        match ((*a).tag & !ARENA_FLAG, (*b).tag & !ARENA_FLAG) {
+        match ((*a).tag, (*b).tag) {
             (type_tags::INT, type_tags::INT) => {
                 let x = (*a).data.int_val;
                 let y = (*b).data.int_val;
@@ -627,7 +618,7 @@ pub extern "C" fn boxed_any_multiply(a: *const BoxedAny, b: *const BoxedAny) -> 
     }
 
     unsafe {
-        match ((*a).tag & !ARENA_FLAG, (*b).tag & !ARENA_FLAG) {
+        match ((*a).tag, (*b).tag) {
             (type_tags::INT, type_tags::INT) => {
                 let x = (*a).data.int_val;
                 let y = (*b).data.int_val;
@@ -735,7 +726,7 @@ pub extern "C" fn boxed_any_divide(a: *const BoxedAny, b: *const BoxedAny) -> *m
     }
 
     unsafe {
-        match ((*a).tag & !ARENA_FLAG, (*b).tag & !ARENA_FLAG) {
+        match ((*a).tag, (*b).tag) {
             (type_tags::INT, type_tags::INT) => {
                 if (*b).data.int_val == 0 {
                     // Division by zero
@@ -886,11 +877,9 @@ pub extern "C" fn boxed_any_equals(a: *const BoxedAny, b: *const BoxedAny) -> bo
     }
 
     unsafe {
-        let a_tag = (*a).tag & !ARENA_FLAG;
-        let b_tag = (*b).tag & !ARENA_FLAG;
-        if a_tag != b_tag {
+        if (*a).tag != (*b).tag {
             // Special case for numeric types
-            match (a_tag, b_tag) {
+            match ((*a).tag, (*b).tag) {
                 (type_tags::INT, type_tags::FLOAT) => {
                     return (*a).data.int_val as f64 == (*b).data.float_val;
                 },
@@ -903,7 +892,7 @@ pub extern "C" fn boxed_any_equals(a: *const BoxedAny, b: *const BoxedAny) -> bo
             }
         }
 
-        match a_tag {
+        match (*a).tag {
             type_tags::INT => {
                 (*a).data.int_val == (*b).data.int_val
             },
@@ -945,7 +934,7 @@ pub extern "C" fn boxed_any_to_bool(value: *const BoxedAny) -> bool {
     }
 
     unsafe {
-        match (*value).tag & !ARENA_FLAG {
+        match (*value).tag {
             type_tags::INT => (*value).data.int_val != 0,
             type_tags::FLOAT => (*value).data.float_val != 0.0,
             type_tags::BOOL => (*value).data.bool_val != 0,
@@ -1002,7 +991,7 @@ pub extern "C" fn boxed_any_to_int(value: *const BoxedAny) -> i64 {
     }
 
     unsafe {
-        match (*value).tag & !ARENA_FLAG {
+        match (*value).tag {
             type_tags::INT => (*value).data.int_val,
             type_tags::FLOAT => (*value).data.float_val as i64,
             type_tags::BOOL => if (*value).data.bool_val != 0 { 1 } else { 0 },
@@ -1031,7 +1020,7 @@ pub extern "C" fn boxed_any_to_float(value: *const BoxedAny) -> f64 {
     }
 
     unsafe {
-        match (*value).tag & !ARENA_FLAG {
+        match (*value).tag {
             type_tags::INT => (*value).data.int_val as f64,
             type_tags::FLOAT => (*value).data.float_val,
             type_tags::BOOL => if (*value).data.bool_val != 0 { 1.0 } else { 0.0 },
@@ -1191,10 +1180,6 @@ pub fn register_boxed_any_functions<'ctx>(context: &'ctx Context, module: &mut M
     // Length function
     let len_type = i64_type.fn_type(&[boxed_any_ptr_type.into()], false);
     module.add_function("boxed_any_len", len_type, None);
-
-    // Arena reset function
-    let arena_reset_type = void_type.fn_type(&[], false);
-    module.add_function("arena_reset", arena_reset_type, None);
 }
 
 /// Get the length of a BoxedAny value
@@ -1205,7 +1190,7 @@ pub extern "C" fn boxed_any_len(value: *const BoxedAny) -> i64 {
     }
 
     unsafe {
-        match (*value).tag & !ARENA_FLAG {
+        match (*value).tag {
             type_tags::STRING => {
                 if (*value).data.ptr_val.is_null() {
                     0
