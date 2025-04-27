@@ -39,7 +39,7 @@ squares = [x * x for x in range(10)]
 fn test_list_comprehension_with_condition() {
     let source = r#"
 # List comprehension with condition
-even_squares = [x * x for x in range(10) if x > 5]
+even_squares = [x * x for x in range(10) if x % 2 == 0]
 "#;
 
     let result = compile_source(source);

@@ -27,12 +27,10 @@ fn test_nested_if_statements() {
     let y_name = "y".to_string();
     let z_name = "z".to_string();
 
-    let x_ptr = ctx.allocate_variable(x_name.clone(), &Type::Any);
-    let y_ptr = ctx.allocate_variable(y_name.clone(), &Type::Any);
-    ctx.allocate_variable(z_name.clone(), &Type::Any);
+    let x_ptr = ctx.allocate_variable(x_name.clone(), &Type::Int);
+    let y_ptr = ctx.allocate_variable(y_name.clone(), &Type::Int);
+    ctx.allocate_variable(z_name.clone(), &Type::Int);
 
-    // In BoxedAny approach, we would use boxed_any_from_int instead of direct store
-    // But for testing purposes, we'll keep the direct store
     ctx.builder.build_store(x_ptr, ctx.llvm_context.i64_type().const_int(10, false)).unwrap();
     ctx.builder.build_store(y_ptr, ctx.llvm_context.i64_type().const_int(20, false)).unwrap();
 
@@ -138,7 +136,7 @@ fn test_complex_assignment() {
     let b_name = "b".to_string();
     let c_name = "c".to_string();
 
-    ctx.allocate_variable(a_name.clone(), &Type::Any);
+    ctx.allocate_variable(a_name.clone(), &Type::Int);
 
     // Create a complex assignment: a = (b = 10) + (c = 20)
     // First, create the expressions for nested assignments
@@ -204,9 +202,7 @@ fn test_while_loop_with_break() {
 
     // Create a counter variable: i = 0
     let i_name = "i".to_string();
-    let i_ptr = ctx.allocate_variable(i_name.clone(), &Type::Any);
-    // In BoxedAny approach, we would use boxed_any_from_int instead of direct store
-    // But for testing purposes, we'll keep the direct store
+    let i_ptr = ctx.allocate_variable(i_name.clone(), &Type::Int);
     ctx.builder.build_store(i_ptr, ctx.llvm_context.i64_type().const_int(0, false)).unwrap();
 
     // Create the loop test: i < 10
@@ -308,7 +304,7 @@ fn test_multiple_assignments() {
     assert!(ctx.type_env.contains_key(&y_name));
     assert!(ctx.type_env.contains_key(&z_name));
 
-    assert!(matches!(ctx.type_env.get(&x_name).unwrap(), Type::Any));
-    assert!(matches!(ctx.type_env.get(&y_name).unwrap(), Type::Any));
-    assert!(matches!(ctx.type_env.get(&z_name).unwrap(), Type::Any));
+    assert!(matches!(ctx.type_env.get(&x_name).unwrap(), Type::Int));
+    assert!(matches!(ctx.type_env.get(&y_name).unwrap(), Type::Int));
+    assert!(matches!(ctx.type_env.get(&z_name).unwrap(), Type::Int));
 }

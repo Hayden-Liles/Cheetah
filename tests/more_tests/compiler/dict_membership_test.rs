@@ -15,8 +15,8 @@ pub fn compile_source(source: &str) -> Result<String, String> {
     let context = Context::create();
     let mut compiler = Compiler::new(&context, "dict_membership_test");
 
-    // Compile the AST without type checking
-    match compiler.compile_module_without_type_checking(&ast) {
+    // Compile the AST
+    match compiler.compile_module(&ast) {
         Ok(_) => Ok(compiler.get_ir()),
         Err(e) => {
             Err(format!("Compilation error: {}", e))

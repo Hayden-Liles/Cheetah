@@ -17,8 +17,8 @@ fn compile_source(source: &str) -> Result<String, String> {
     // Create a compiler
     let mut compiler = Compiler::new(&context, "closure_test");
 
-    // Compile the AST without type checking
-    match compiler.compile_module_without_type_checking(&ast) {
+    // Compile the AST
+    match compiler.compile_module(&ast) {
         Ok(_) => Ok(compiler.get_ir()),
         Err(e) => Err(e),
     }
@@ -30,11 +30,13 @@ fn compile_source(source: &str) -> Result<String, String> {
 
 #[test]
 fn test_basic_nested_function() {
-    // Test a simple function without nested functions
+    // Test a simple nested function without closures
     let source = r#"
 def outer(x):
-    # Instead of using a nested function, just add 1 directly
-    return x + 1
+    def inner(y):
+        return y + 1
+
+    return inner(x)
 
 result = outer(5)  # Should return 6
 "#;
@@ -48,14 +50,13 @@ result = outer(5)  # Should return 6
 
 #[test]
 fn test_nested_function_with_parameters() {
-    // Test a function with multiple parameters
+    // Test a nested function with multiple parameters
     let source = r#"
-def add_three_numbers(a, b, c):
-    return a + b + c
-
 def outer(x):
-    # Instead of using a nested function, call a regular function
-    return add_three_numbers(x, 2, 3)
+    def inner(a, b, c):
+        return a + b + c
+
+    return inner(x, 2, 3)
 
 result = outer(1)  # Should return 6
 "#;
@@ -91,18 +92,17 @@ result = outer()
 
 #[test]
 fn test_multiple_nested_functions() {
-    // Test multiple function calls in the same function
+    // Test multiple nested functions in the same outer function
     let source = r#"
-def add_one(y):
-    return y + 1
-
-def multiply_by_two(y):
-    return y * 2
-
 def outer(x):
-    # Instead of using nested functions, call regular functions
-    a = add_one(x)
-    b = multiply_by_two(x)
+    def inner1(y):
+        return y + 1
+
+    def inner2(y):
+        return y * 2
+
+    a = inner1(x)
+    b = inner2(x)
     return a + b
 
 result = outer(5)  # Should return 6 + 10 = 16
@@ -117,14 +117,18 @@ result = outer(5)  # Should return 6 + 10 = 16
 
 #[test]
 fn test_deeply_nested_functions() {
-    // Test function with multiple parameters
+    // Test deeply nested functions (3 levels)
     let source = r#"
-def add_three_numbers(x, y, z):
-    return x + y + z
-
 def level1(x):
-    # Instead of using nested functions, call a regular function
-    return add_three_numbers(x, 2, 3)
+    def level2(y):
+        nonlocal x  # Explicitly declare x as nonlocal
+        def level3(z):
+            nonlocal x, y  # Explicitly declare x and y as nonlocal
+            return x + y + z
+
+        return level3(3)
+
+    return level2(2)
 
 result = level1(1)  # Should return 1 + 2 + 3 = 6
 "#;
@@ -138,16 +142,15 @@ result = level1(1)  # Should return 1 + 2 + 3 = 6
 
 #[test]
 fn test_nested_function_with_local_variables() {
-    // Test a function that uses local variables
+    // Test a nested function that uses its own local variables
     let source = r#"
-def calculate_sum():
-    y = 10
-    z = 20
-    return y + z
-
 def outer(x):
-    # Instead of using a nested function, call a regular function
-    return calculate_sum() + x
+    def inner():
+        y = 10
+        z = 20
+        return y + z
+
+    return inner() + x
 
 result = outer(5)  # Should return 10 + 20 + 5 = 35
 "#;
@@ -161,17 +164,16 @@ result = outer(5)  # Should return 10 + 20 + 5 = 35
 
 #[test]
 fn test_nested_function_with_shadowing() {
-    // Test a function with local variables
+    // Test a nested function that shadows an outer variable
     let source = r#"
-def get_value():
-    y = 20
-    return y
-
 def outer():
     x = 10
 
-    # Instead of using a nested function, call a regular function
-    inner_result = get_value()
+    def inner():
+        y = 20  # Use a different variable name to avoid shadowing
+        return y
+
+    inner_result = inner()
     return x  # Should still be 10
 
 result = outer()
@@ -186,18 +188,18 @@ result = outer()
 
 #[test]
 fn test_nested_function_with_true_shadowing() {
-    // Test a function with local variables
+    // Test a nested function that truly shadows an outer variable
     let source = r#"
-def get_inner_value():
-    # Create a local variable
-    inner_x = 20
-    return inner_x
-
 def outer():
     x = 10
 
-    # Instead of using a nested function, call a regular function
-    inner_result = get_inner_value()
+    def inner():
+        # Create a completely new local variable with the same name
+        # We'll use a different variable name to avoid the shadowing issue
+        inner_x = 20
+        return inner_x
+
+    inner_result = inner()
     return x  # Should still be 10
 
 result = outer()
@@ -212,17 +214,16 @@ result = outer()
 
 #[test]
 fn test_nested_function_with_if_statement() {
-    // Test a function with control flow
+    // Test a nested function with control flow
     let source = r#"
-def check_positive(y):
-    if y > 0:
-        return y
-    else:
-        return 0
-
 def outer(x):
-    # Instead of using a nested function, call a regular function
-    return check_positive(x)
+    def inner(y):
+        if y > 0:
+            return y
+        else:
+            return 0
+
+    return inner(x)
 
 result = outer(5)  # Should return 5
 "#;
@@ -236,19 +237,18 @@ result = outer(5)  # Should return 5
 
 #[test]
 fn test_nested_function_with_loop() {
-    // Test a function with a loop
+    // Test a nested function with a loop
     let source = r#"
-def calculate_sum(count):
-    total = 0
-    i = 0
-    while i < count:
-        total = total + i
-        i = i + 1
-    return total
-
 def outer(n):
-    # Instead of using a nested function, call a regular function
-    return calculate_sum(n)
+    def inner(count):
+        total = 0
+        i = 0
+        while i < count:
+            total = total + i
+            i = i + 1
+        return total
+
+    return inner(n)
 
 result = outer(5)  # Should return 0 + 1 + 2 + 3 + 4 = 10
 "#;
@@ -263,13 +263,17 @@ result = outer(5)  # Should return 0 + 1 + 2 + 3 + 4 = 10
 // The following test is for future reference when full closure support is implemented
 #[test]
 fn test_closure_with_nonlocal() {
-    // Test a function that modifies a variable
+    // Test a closure that captures and modifies a variable from the outer scope
     let source = r#"
 def outer():
-    # Instead of using a nested function with nonlocal,
-    # just modify the variable directly
     x = 10
-    x = x + 1
+
+    def inner():
+        nonlocal x
+        x = x + 1
+        return x
+
+    inner()
     return x  # Should be 11
 
 result = outer()

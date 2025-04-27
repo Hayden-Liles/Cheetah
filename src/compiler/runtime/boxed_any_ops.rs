@@ -1,5 +1,7 @@
 // boxed_any_ops.rs - Additional operations for BoxedAny values
 
+// No external imports needed for these operations
+
 use super::boxed_any::{BoxedAny, type_tags, boxed_any_from_int, boxed_any_from_float, boxed_any_from_bool, boxed_any_none};
 
 /// Floor division operation on two BoxedAny values
@@ -464,27 +466,6 @@ pub extern "C" fn boxed_any_negate(value: *const BoxedAny) -> *mut BoxedAny {
     }
 }
 
-/// Bitwise NOT operation on a BoxedAny value (unary ~)
-#[no_mangle]
-pub extern "C" fn boxed_any_bitwise_not(value: *const BoxedAny) -> *mut BoxedAny {
-    if value.is_null() {
-        return boxed_any_none();
-    }
-
-    unsafe {
-        match (*value).tag {
-            type_tags::INT => {
-                let result = !(*value).data.int_val;
-                boxed_any_from_int(result)
-            },
-            _ => {
-                // Type error - can only perform bitwise NOT on integers
-                boxed_any_none()
-            }
-        }
-    }
-}
-
 /// Get an item from a container (list, dict, etc.)
 #[no_mangle]
 pub extern "C" fn boxed_any_get_item(container: *const BoxedAny, key: *const BoxedAny) -> *mut BoxedAny {
@@ -686,115 +667,6 @@ pub extern "C" fn boxed_any_set_item(container: *mut BoxedAny, key: *mut BoxedAn
     }
 }
 
-/// Register BoxedAny operations for JIT execution
-pub fn register_boxed_any_ops_runtime_functions(
-    engine: &inkwell::execution_engine::ExecutionEngine<'_>,
-    module: &inkwell::module::Module<'_>,
-) -> Result<(), String> {
-    // Binary operations
-    if let Some(f) = module.get_function("boxed_any_add") {
-        engine.add_global_mapping(&f, super::boxed_any::boxed_any_add as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_subtract") {
-        engine.add_global_mapping(&f, super::boxed_any::boxed_any_subtract as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_multiply") {
-        engine.add_global_mapping(&f, super::boxed_any::boxed_any_multiply as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_divide") {
-        engine.add_global_mapping(&f, super::boxed_any::boxed_any_divide as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_floor_div") {
-        engine.add_global_mapping(&f, boxed_any_floor_div as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_modulo") {
-        engine.add_global_mapping(&f, boxed_any_modulo as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_power") {
-        engine.add_global_mapping(&f, boxed_any_power as usize);
-    }
-
-    // Bitwise operations
-    if let Some(f) = module.get_function("boxed_any_bit_or") {
-        engine.add_global_mapping(&f, boxed_any_bit_or as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_bit_and") {
-        engine.add_global_mapping(&f, boxed_any_bit_and as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_bit_xor") {
-        engine.add_global_mapping(&f, boxed_any_bit_xor as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_lshift") {
-        engine.add_global_mapping(&f, boxed_any_lshift as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_rshift") {
-        engine.add_global_mapping(&f, boxed_any_rshift as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_bitwise_not") {
-        engine.add_global_mapping(&f, boxed_any_bitwise_not as usize);
-    }
-
-    // Comparison operations
-    if let Some(f) = module.get_function("boxed_any_equals") {
-        engine.add_global_mapping(&f, super::boxed_any::boxed_any_equals as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_not_equals") {
-        engine.add_global_mapping(&f, boxed_any_not_equals as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_less_than") {
-        engine.add_global_mapping(&f, boxed_any_less_than as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_less_than_or_equal") {
-        engine.add_global_mapping(&f, boxed_any_less_than_or_equal as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_greater_than") {
-        engine.add_global_mapping(&f, boxed_any_greater_than as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_greater_than_or_equal") {
-        engine.add_global_mapping(&f, boxed_any_greater_than_or_equal as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_from_comparison") {
-        engine.add_global_mapping(&f, boxed_any_from_comparison as usize);
-    }
-
-    // Unary operations
-    if let Some(f) = module.get_function("boxed_any_negate") {
-        engine.add_global_mapping(&f, boxed_any_negate as usize);
-    }
-
-    // Container operations
-    if let Some(f) = module.get_function("boxed_any_get_item") {
-        engine.add_global_mapping(&f, boxed_any_get_item as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_set_item") {
-        engine.add_global_mapping(&f, boxed_any_set_item as usize);
-    }
-
-    if let Some(f) = module.get_function("boxed_any_slice") {
-        engine.add_global_mapping(&f, boxed_any_slice as usize);
-    }
-
-    Ok(())
-}
-
 /// Register all BoxedAny operation functions in the module
 pub fn register_boxed_any_ops_functions<'ctx>(
     context: &'ctx inkwell::context::Context,
@@ -877,9 +749,6 @@ pub fn register_boxed_any_ops_functions<'ctx>(
 
     // Register negate function
     module.add_function("boxed_any_negate", unary_op_fn_type, None);
-
-    // Register bitwise NOT function
-    module.add_function("boxed_any_bitwise_not", unary_op_fn_type, None);
 
     // Register function to get an item from a container
     module.add_function("boxed_any_get_item", get_item_fn_type, None);

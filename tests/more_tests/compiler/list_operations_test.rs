@@ -136,19 +136,15 @@ extended = append_to_list([1, 2, 3], 4)  # Should be [1, 2, 3, 4]
 #[test]
 fn test_list_operations_in_loops() {
     let source = r#"
-# Use lists with manual indexing instead of loops
+# Use lists in loops
 numbers = [1, 2, 3, 4, 5]
 sum = 0
-# Manually add each element
-sum = sum + numbers[0]
-sum = sum + numbers[1]
-sum = sum + numbers[2]
-sum = sum + numbers[3]
-sum = sum + numbers[4]
+for num in numbers:
+    sum = sum + num  # Should calculate sum of all elements
 "#;
 
     let result = compile_source(source);
-    assert!(result.is_ok(), "Failed to compile list operations with manual indexing: {:?}", result.err());
+    assert!(result.is_ok(), "Failed to compile list operations in loops: {:?}", result.err());
 }
 
 #[test]

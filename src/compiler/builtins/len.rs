@@ -56,27 +56,23 @@ impl<'ctx> CompilationContext<'ctx> {
         }
 
         let (arg_val, arg_type) = self.compile_expr(&args[0])?;
-
-        // For BoxedAny values, we need to use the appropriate boxed_*_len function
-        if arg_type == Type::Any {
-            // For BoxedAny, we need to check the type tag and call the appropriate function
-            if !arg_val.is_pointer_value() {
-                return Err("Expected pointer value for BoxedAny".to_string());
-            }
-
-            // Try to get the length using the appropriate function
-            if let Ok(v) = self.try_get_boxed_any_length(arg_val) {
-                return Ok((v, Type::Int));
-            }
-
-            return Err("Cannot determine length of Any type".to_string());
-        }
-
-        // For non-BoxedAny values, use the appropriate len function
         let (fn_name, ptr_val) = match arg_type {
             Type::String => ("string_len", arg_val),
             Type::List(_) => ("list_len", arg_val),
             Type::Dict(_, _) => ("dict_len", arg_val),
+            Type::Any => {
+                // Try each in turn
+                if let Ok(v) = self.try_get_string_length(arg_val) {
+                    return Ok((v, Type::Int));
+                }
+                if let Ok(v) = self.try_get_list_length(arg_val) {
+                    return Ok((v, Type::Int));
+                }
+                if let Ok(v) = self.try_get_dict_length(arg_val) {
+                    return Ok((v, Type::Int));
+                }
+                return Err("Cannot determine length of Any type".to_string());
+            }
             _ => return Err(format!("Object of type '{:?}' has no len()", arg_type)),
         };
 
@@ -103,22 +99,36 @@ impl<'ctx> CompilationContext<'ctx> {
         Ok((result, Type::Int))
     }
 
-    /// Try to get the length of a BoxedAny value
-    fn try_get_boxed_any_length(
+    fn try_get_string_length(
         &self,
         value: BasicValueEnum<'ctx>,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        // For BoxedAny values, we can directly call the boxed_any_len function
-        let boxed_any_len_fn = self.module.get_function("boxed_any_len")
-            .ok_or("boxed_any_len function not found".to_string())?;
-
+        let f = self.module.get_function("string_len")
+            .ok_or("string_len function not found".to_string())?;
         let ptr = value.into_pointer_value();
-        let call = self.builder.build_call(boxed_any_len_fn, &[ptr.into()], "boxed_any_len_result").unwrap();
-        let result = call.try_as_basic_value().left().ok_or("Failed to get BoxedAny length".to_string())?;
-
-        Ok(result)
+        let call = self.builder.build_call(f, &[ptr.into()], "str_len").unwrap();
+        call.try_as_basic_value().left().ok_or("Failed str len".to_string())
     }
 
-    // These methods are no longer used since we're using boxed_any_len instead
-    // They are kept here for reference in case we need to reimplement them in the future
+    fn try_get_list_length(
+        &self,
+        value: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let f = self.module.get_function("list_len")
+            .ok_or("list_len function not found".to_string())?;
+        let ptr = value.into_pointer_value();
+        let call = self.builder.build_call(f, &[ptr.into()], "list_len").unwrap();
+        call.try_as_basic_value().left().ok_or("Failed list len".to_string())
+    }
+
+    fn try_get_dict_length(
+        &self,
+        value: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let f = self.module.get_function("dict_len")
+            .ok_or("dict_len function not found".to_string())?;
+        let ptr = value.into_pointer_value();
+        let call = self.builder.build_call(f, &[ptr.into()], "dict_len").unwrap();
+        call.try_as_basic_value().left().ok_or("Failed dict len".to_string())
+    }
 }

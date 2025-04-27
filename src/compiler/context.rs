@@ -67,9 +67,6 @@ pub struct CompilationContext<'ctx> {
 
     /// Pending method calls (object_ptr, method_name, element_type)
     pub pending_method_calls: HashMap<String, (String, Box<Type>)>,
-
-    /// Whether to use BoxedAny values
-    pub use_boxed_values: bool,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -98,13 +95,7 @@ impl<'ctx> CompilationContext<'ctx> {
             current_environment: None,
             unique_id_counter: 0,
             pending_method_calls: HashMap::new(),
-            use_boxed_values: true, // Default to using BoxedAny values
         }
-    }
-
-    /// Set whether to use BoxedAny values
-    pub fn set_use_boxed_values(&mut self, use_boxed_values: bool) {
-        self.use_boxed_values = use_boxed_values;
     }
 
     /// Get or create a type in the LLVM context
@@ -571,110 +562,6 @@ impl<'ctx> CompilationContext<'ctx> {
                 Ok(result.into())
             }
 
-            (Type::Int, Type::Any) => {
-                // Convert Int to Any using boxed_any_from_int
-                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                let int_val = if value.is_pointer_value() {
-                    // Load the integer value from the pointer
-                    self.builder
-                        .build_load(self.llvm_context.i64_type(), value.into_pointer_value(), "load_int")
-                        .unwrap()
-                        .into_int_value()
-                } else {
-                    value.into_int_value()
-                };
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_int_fn,
-                    &[int_val.into()],
-                    "int_to_any_result"
-                ).unwrap();
-
-                let result = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to convert Int to Any".to_string())?;
-
-                Ok(result)
-            }
-
-            (Type::Float, Type::Any) => {
-                // Convert Float to Any using boxed_any_from_float
-                let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
-                    .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
-
-                let float_val = if value.is_pointer_value() {
-                    // Load the float value from the pointer
-                    self.builder
-                        .build_load(self.llvm_context.f64_type(), value.into_pointer_value(), "load_float")
-                        .unwrap()
-                        .into_float_value()
-                } else {
-                    value.into_float_value()
-                };
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_float_fn,
-                    &[float_val.into()],
-                    "float_to_any_result"
-                ).unwrap();
-
-                let result = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to convert Float to Any".to_string())?;
-
-                Ok(result)
-            }
-
-            (Type::Bool, Type::Any) => {
-                // Convert Bool to Any using boxed_any_from_bool
-                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
-                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
-
-                let bool_val = if value.is_pointer_value() {
-                    // Load the bool value from the pointer
-                    self.builder
-                        .build_load(self.llvm_context.bool_type(), value.into_pointer_value(), "load_bool")
-                        .unwrap()
-                        .into_int_value()
-                } else {
-                    value.into_int_value()
-                };
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_bool_fn,
-                    &[bool_val.into()],
-                    "bool_to_any_result"
-                ).unwrap();
-
-                let result = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to convert Bool to Any".to_string())?;
-
-                Ok(result)
-            }
-
-            (Type::String, Type::Any) => {
-                // Convert String to Any using boxed_any_from_string
-                let boxed_any_from_string_fn = self.module.get_function("boxed_any_from_string")
-                    .ok_or_else(|| "boxed_any_from_string function not found".to_string())?;
-
-                if !value.is_pointer_value() {
-                    return Err("Expected pointer value for string".to_string());
-                }
-
-                let string_ptr = value.into_pointer_value();
-
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_string_fn,
-                    &[string_ptr.into()],
-                    "string_to_any_result"
-                ).unwrap();
-
-                let result = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| "Failed to convert String to Any".to_string())?;
-
-                Ok(result)
-            }
-
             _ => Err(format!(
                 "Unsupported type conversion from {:?} to {:?}",
                 from_type, to_type
@@ -792,23 +679,11 @@ impl<'ctx> CompilationContext<'ctx> {
                     None => return Err("int_to_string function not found".to_string()),
                 };
 
-                // If value is a pointer, load it first to get the integer value
-                let int_value = if value.is_pointer_value() {
-                    let loaded = self.builder.build_load(
-                        self.llvm_context.i64_type(),
-                        value.into_pointer_value(),
-                        "load_int"
-                    ).unwrap();
-                    loaded.into_int_value()
-                } else {
-                    value.into_int_value()
-                };
-
                 let call_site_value = self
                     .builder
                     .build_call(
                         int_to_string_fn,
-                        &[int_value.into()],
+                        &[value.into()],
                         "int_to_string_result",
                     )
                     .unwrap();
@@ -1688,17 +1563,9 @@ impl<'ctx> CompilationContext<'ctx> {
         ptr: inkwell::values::PointerValue<'ctx>,
         ty: Type,
     ) {
-        // Check if we're using BoxedAny values
-        let use_boxed = self.use_boxed_values;
-
         if let Some(env_name) = self.current_environment.clone() {
             if let Some(env) = self.get_closure_environment_mut(&env_name) {
-                // If we're using BoxedAny values, convert the type to Any
-                if use_boxed {
-                    env.add_variable(name, ptr, Type::Any);
-                } else {
-                    env.add_variable(name, ptr, ty);
-                }
+                env.add_variable(name, ptr, ty);
             }
         }
     }

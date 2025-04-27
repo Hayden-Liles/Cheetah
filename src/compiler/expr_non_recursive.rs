@@ -212,18 +212,42 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     Expr::Name { id, .. } => {
                         self.ensure_block_has_terminator();
 
-                        // Get the variable pointer and type
-                        let (var_ptr, var_type) = if let Some(ptr) = self.scope_stack.get_variable_respecting_declarations(id) {
-                            if let Some(ty) = self.scope_stack.get_type_respecting_declarations(id) {
-                                (*ptr, ty)
+                        // With BoxedAny, we just need to load the pointer to the BoxedAny value
+                        // We don't need to convert types or handle different types differently
+                        if let Some(var_ptr) = self.scope_stack.get_variable_respecting_declarations(id) {
+                            if let Some(var_type) = self.scope_stack.get_type_respecting_declarations(id) {
+                                // Load the BoxedAny pointer
+                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                                let var_val = self.builder
+                                    .build_load(ptr_type, *var_ptr, &format!("load_{}", id))
+                                    .unwrap();
+
+                                result_stack.push(ExprResult {
+                                    value: var_val,
+                                    ty: var_type,
+                                });
                             } else {
                                 return Err(format!("Variable found but type unknown: {}", id));
                             }
                         } else if let Some(var_ptr) = self.variables.get(id) {
                             if let Some(var_type) = self.type_env.get(id) {
-                                (*var_ptr, var_type.clone())
+                                // Load the BoxedAny pointer
+                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+                                let var_val = self.builder
+                                    .build_load(ptr_type, *var_ptr, &format!("load_{}", id))
+                                    .unwrap();
+
+                                self.ensure_block_has_terminator();
+
+                                result_stack.push(ExprResult {
+                                    value: var_val,
+                                    ty: var_type.clone(),
+                                });
                             } else {
-                                return Err(format!("Global variable found but type unknown: {}", id));
+                                return Err(format!(
+                                    "Global variable found but type unknown: {}",
+                                    id
+                                ));
                             }
                         } else {
                             // If the variable doesn't exist, create a new BoxedAny None value
@@ -262,59 +286,6 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                 value: none_val,
                                 ty: Type::Any,
                             });
-                            continue;
-                        };
-
-                        // Handle different types appropriately
-                        match var_type {
-                            Type::Int => {
-                                // For integers, load the actual integer value
-                                let i64_type = self.llvm_context.i64_type();
-                                let var_val = self.builder
-                                    .build_load(i64_type, var_ptr, &format!("load_{}", id))
-                                    .unwrap();
-
-                                result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: Type::Int,
-                                });
-                            },
-                            Type::Float => {
-                                // For floats, load the actual float value
-                                let f64_type = self.llvm_context.f64_type();
-                                let var_val = self.builder
-                                    .build_load(f64_type, var_ptr, &format!("load_{}", id))
-                                    .unwrap();
-
-                                result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: Type::Float,
-                                });
-                            },
-                            Type::Bool => {
-                                // For booleans, load the actual boolean value
-                                let bool_type = self.llvm_context.bool_type();
-                                let var_val = self.builder
-                                    .build_load(bool_type, var_ptr, &format!("load_{}", id))
-                                    .unwrap();
-
-                                result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: Type::Bool,
-                                });
-                            },
-                            _ => {
-                                // For other types (including BoxedAny), load the pointer
-                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                                let var_val = self.builder
-                                    .build_load(ptr_type, var_ptr, &format!("load_{}", id))
-                                    .unwrap();
-
-                                result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: var_type,
-                                });
-                            }
                         }
                     }
                     Expr::IfExp {
@@ -429,50 +400,9 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                         }
                     }
 
-                    Expr::Call { func, args, .. } => {
-                        // Check if this is a call to a built-in function like print
-                        if let Expr::Name { id, .. } = func.as_ref() {
-                            if id == "print" {
-                                // Use the specialized print function handler
-                                let args_slice: Vec<Expr> = args.iter().map(|arg| (**arg).clone()).collect();
+                    Expr::Call { .. } => {
+                        // We'll handle all calls the same way
 
-                                // Debug output to help diagnose the issue
-                                println!("Compiling print call with {} arguments", args_slice.len());
-
-                                let (print_val, print_type) = self.compile_print_call(&args_slice)?;
-                                result_stack.push(ExprResult {
-                                    value: print_val,
-                                    ty: print_type,
-                                });
-                                continue;
-                            } else if id == "len" {
-                                let args_slice: Vec<Expr> = args.iter().map(|arg| (**arg).clone()).collect();
-                                let (len_val, len_type) = self.compile_len_call(&args_slice)?;
-                                result_stack.push(ExprResult {
-                                    value: len_val,
-                                    ty: len_type,
-                                });
-                                continue;
-                            } else if id == "min" {
-                                let args_slice: Vec<Expr> = args.iter().map(|arg| (**arg).clone()).collect();
-                                let (min_val, min_type) = self.compile_min_call(&args_slice)?;
-                                result_stack.push(ExprResult {
-                                    value: min_val,
-                                    ty: min_type,
-                                });
-                                continue;
-                            } else if id == "max" {
-                                let args_slice: Vec<Expr> = args.iter().map(|arg| (**arg).clone()).collect();
-                                let (max_val, max_type) = self.compile_max_call(&args_slice)?;
-                                result_stack.push(ExprResult {
-                                    value: max_val,
-                                    ty: max_type,
-                                });
-                                continue;
-                            }
-                        }
-
-                        // For other calls, use the fallback
                         let (call_val, call_type) = self.compile_expr_fallback(expr)?;
                         result_stack.push(ExprResult {
                             value: call_val,
@@ -507,177 +437,20 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     let right_result = &result_stack[right_idx];
                     let left_result = &result_stack[left_idx];
 
-
-                    // Convert primitive types to BoxedAny pointers if needed
-                    let (left_val, left_type) = match left_result.ty {
-                        Type::Int => {
-                            // Convert Int to BoxedAny
-                            let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                                .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_from_int_fn,
-                                &[left_result.value.into()],
-                                "int_to_boxed"
-                            ).unwrap();
-
-                            let boxed_val = call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert Int to BoxedAny".to_string())?;
-
-                            (boxed_val, Type::Any)
-                        },
-                        Type::Float => {
-                            // Convert Float to BoxedAny
-                            let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
-                                .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_from_float_fn,
-                                &[left_result.value.into()],
-                                "float_to_boxed"
-                            ).unwrap();
-
-                            let boxed_val = call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert Float to BoxedAny".to_string())?;
-
-                            (boxed_val, Type::Any)
-                        },
-                        Type::Bool => {
-                            // Convert Bool to BoxedAny
-                            let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
-                                .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_from_bool_fn,
-                                &[left_result.value.into()],
-                                "bool_to_boxed"
-                            ).unwrap();
-
-                            let boxed_val = call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert Bool to BoxedAny".to_string())?;
-
-                            (boxed_val, Type::Any)
-                        },
-                        _ => (left_result.value, left_result.ty.clone()),
-                    };
-
-                    let (right_val, right_type) = match right_result.ty {
-                        Type::Int => {
-                            // Convert Int to BoxedAny
-                            let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                                .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_from_int_fn,
-                                &[right_result.value.into()],
-                                "int_to_boxed"
-                            ).unwrap();
-
-                            let boxed_val = call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert Int to BoxedAny".to_string())?;
-
-                            (boxed_val, Type::Any)
-                        },
-                        Type::Float => {
-                            // Convert Float to BoxedAny
-                            let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
-                                .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_from_float_fn,
-                                &[right_result.value.into()],
-                                "float_to_boxed"
-                            ).unwrap();
-
-                            let boxed_val = call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert Float to BoxedAny".to_string())?;
-
-                            (boxed_val, Type::Any)
-                        },
-                        Type::Bool => {
-                            // Convert Bool to BoxedAny
-                            let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
-                                .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_from_bool_fn,
-                                &[right_result.value.into()],
-                                "bool_to_boxed"
-                            ).unwrap();
-
-                            let boxed_val = call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert Bool to BoxedAny".to_string())?;
-
-                            (boxed_val, Type::Any)
-                        },
-                        _ => (right_result.value, right_result.ty.clone()),
-                    };
-
-                    // With BoxedAny, all binary operations return BoxedAny pointers
-                    let expected_result_type = Type::Any;
-
-                    let (boxed_result, _) = self.compile_binary_op(
-                        left_val,
-                        &left_type,
+                    let (result_value, result_type) = self.compile_binary_op(
+                        left_result.value,
+                        &left_result.ty,
                         op,
-                        right_val,
-                        &right_type,
+                        right_result.value,
+                        &right_result.ty,
                     )?;
-
-                    // Convert the BoxedAny result back to the expected type
-                    let result_value = match expected_result_type {
-                        Type::Int => {
-                            // Convert BoxedAny to Int
-                            let boxed_any_to_int_fn = self.module.get_function("boxed_any_to_int")
-                                .ok_or_else(|| "boxed_any_to_int function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_to_int_fn,
-                                &[boxed_result.into()],
-                                "boxed_to_int"
-                            ).unwrap();
-
-                            call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert BoxedAny to Int".to_string())?
-                        },
-                        Type::Float => {
-                            // Convert BoxedAny to Float
-                            let boxed_any_to_float_fn = self.module.get_function("boxed_any_to_float")
-                                .ok_or_else(|| "boxed_any_to_float function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_to_float_fn,
-                                &[boxed_result.into()],
-                                "boxed_to_float"
-                            ).unwrap();
-
-                            call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert BoxedAny to Float".to_string())?
-                        },
-                        Type::Bool => {
-                            // Convert BoxedAny to Bool
-                            let boxed_any_to_bool_fn = self.module.get_function("boxed_any_to_bool")
-                                .ok_or_else(|| "boxed_any_to_bool function not found".to_string())?;
-
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_to_bool_fn,
-                                &[boxed_result.into()],
-                                "boxed_to_bool"
-                            ).unwrap();
-
-                            call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| "Failed to convert BoxedAny to Bool".to_string())?
-                        },
-                        _ => boxed_result,
-                    };
 
                     result_stack.remove(right_idx);
                     result_stack.remove(left_idx);
 
-
                     result_stack.push(ExprResult {
                         value: result_value,
-                        ty: expected_result_type,
+                        ty: result_type,
                     });
                 }
                 ExprTask::ProcessUnaryOp { op, operand_idx } => {
@@ -1290,7 +1063,6 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
         }
 
         let final_result = result_stack.pop().unwrap();
-
         Ok((final_result.value, final_result.ty))
     }
 
@@ -1332,28 +1104,16 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                         len_args.iter().map(|arg| (**arg).clone()).collect();
                                     let (len_val, _) = self.compile_len_call(&args_slice)?;
 
-                                    // Convert the integer to a BoxedAny pointer
-                                    let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                                        .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                                    let boxed_len_val = self.builder.build_call(
-                                        boxed_any_from_int_fn,
-                                        &[len_val.into()],
-                                        "boxed_len"
-                                    ).unwrap().try_as_basic_value().left()
-                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?;
-
-                                    // Use boxed_range_1 instead of range_1
-                                    let boxed_range_1_fn = match self.module.get_function("boxed_range_1") {
+                                    let range_1_fn = match self.module.get_function("range_1") {
                                         Some(f) => f,
                                         None => {
-                                            return Err("boxed_range_1 function not found".to_string())
+                                            return Err("range_1 function not found".to_string())
                                         }
                                     };
 
                                     let call_site_value = self
                                         .builder
-                                        .build_call(boxed_range_1_fn, &[boxed_len_val.into()], "boxed_range_1_result")
+                                        .build_call(range_1_fn, &[len_val.into()], "range_1_result")
                                         .unwrap();
 
                                     let range_val = call_site_value
@@ -1368,492 +1128,7 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     }
                 }
 
-                // Handle function calls with BoxedAny parameters
-                if let Expr::Name { id, .. } = func.as_ref() {
-                    // Special case for range with constant integer arguments
-                    if id == "range" {
-                        // Get the boxed_any_from_int function for converting integers to BoxedAny pointers
-                        let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                            .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                        match args.len() {
-                            1 => {
-                                if let Expr::Num { value, .. } = args[0].as_ref() {
-                                    if let crate::ast::Number::Integer(n) = value {
-                                        // Convert the integer to a BoxedAny pointer
-                                        let int_val = self.llvm_context.i64_type().const_int(*n as u64, false);
-
-                                        let boxed_int_val = self.builder.build_call(
-                                            boxed_any_from_int_fn,
-                                            &[int_val.into()],
-                                            "boxed_int"
-                                        ).unwrap().try_as_basic_value().left()
-                                            .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?;
-
-                                        // Use boxed_range_1 instead of range_1
-                                        let boxed_range_1_fn = match self.module.get_function("boxed_range_1") {
-                                            Some(f) => f,
-                                            None => {
-                                                return Err("boxed_range_1 function not found".to_string())
-                                            }
-                                        };
-
-                                        let call_site_value = self
-                                            .builder
-                                            .build_call(boxed_range_1_fn, &[boxed_int_val.into()], "boxed_range_1_result")
-                                            .unwrap();
-
-                                        let range_val = call_site_value
-                                            .try_as_basic_value()
-                                            .left()
-                                            .ok_or_else(|| "Failed to get range value".to_string())?;
-
-                                        return Ok((range_val, Type::Int));
-                                    }
-                                }
-                            },
-                            2 => {
-                                // Handle range(start, stop)
-                                if let (Expr::Num { value: start_value, .. }, Expr::Num { value: stop_value, .. }) =
-                                    (args[0].as_ref(), args[1].as_ref()) {
-                                    if let (crate::ast::Number::Integer(start), crate::ast::Number::Integer(stop)) =
-                                        (start_value, stop_value) {
-                                        // Convert the integers to BoxedAny pointers
-                                        let start_val = self.llvm_context.i64_type().const_int(*start as u64, false);
-                                        let stop_val = self.llvm_context.i64_type().const_int(*stop as u64, false);
-
-                                        let boxed_start_val = self.builder.build_call(
-                                            boxed_any_from_int_fn,
-                                            &[start_val.into()],
-                                            "boxed_start"
-                                        ).unwrap().try_as_basic_value().left()
-                                            .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?;
-
-                                        let boxed_stop_val = self.builder.build_call(
-                                            boxed_any_from_int_fn,
-                                            &[stop_val.into()],
-                                            "boxed_stop"
-                                        ).unwrap().try_as_basic_value().left()
-                                            .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?;
-
-                                        // Use boxed_range_2 instead of range_2
-                                        let boxed_range_2_fn = match self.module.get_function("boxed_range_2") {
-                                            Some(f) => f,
-                                            None => {
-                                                return Err("boxed_range_2 function not found".to_string())
-                                            }
-                                        };
-
-                                        let call_site_value = self
-                                            .builder
-                                            .build_call(
-                                                boxed_range_2_fn,
-                                                &[boxed_start_val.into(), boxed_stop_val.into()],
-                                                "boxed_range_2_result"
-                                            )
-                                            .unwrap();
-
-                                        let range_val = call_site_value
-                                            .try_as_basic_value()
-                                            .left()
-                                            .ok_or_else(|| "Failed to get range value".to_string())?;
-
-                                        return Ok((range_val, Type::Int));
-                                    }
-                                }
-                            },
-                            3 => {
-                                // Handle range(start, stop, step)
-                                if let (Expr::Num { value: start_value, .. },
-                                       Expr::Num { value: stop_value, .. },
-                                       Expr::Num { value: step_value, .. }) =
-                                    (args[0].as_ref(), args[1].as_ref(), args[2].as_ref()) {
-                                    if let (crate::ast::Number::Integer(start),
-                                           crate::ast::Number::Integer(stop),
-                                           crate::ast::Number::Integer(step)) =
-                                        (start_value, stop_value, step_value) {
-                                        // Convert the integers to BoxedAny pointers
-                                        let start_val = self.llvm_context.i64_type().const_int(*start as u64, false);
-                                        let stop_val = self.llvm_context.i64_type().const_int(*stop as u64, false);
-                                        let step_val = self.llvm_context.i64_type().const_int(*step as u64, false);
-
-                                        let boxed_start_val = self.builder.build_call(
-                                            boxed_any_from_int_fn,
-                                            &[start_val.into()],
-                                            "boxed_start"
-                                        ).unwrap().try_as_basic_value().left()
-                                            .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?;
-
-                                        let boxed_stop_val = self.builder.build_call(
-                                            boxed_any_from_int_fn,
-                                            &[stop_val.into()],
-                                            "boxed_stop"
-                                        ).unwrap().try_as_basic_value().left()
-                                            .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?;
-
-                                        let boxed_step_val = self.builder.build_call(
-                                            boxed_any_from_int_fn,
-                                            &[step_val.into()],
-                                            "boxed_step"
-                                        ).unwrap().try_as_basic_value().left()
-                                            .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?;
-
-                                        // Use boxed_range_3 instead of range_3
-                                        let boxed_range_3_fn = match self.module.get_function("boxed_range_3") {
-                                            Some(f) => f,
-                                            None => {
-                                                return Err("boxed_range_3 function not found".to_string())
-                                            }
-                                        };
-
-                                        let call_site_value = self
-                                            .builder
-                                            .build_call(
-                                                boxed_range_3_fn,
-                                                &[boxed_start_val.into(), boxed_stop_val.into(), boxed_step_val.into()],
-                                                "boxed_range_3_result"
-                                            )
-                                            .unwrap();
-
-                                        let range_val = call_site_value
-                                            .try_as_basic_value()
-                                            .left()
-                                            .ok_or_else(|| "Failed to get range value".to_string())?;
-
-                                        return Ok((range_val, Type::Int));
-                                    }
-                                }
-                            },
-                            _ => {}
-                        }
-                    }
-
-                    // Special case for range with variable arguments
-                    if id == "range" {
-                        // Get the boxed_any_from_int function for converting integers to BoxedAny pointers
-                        let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                            .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                        match args.len() {
-                            1 => {
-                                // Compile the argument
-                                let (arg_val, arg_type) = self.compile_expr(&args[0])?;
-
-                                // Convert to BoxedAny if needed
-                                let boxed_arg = if arg_type == Type::Any {
-                                    arg_val
-                                } else {
-                                    // Convert to BoxedAny
-                                    let int_arg_val = if arg_type != Type::Int {
-                                        self.convert_type(arg_val, &arg_type, &Type::Int)?.into_int_value()
-                                    } else if arg_val.is_pointer_value() {
-                                        self.builder
-                                            .build_load(self.llvm_context.i64_type(), arg_val.into_pointer_value(), "range_arg")
-                                            .unwrap()
-                                            .into_int_value()
-                                    } else {
-                                        arg_val.into_int_value()
-                                    };
-
-                                    self.builder.build_call(
-                                        boxed_any_from_int_fn,
-                                        &[int_arg_val.into()],
-                                        "boxed_arg"
-                                    ).unwrap().try_as_basic_value().left()
-                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
-                                };
-
-                                // Use boxed_range_1
-                                let boxed_range_1_fn = match self.module.get_function("boxed_range_1") {
-                                    Some(f) => f,
-                                    None => {
-                                        return Err("boxed_range_1 function not found".to_string())
-                                    }
-                                };
-
-                                let call_site_value = self.builder.build_call(
-                                    boxed_range_1_fn,
-                                    &[boxed_arg.into()],
-                                    "boxed_range_1_result"
-                                ).unwrap();
-
-                                let range_val = call_site_value
-                                    .try_as_basic_value()
-                                    .left()
-                                    .ok_or_else(|| "Failed to get range value".to_string())?;
-
-                                return Ok((range_val, Type::Int));
-                            },
-                            2 => {
-                                // Compile the arguments
-                                let (start_val, start_type) = self.compile_expr(&args[0])?;
-                                let (stop_val, stop_type) = self.compile_expr(&args[1])?;
-
-                                // Convert to BoxedAny if needed
-                                let boxed_start_val = if start_type == Type::Any {
-                                    start_val
-                                } else {
-                                    // Convert to BoxedAny
-                                    let int_start_val = if start_type != Type::Int {
-                                        self.convert_type(start_val, &start_type, &Type::Int)?.into_int_value()
-                                    } else if start_val.is_pointer_value() {
-                                        self.builder
-                                            .build_load(self.llvm_context.i64_type(), start_val.into_pointer_value(), "range_start")
-                                            .unwrap()
-                                            .into_int_value()
-                                    } else {
-                                        start_val.into_int_value()
-                                    };
-
-                                    self.builder.build_call(
-                                        boxed_any_from_int_fn,
-                                        &[int_start_val.into()],
-                                        "boxed_start"
-                                    ).unwrap().try_as_basic_value().left()
-                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
-                                };
-
-                                let boxed_stop_val = if stop_type == Type::Any {
-                                    stop_val
-                                } else {
-                                    // Convert to BoxedAny
-                                    let int_stop_val = if stop_type != Type::Int {
-                                        self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
-                                    } else if stop_val.is_pointer_value() {
-                                        self.builder
-                                            .build_load(self.llvm_context.i64_type(), stop_val.into_pointer_value(), "range_stop")
-                                            .unwrap()
-                                            .into_int_value()
-                                    } else {
-                                        stop_val.into_int_value()
-                                    };
-
-                                    self.builder.build_call(
-                                        boxed_any_from_int_fn,
-                                        &[int_stop_val.into()],
-                                        "boxed_stop"
-                                    ).unwrap().try_as_basic_value().left()
-                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
-                                };
-
-                                // Use boxed_range_2
-                                let boxed_range_2_fn = match self.module.get_function("boxed_range_2") {
-                                    Some(f) => f,
-                                    None => {
-                                        return Err("boxed_range_2 function not found".to_string())
-                                    }
-                                };
-
-                                let call_site_value = self.builder.build_call(
-                                    boxed_range_2_fn,
-                                    &[boxed_start_val.into(), boxed_stop_val.into()],
-                                    "boxed_range_2_result"
-                                ).unwrap();
-
-                                let range_val = call_site_value
-                                    .try_as_basic_value()
-                                    .left()
-                                    .ok_or_else(|| "Failed to get range value".to_string())?;
-
-                                return Ok((range_val, Type::Int));
-                            },
-                            3 => {
-                                // Compile the arguments
-                                let (start_val, start_type) = self.compile_expr(&args[0])?;
-                                let (stop_val, stop_type) = self.compile_expr(&args[1])?;
-                                let (step_val, step_type) = self.compile_expr(&args[2])?;
-
-                                // Convert to BoxedAny if needed
-                                let boxed_start_val = if start_type == Type::Any {
-                                    start_val
-                                } else {
-                                    // Convert to BoxedAny
-                                    let int_start_val = if start_type != Type::Int {
-                                        self.convert_type(start_val, &start_type, &Type::Int)?.into_int_value()
-                                    } else if start_val.is_pointer_value() {
-                                        self.builder
-                                            .build_load(self.llvm_context.i64_type(), start_val.into_pointer_value(), "range_start")
-                                            .unwrap()
-                                            .into_int_value()
-                                    } else {
-                                        start_val.into_int_value()
-                                    };
-
-                                    self.builder.build_call(
-                                        boxed_any_from_int_fn,
-                                        &[int_start_val.into()],
-                                        "boxed_start"
-                                    ).unwrap().try_as_basic_value().left()
-                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
-                                };
-
-                                let boxed_stop_val = if stop_type == Type::Any {
-                                    stop_val
-                                } else {
-                                    // Convert to BoxedAny
-                                    let int_stop_val = if stop_type != Type::Int {
-                                        self.convert_type(stop_val, &stop_type, &Type::Int)?.into_int_value()
-                                    } else if stop_val.is_pointer_value() {
-                                        self.builder
-                                            .build_load(self.llvm_context.i64_type(), stop_val.into_pointer_value(), "range_stop")
-                                            .unwrap()
-                                            .into_int_value()
-                                    } else {
-                                        stop_val.into_int_value()
-                                    };
-
-                                    self.builder.build_call(
-                                        boxed_any_from_int_fn,
-                                        &[int_stop_val.into()],
-                                        "boxed_stop"
-                                    ).unwrap().try_as_basic_value().left()
-                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
-                                };
-
-                                let boxed_step_val = if step_type == Type::Any {
-                                    step_val
-                                } else {
-                                    // Convert to BoxedAny
-                                    let int_step_val = if step_type != Type::Int {
-                                        self.convert_type(step_val, &step_type, &Type::Int)?.into_int_value()
-                                    } else if step_val.is_pointer_value() {
-                                        self.builder
-                                            .build_load(self.llvm_context.i64_type(), step_val.into_pointer_value(), "range_step")
-                                            .unwrap()
-                                            .into_int_value()
-                                    } else {
-                                        step_val.into_int_value()
-                                    };
-
-                                    self.builder.build_call(
-                                        boxed_any_from_int_fn,
-                                        &[int_step_val.into()],
-                                        "boxed_step"
-                                    ).unwrap().try_as_basic_value().left()
-                                        .ok_or_else(|| "Failed to convert int to BoxedAny".to_string())?
-                                };
-
-                                // Use boxed_range_3
-                                let boxed_range_3_fn = match self.module.get_function("boxed_range_3") {
-                                    Some(f) => f,
-                                    None => {
-                                        return Err("boxed_range_3 function not found".to_string())
-                                    }
-                                };
-
-                                let call_site_value = self.builder.build_call(
-                                    boxed_range_3_fn,
-                                    &[boxed_start_val.into(), boxed_stop_val.into(), boxed_step_val.into()],
-                                    "boxed_range_3_result"
-                                ).unwrap();
-
-                                let range_val = call_site_value
-                                    .try_as_basic_value()
-                                    .left()
-                                    .ok_or_else(|| "Failed to get range value".to_string())?;
-
-                                return Ok((range_val, Type::Int));
-                            },
-                            _ => {
-                                return Err(format!("Invalid number of arguments for range: expected 1, 2, or 3, got {}", args.len()));
-                            }
-                        }
-                    }
-
-                    // Compile the arguments for other function calls
-                    let mut arg_values = Vec::with_capacity(args.len());
-
-                    for arg in args {
-                        let (arg_val, arg_type) = self.compile_expr(arg)?;
-
-                        // Convert primitive types to BoxedAny if needed
-                        let boxed_arg = match arg_type {
-                            Type::Int => {
-                                // Convert Int to BoxedAny
-                                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                                let call_site_value = self.builder.build_call(
-                                    boxed_any_from_int_fn,
-                                    &[arg_val.into()],
-                                    "int_to_boxed"
-                                ).unwrap();
-
-                                call_site_value.try_as_basic_value().left()
-                                    .ok_or_else(|| "Failed to convert Int to BoxedAny".to_string())?
-                            },
-                            Type::Float => {
-                                // Convert Float to BoxedAny
-                                let boxed_any_from_float_fn = self.module.get_function("boxed_any_from_float")
-                                    .ok_or_else(|| "boxed_any_from_float function not found".to_string())?;
-
-                                let call_site_value = self.builder.build_call(
-                                    boxed_any_from_float_fn,
-                                    &[arg_val.into()],
-                                    "float_to_boxed"
-                                ).unwrap();
-
-                                call_site_value.try_as_basic_value().left()
-                                    .ok_or_else(|| "Failed to convert Float to BoxedAny".to_string())?
-                            },
-                            Type::Bool => {
-                                // Convert Bool to BoxedAny
-                                let boxed_any_from_bool_fn = self.module.get_function("boxed_any_from_bool")
-                                    .ok_or_else(|| "boxed_any_from_bool function not found".to_string())?;
-
-                                let call_site_value = self.builder.build_call(
-                                    boxed_any_from_bool_fn,
-                                    &[arg_val.into()],
-                                    "bool_to_boxed"
-                                ).unwrap();
-
-                                call_site_value.try_as_basic_value().left()
-                                    .ok_or_else(|| "Failed to convert Bool to BoxedAny".to_string())?
-                            },
-                            _ => arg_val,
-                        };
-
-                        arg_values.push(boxed_arg);
-                    }
-
-                    // Look for the function
-                    let qualified_name = if let Some(current_function) = self.current_function {
-                        let fn_name = current_function.get_name().to_string_lossy();
-                        if fn_name.contains('.') {
-                            format!("{}.{}", fn_name, id)
-                        } else {
-                            id.clone()
-                        }
-                    } else {
-                        id.clone()
-                    };
-
-                    println!("Looking for nested function: {}", qualified_name);
-
-                    let func_value = if let Some(&f) = self.functions.get(&qualified_name) {
-                        f
-                    } else if let Some(&f) = self.functions.get(id) {
-                        f
-                    } else {
-                        return Err(format!("Function not found: {}", id));
-                    };
-
-                    // Call the function
-                    let call_site_value = self.builder.build_call(
-                        func_value,
-                        &arg_values.iter().map(|v| (*v).into()).collect::<Vec<_>>(),
-                        &format!("call_{}", id)
-                    ).unwrap();
-
-                    let result = call_site_value.try_as_basic_value().left()
-                        .ok_or_else(|| format!("Failed to call function {}", id))?;
-
-                    // Return the result as Type::Any
-                    Ok((result, Type::Any))
-                } else {
-                    // For other function types, use the original implementation
-                    <Self as ExprCompiler>::compile_expr_original(self, expr)
-                }
+                <Self as ExprCompiler>::compile_expr_original(self, expr)
             }
             _ => <Self as ExprCompiler>::compile_expr_original(self, expr),
         }

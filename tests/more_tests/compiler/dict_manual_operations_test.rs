@@ -48,8 +48,10 @@ value_3 = data[3]
 #[test]
 fn test_dict_manual_creation_with_for_loop() {
     let source = r#"
-# Create a dictionary directly
-data = {1: 1, 2: 4, 3: 9, 4: 16, 5: 25}
+# Create a dictionary manually using a for loop with range
+data = {}
+for i in range(1, 6):
+    data[i] = i*i
 
 # Access some values
 value_1 = data[1]

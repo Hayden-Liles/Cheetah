@@ -1247,15 +1247,10 @@ impl Type {
 }
 
 /// Determine if a type is a reference type (pointer to an object)
-/// With the single blessed value layout, most types are reference types
-/// but we need to handle primitive types specially in some cases
-pub(crate) fn is_reference_type(ty: &Type) -> bool {
-    match ty {
-        // These are primitive types that might not be pointers in all contexts
-        Type::Int | Type::Float | Type::Bool => false,
-        // All other types are reference types with BoxedAny
-        _ => true
-    }
+/// With the single blessed value layout, all types are reference types
+pub(crate) fn is_reference_type(_ty: &Type) -> bool {
+    // All types are reference types with BoxedAny
+    true
 }
 
 /// Type context for tracking variable types during compilation

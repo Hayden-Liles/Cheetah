@@ -29,8 +29,6 @@ fn test_try_except_basic() {
     let source = r#"
 # Basic try-except test
 def test_func():
-    # Initialize z before the try block to avoid dominance issues
-    z = 0
     try:
         x = 10
         y = 20
@@ -49,16 +47,21 @@ fn test_try_except_with_type() {
     let source = r#"
 # Try-except with exception type
 def test_func():
-    # Initialize z before the try block to avoid dominance issues
-    z = 0
+    # Define exception types for testing
+    def ValueError(msg):
+        return msg
+
+    def ZeroDivisionError(msg):
+        return msg
 
     try:
         x = 10
         y = 0
         z = x + y  # Use addition instead of division to avoid type issues
-    except:
-        # Just use a simple except block without specific types
+    except ValueError:
         z = 1
+    except ZeroDivisionError:
+        z = 2
     return z
 "#;
 
@@ -71,17 +74,18 @@ fn test_try_except_else() {
     let source = r#"
 # Try-except-else test
 def test_func():
-    # Initialize result before the try block to avoid dominance issues
-    result = -1
+    # Define exception types for testing
+    def ZeroDivisionError(msg):
+        return msg
 
     try:
         x = 10
         y = 5
-        z = x + y  # Use addition instead of division
-        result = 1
-    except:
+        z = x / y
+    except ZeroDivisionError:
         result = 0
-
+    else:
+        result = 1
     return result
 "#;
 
@@ -94,19 +98,18 @@ fn test_try_except_finally() {
     let source = r#"
 # Try-except-finally test
 def test_func():
-    # Initialize variables before the try block to avoid dominance issues
-    z = 0
-    cleanup = 0
+    # Define exception types for testing
+    def ZeroDivisionError(msg):
+        return msg
 
     try:
         x = 10
         y = 5
         z = x + y
-    except:
-        z = 0
+    except ZeroDivisionError:
+        result = "division by zero"
     finally:
         cleanup = 1  # Use 1 instead of True
-
     return z
 "#;
 
@@ -119,20 +122,20 @@ fn test_try_except_else_finally() {
     let source = r#"
 # Try-except-else-finally test
 def test_func():
-    # Initialize variables before the try block to avoid dominance issues
-    result = -1
-    cleanup = 0
+    # Define exception types for testing
+    def ZeroDivisionError(msg):
+        return msg
 
     try:
         x = 10
         y = 5
         z = x + y
-        result = 1
-    except:
+    except ZeroDivisionError:
         result = 0
+    else:
+        result = 1
     finally:
         cleanup = 1  # Use 1 instead of True
-
     return result
 "#;
 
@@ -170,8 +173,13 @@ fn test_raise_basic() {
     let source = r#"
 # Basic raise test
 def test_func():
-    # Instead of creating an error object, just use a simple value
-    err = 42
+    # Define ValueError as a function for testing
+    def ValueError(code):
+        return code
+
+    # Create the error but don't raise it directly
+    # This tests that we can create exception objects
+    err = ValueError(42)
 
     # Return a value to avoid control flow issues
     return 42
@@ -186,17 +194,17 @@ fn test_raise_and_catch_simple() {
     let source = r#"
 # Raise and catch test (simplified)
 def test_func():
-    # Initialize result before the try block to avoid dominance issues
-    result = 0
+    # Define ValueError as a function for testing
+    def ValueError(code):
+        return code
 
+    result = 0
     try:
-        # Just do a simple operation
-        x = 10
-        y = 5
-        z = x + y
+        # Create the error but don't raise it directly
+        err = ValueError(42)
         # Set a value instead of returning
         result = 10
-    except:
+    except ValueError:
         # Set a value instead of returning
         result = 20
     # Return the result at the end
@@ -212,17 +220,22 @@ fn test_raise_from_simple() {
     let source = r#"
 # Raise from test (simplified)
 def test_func():
-    # Initialize result before the try block to avoid dominance issues
-    result = 0
+    # Define ValueError and RuntimeError as functions for testing
+    def ValueError(code):
+        return code
 
+    def RuntimeError(code):
+        return code
+
+    result = 0
     try:
-        # Just do a simple operation
-        x = 10
-        y = 5
-        z = x + y
+        # Create the error but don't raise it directly
+        original_err = ValueError(42)
         # Set a value instead of returning
         result = 10
-    except:
+    except ValueError as e:
+        # Create a new error that would be raised from the original
+        new_err = RuntimeError(43)
         # Set a value instead of returning
         result = 20
     # Return the result at the end
@@ -238,16 +251,21 @@ fn test_exception_as_variable_simple() {
     let source = r#"
 # Exception as variable test (simplified)
 def test_func():
-    # Initialize result before the try block to avoid dominance issues
-    result = 0
+    # Define exception types for testing
+    def ZeroDivisionError(code):
+        return code
 
+    result = 0
     try:
         x = 10
         y = 0
         z = x + y
+        # Create an exception to test the variable binding
+        err = ZeroDivisionError(42)
         result = 10
-    except:
-        # Just set a value instead of trying to access the exception variable
+    except ZeroDivisionError as e:
+        # Just check that we can access the exception variable
+        # but don't try to assign it to result
         result = 20
     return result
 "#;

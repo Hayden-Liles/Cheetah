@@ -15,8 +15,8 @@ fn compile_source(source: &str) -> Result<String, String> {
     let context = Context::create();
     let mut compiler = Compiler::new(&context, "test_module");
 
-    // Compile the AST without type checking
-    match compiler.compile_module_without_type_checking(&ast) {
+    // Compile the AST
+    match compiler.compile_module(&ast) {
         Ok(_) => Ok(compiler.get_ir()),
         Err(e) => {
             Err(format!("Compilation error: {}", e))
@@ -27,17 +27,18 @@ fn compile_source(source: &str) -> Result<String, String> {
 #[test]
 fn test_block_scoping() {
     let source = r#"
-# Simplified block scoping test
+# Variables in different blocks
 x = 10  # Global scope
-y = 0   # Initialize y in global scope
-z = 0   # Initialize z in global scope
 
 if True:
     y = 20  # Block scope
     z = x + y  # Can access global scope
+else:
+    y = 30  # Different block scope
+    w = x + y  # Can access global scope
 
-# x is still accessible
-x = x + 5
+# y should not be accessible here
+x = x + 5  # But x is still accessible
 "#;
 
     let result = compile_source(source);

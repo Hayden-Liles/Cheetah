@@ -281,12 +281,13 @@ impl TokenMatching for Parser {
     }
 
     fn consume_newline(&mut self) -> Result<(), ParseError> {
-        // If we see a semicolon, it's a statement separator - just consume it and return
         if self.match_token(TokenType::SemiColon) {
-            return Ok(());
+            if !self.check_newline()
+                && !self.check(TokenType::EOF)
+                && !self.check(TokenType::Dedent)
+            {}
         }
 
-        // If we don't have a newline, EOF, or dedent, it's an error
         if !self.check_newline() && !self.check(TokenType::EOF) && !self.check(TokenType::Dedent) {
             if let Some(token) = &self.current {
                 match token.token_type {
@@ -326,7 +327,6 @@ impl TokenMatching for Parser {
             });
         }
 
-        // Consume all consecutive newlines
         while self.match_token(TokenType::Newline) {}
 
         Ok(())

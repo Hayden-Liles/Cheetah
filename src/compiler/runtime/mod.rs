@@ -2,7 +2,6 @@
 
 pub mod boxed_any;
 pub mod boxed_any_ops;
-pub mod boxed_any_contains;
 pub mod boxed_dict;
 pub mod boxed_list;
 pub mod boxed_print_ops;
@@ -30,9 +29,6 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register BoxedAny operations
     boxed_any_ops::register_boxed_any_ops_functions(context, module);
-
-    // Register BoxedAny contains functions
-    boxed_any_contains::register_boxed_any_contains_functions(context, module);
 
     // Register BoxedList functions
     boxed_list::register_boxed_list_functions(context, module);
@@ -66,9 +62,6 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register print functions
     print_ops::register_print_functions(context, module);
-
-    // Register buffer functions
-    buffer::register_buffer_functions(context, module);
 
     // Register range functions
     range::register_range_functions(context, module);

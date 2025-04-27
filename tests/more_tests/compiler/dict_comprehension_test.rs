@@ -59,13 +59,13 @@ value_4 = even_squares[4]
 #[test]
 fn test_dict_comprehension_with_complex_expressions() {
     let source = r#"
-# Dictionary comprehension with simple expressions
-data = {x: x*x + 1 for x in range(5)}
+# Dictionary comprehension with complex expressions
+data = {str(x): x*x + 1 for x in range(5)}
 
-# Access some values using integer keys
-value_0 = data[0]
-value_1 = data[1]
-value_2 = data[2]
+# Access some values using string keys
+value_0 = data["0"]
+value_1 = data["1"]
+value_2 = data["2"]
 "#;
 
     let result = compile_source(source);
@@ -75,8 +75,11 @@ value_2 = data[2]
 #[test]
 fn test_dict_comprehension_with_list_iteration() {
     let source = r#"
-# Use range instead of a list
-data = {x: x*x for x in range(1, 6)}
+# Create a list of numbers
+numbers = [1, 2, 3, 4, 5]
+
+# Create a dictionary using a comprehension
+data = {x: x*x for x in numbers}
 
 # Access some values
 value_1 = data[1]
@@ -107,13 +110,13 @@ value_2 = squares[2]
 #[test]
 fn test_dict_comprehension_with_string_keys() {
     let source = r#"
-# Dictionary comprehension with integer keys
-data = {x: x*2 for x in range(5)}
+# Dictionary comprehension with string keys
+data = {"key_" + str(x): x for x in range(5)}
 
 # Access some values
-value_0 = data[0]
-value_1 = data[1]
-value_2 = data[2]
+value_0 = data["key_0"]
+value_1 = data["key_1"]
+value_2 = data["key_2"]
 "#;
 
     let result = compile_source(source);
