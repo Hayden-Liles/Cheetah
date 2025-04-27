@@ -162,7 +162,6 @@ fn find_entry(dict: *mut BoxedDict, key: *mut BoxedAny) -> Option<*mut BoxedDict
 
         let entries = (*dict).entries;
         let mut index = (hash % capacity) as usize;
-        let start_index = index;
 
         loop {
             let entry = entries.add(index);
@@ -179,11 +178,6 @@ fn find_entry(dict: *mut BoxedDict, key: *mut BoxedAny) -> Option<*mut BoxedDict
 
             // Linear probing
             index = (index + 1) % capacity as usize;
-
-            // If we've gone all the way around, stop
-            if index == start_index {
-                return None;
-            }
         }
     }
 }
