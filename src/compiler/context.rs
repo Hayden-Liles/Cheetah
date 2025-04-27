@@ -697,28 +697,15 @@ impl<'ctx> CompilationContext<'ctx> {
             return Ok(val);                // already boxed
         }
 
-        // Special handling for integers that might be pointers
-        let arg = match ty {
-            Type::Int if val.is_pointer_value() => {
-                // Load the integer value from the pointer
-                let i64_type = self.llvm_context.i64_type();
-                let int_val = self.builder
-                    .build_load(i64_type, val.into_pointer_value(), "load_int_for_boxing")
-                    .map_err(|e| format!("Failed to load integer value: {}", e))?;
-                int_val.into()
-            },
-            _ => val.into(),
-        };
-
-        let fname = match ty {
-            Type::Int    => "boxed_any_from_int",
-            Type::Float  => "boxed_any_from_float",
-            Type::Bool   => "boxed_any_from_bool",
-            Type::String => "boxed_any_from_string",
-            Type::List(_)  => "boxed_any_from_list",
-            Type::Tuple(_) => "boxed_any_from_tuple",
-            Type::Dict(_,_)=> "boxed_any_from_dict",
-            Type::None   => "boxed_any_none",
+        let (fname, arg) = match ty {
+            Type::Int    => ("boxed_any_from_int",   val.into()),
+            Type::Float  => ("boxed_any_from_float", val.into()),
+            Type::Bool   => ("boxed_any_from_bool",  val.into()),
+            Type::String => ("boxed_any_from_string",val.into()),
+            Type::List(_)  => ("boxed_any_from_list",   val.into()),
+            Type::Tuple(_) => ("boxed_any_from_tuple",  val.into()),
+            Type::Dict(_,_)=> ("boxed_any_from_dict",   val.into()),
+            Type::None   => ("boxed_any_none",         val.into()),
             _ => return Err(format!("boxing {:?} not implemented", ty)),
         };
 
@@ -802,7 +789,6 @@ impl<'ctx> CompilationContext<'ctx> {
         let llvm_ty = self.get_llvm_type(&ty);
         let val = self.builder.build_load(llvm_ty, ptr, &format!("load_{}", name))
             .map_err(|e| format!("Failed to load variable: {}", e))?;
-
         self.maybe_box(val, &ty)
     }
 

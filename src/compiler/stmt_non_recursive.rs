@@ -501,48 +501,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
 
         // Create the loop variable
         let var_ptr = if let Expr::Name { id, .. } = target {
-            // If we're using BoxedAny values, we need to create a BoxedAny pointer
-            if self.use_boxed_values {
-                // Create a pointer to store the integer value
-                let ptr = self.builder.build_alloca(i64_type, &format!("{}_raw", id)).unwrap();
-
-                // Store the initial value in the raw pointer
-                self.builder.build_store(ptr, start_val).unwrap();
-
-                // Get the boxed_any_from_int function
-                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                // Call boxed_any_from_int to create a BoxedAny value
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_int_fn,
-                    &[start_val.into()],
-                    &format!("box_{}", id)
-                ).unwrap();
-
-                let boxed_val = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| format!("Failed to create BoxedAny for {}", id))?;
-
-                // Create a pointer to store the BoxedAny pointer
-                let boxed_ptr = self.builder.build_alloca(
-                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
-                    id
-                ).unwrap();
-
-                // Store the BoxedAny pointer
-                self.builder.build_store(boxed_ptr, boxed_val).unwrap();
-
-                // Add the variable to the scope stack with type Any
-                self.scope_stack.add_variable(id.clone(), boxed_ptr, Type::Any);
-
-                // Return the raw pointer for the loop logic
-                ptr
-            } else {
-                // Regular case, just create an integer pointer
-                let ptr = self.builder.build_alloca(i64_type, id).unwrap();
-                self.scope_stack.add_variable(id.clone(), ptr, Type::Int);
-                ptr
-            }
+            let ptr = self.builder.build_alloca(i64_type, id).unwrap();
+            self.scope_stack.add_variable(id.clone(), ptr, Type::Int);
+            ptr
         } else {
             return Err("Unsupported loop target".to_string());
         };
@@ -651,33 +612,8 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
             .build_int_add(current_val, step_val, "next")
             .unwrap();
 
-        // Store the updated value in the raw pointer
+        // Store the updated value
         self.builder.build_store(var_ptr, next_val).unwrap();
-
-        // If we're using BoxedAny values, we need to update the BoxedAny value as well
-        if self.use_boxed_values {
-            if let Expr::Name { id, .. } = target {
-                // Get the boxed_any_from_int function
-                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                // Call boxed_any_from_int to create a new BoxedAny value
-                let call_site_value = self.builder.build_call(
-                    boxed_any_from_int_fn,
-                    &[next_val.into()],
-                    &format!("box_{}_inc", id)
-                ).unwrap();
-
-                let boxed_val = call_site_value.try_as_basic_value().left()
-                    .ok_or_else(|| format!("Failed to create BoxedAny for {}", id))?;
-
-                // Get the BoxedAny pointer from the scope stack
-                if let Some(boxed_ptr) = self.scope_stack.get_variable(id) {
-                    // Store the new BoxedAny pointer
-                    self.builder.build_store(*boxed_ptr, boxed_val).unwrap();
-                }
-            }
-        }
 
         // Branch back to the condition block
         self.builder.build_unconditional_branch(cond_block).unwrap();
@@ -1279,28 +1215,9 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                             .unwrap();
 
                         let var_ptr = if let Expr::Name { id, .. } = target {
-                            // If we're using BoxedAny values, we need to create a BoxedAny pointer
-                            if self.use_boxed_values {
-                                // Create a pointer to store the integer value
-                                let ptr = self.builder.build_alloca(i64_type, &format!("{}_raw", id)).unwrap();
-
-                                // Create a pointer to store the BoxedAny pointer
-                                let boxed_ptr = self.builder.build_alloca(
-                                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
-                                    id
-                                ).unwrap();
-
-                                // Add the variable to the scope stack with type Any
-                                self.scope_stack.add_variable(id.clone(), boxed_ptr, Type::Any);
-
-                                // Return the raw pointer for the loop logic
-                                ptr
-                            } else {
-                                // Regular case, just create an integer pointer
-                                let ptr = self.builder.build_alloca(i64_type, id).unwrap();
-                                self.scope_stack.add_variable(id.clone(), ptr, Type::Int);
-                                ptr
-                            }
+                            let ptr = self.builder.build_alloca(i64_type, id).unwrap();
+                            self.scope_stack.add_variable(id.clone(), ptr, Type::Int);
+                            ptr
                         } else {
                             return Err("Unsupported loop target".to_string());
                         };
@@ -1363,33 +1280,7 @@ impl<'ctx> StmtNonRecursive<'ctx> for CompilationContext<'ctx> {
                         self.builder.position_at_end(body_block);
                         self.push_scope(false, true, false);
 
-                        // Store the index value in the raw pointer
                         self.builder.build_store(var_ptr, index_val).unwrap();
-
-                        // If we're using BoxedAny values, we need to update the BoxedAny value as well
-                        if self.use_boxed_values {
-                            if let Expr::Name { id, .. } = target {
-                                // Get the boxed_any_from_int function
-                                let boxed_any_from_int_fn = self.module.get_function("boxed_any_from_int")
-                                    .ok_or_else(|| "boxed_any_from_int function not found".to_string())?;
-
-                                // Call boxed_any_from_int to create a BoxedAny value
-                                let call_site_value = self.builder.build_call(
-                                    boxed_any_from_int_fn,
-                                    &[index_val.into()],
-                                    &format!("box_{}", id)
-                                ).unwrap();
-
-                                let boxed_val = call_site_value.try_as_basic_value().left()
-                                    .ok_or_else(|| format!("Failed to create BoxedAny for {}", id))?;
-
-                                // Get the BoxedAny pointer from the scope stack
-                                if let Some(boxed_ptr) = self.scope_stack.get_variable(id) {
-                                    // Store the BoxedAny pointer
-                                    self.builder.build_store(*boxed_ptr, boxed_val).unwrap();
-                                }
-                            }
-                        }
 
                         for stmt in body {
                             if self
