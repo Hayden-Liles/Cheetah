@@ -537,32 +537,32 @@ pub extern "C" fn boxed_any_call_method(obj: *mut BoxedAny, method_name: *const 
             },
             type_tags::DICT => {
                 let dict_ptr = (*obj).data.ptr_val as *mut super::boxed_dict::BoxedDict;
-
+            
                 match method_name_str {
                     // ----------------------------------------------------------
                     //                  read-only helpers
                     // ----------------------------------------------------------
                     "keys" => {
                         if num_args != 0 { return super::boxed_any::boxed_any_none(); }
-
+            
                         let keys = super::boxed_dict::boxed_dict_keys(dict_ptr);
                         return super::boxed_list::boxed_any_from_list(keys);
                     }
-
+            
                     "values" => {
                         if num_args != 0 { return super::boxed_any::boxed_any_none(); }
-
+            
                         let vals = super::boxed_dict::boxed_dict_values(dict_ptr);
                         return super::boxed_list::boxed_any_from_list(vals);
                     }
-
+            
                     "items" => {
                         if num_args != 0 { return super::boxed_any::boxed_any_none(); }
-
+            
                         let items = super::boxed_dict::boxed_dict_items(dict_ptr);
                         return super::boxed_list::boxed_any_from_list(items);
                     }
-
+            
                     // ----------------------------------------------------------
                     //                        get
                     // ----------------------------------------------------------
@@ -571,26 +571,26 @@ pub extern "C" fn boxed_any_call_method(obj: *mut BoxedAny, method_name: *const 
                         if num_args < 1 || num_args > 2 || args.is_null() {
                             return super::boxed_any::boxed_any_none();
                         }
-
+            
                         let key      = *args;
                         let value    = super::boxed_dict::boxed_dict_get(dict_ptr, key);
                         let found    = !value.is_null()
                                     && (*value).tag != super::boxed_any::type_tags::NONE;
-
+            
                         if found {
                             // Key exists → return a clone so caller owns it
                             return super::boxed_any::boxed_any_clone(value);
                         }
-
+            
                         // Key missing: return default if provided, else None
                         if num_args == 2 {
                             let default_value = *args.add(1);
                             return super::boxed_any::boxed_any_clone(default_value);
                         }
-
+            
                         return super::boxed_any::boxed_any_none();
                     }
-
+            
                     // ----------------------------------------------------------
                     _ => {
                         // Unknown method name – return None (could raise later)
@@ -660,13 +660,7 @@ pub extern "C" fn boxed_any_get_item(container: *const BoxedAny, key: *const Box
                 // For lists, we expect the key to be an integer
                 if (*key).tag == type_tags::INT {
                     let list_ptr = (*container).data.ptr_val as *mut super::boxed_list::BoxedList;
-                    let mut index = (*key).data.int_val;
-
-                    // Handle negative indices (Python-style)
-                    if index < 0 {
-                        let list_len = super::boxed_list::boxed_list_len(list_ptr);
-                        index = list_len + index;
-                    }
+                    let index = (*key).data.int_val;
 
                     // Get the item from the list
                     let item = super::boxed_list::boxed_list_get(list_ptr, index);
@@ -690,13 +684,7 @@ pub extern "C" fn boxed_any_get_item(container: *const BoxedAny, key: *const Box
                 // For tuples, we expect the key to be an integer
                 if (*key).tag == type_tags::INT {
                     let tuple_ptr = (*container).data.ptr_val as *mut super::boxed_tuple::BoxedTuple;
-                    let mut index = (*key).data.int_val;
-
-                    // Handle negative indices (Python-style)
-                    if index < 0 {
-                        let tuple_len = (*tuple_ptr).length;
-                        index = tuple_len + index;
-                    }
+                    let index = (*key).data.int_val;
 
                     // Get the item from the tuple
                     let item = super::boxed_tuple::boxed_tuple_get(tuple_ptr, index);
