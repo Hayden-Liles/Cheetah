@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod boxed_any_tests {
     use cheetah::compiler::runtime::boxed_any::{
-        boxed_any_add, boxed_any_as_bool, boxed_any_as_float, boxed_any_as_string,
+        boxed_any_add, boxed_any_as_bool, boxed_any_as_float, boxed_any_as_int, boxed_any_as_string,
         boxed_any_clone, boxed_any_divide, boxed_any_equals, boxed_any_free, boxed_any_from_bool,
         boxed_any_from_float, boxed_any_from_int, boxed_any_from_string, boxed_any_multiply,
         boxed_any_none, boxed_any_not, boxed_any_subtract, boxed_any_to_bool, boxed_any_to_float,
-        boxed_any_to_int, type_tags,
+        boxed_any_to_int, boxed_any_to_string, type_tags,
     };
     use std::ffi::{CStr, CString};
+    use std::ptr;
 
     #[test]
     fn test_boxed_any_int() {
@@ -169,7 +170,7 @@ mod boxed_any_tests {
 
     #[test]
     fn test_boxed_any_comparison() {
-        {
+        unsafe {
             // Create BoxedAny values
             let a = boxed_any_from_int(10);
             let b = boxed_any_from_int(10);
@@ -188,7 +189,7 @@ mod boxed_any_tests {
 
     #[test]
     fn test_boxed_any_logical() {
-        {
+        unsafe {
             // Create BoxedAny values
             let t = boxed_any_from_bool(true);
             let f = boxed_any_from_bool(false);

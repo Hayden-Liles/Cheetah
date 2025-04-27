@@ -212,15 +212,30 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     Expr::Name { id, .. } => {
                         self.ensure_block_has_terminator();
 
-                        // With BoxedAny, we just need to load the pointer to the BoxedAny value
-                        // We don't need to convert types or handle different types differently
-                        if let Some(var_ptr) = self.scope_stack.get_variable_respecting_declarations(id) {
-                            if let Some(var_type) = self.scope_stack.get_type_respecting_declarations(id) {
-                                // Load the BoxedAny pointer
-                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                                let var_val = self.builder
-                                    .build_load(ptr_type, *var_ptr, &format!("load_{}", id))
-                                    .unwrap();
+                        if let Some(var_ptr) =
+                            self.scope_stack.get_variable_respecting_declarations(id)
+                        {
+                            if let Some(var_type) =
+                                self.scope_stack.get_type_respecting_declarations(id)
+                            {
+                                let is_nonlocal =
+                                    if let Some(current_scope) = self.scope_stack.current_scope() {
+                                        current_scope.is_nonlocal(id)
+                                    } else {
+                                        false
+                                    };
+
+                                let var_val = if is_nonlocal {
+                                    let llvm_type = self.get_llvm_type(&var_type);
+                                    self.builder
+                                        .build_load(llvm_type, *var_ptr, &format!("load_{}", id))
+                                        .unwrap()
+                                } else {
+                                    let llvm_type = self.get_llvm_type(&var_type);
+                                    self.builder
+                                        .build_load(llvm_type, *var_ptr, &format!("load_{}", id))
+                                        .unwrap()
+                                };
 
                                 result_stack.push(ExprResult {
                                     value: var_val,
@@ -229,63 +244,31 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                             } else {
                                 return Err(format!("Variable found but type unknown: {}", id));
                             }
-                        } else if let Some(var_ptr) = self.variables.get(id) {
-                            if let Some(var_type) = self.type_env.get(id) {
-                                // Load the BoxedAny pointer
-                                let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                                let var_val = self.builder
-                                    .build_load(ptr_type, *var_ptr, &format!("load_{}", id))
-                                    .unwrap();
-
-                                self.ensure_block_has_terminator();
-
-                                result_stack.push(ExprResult {
-                                    value: var_val,
-                                    ty: var_type.clone(),
-                                });
-                            } else {
-                                return Err(format!(
-                                    "Global variable found but type unknown: {}",
-                                    id
-                                ));
-                            }
                         } else {
-                            // If the variable doesn't exist, create a new BoxedAny None value
-                            // This mimics Python's behavior of creating variables on first use
+                            if let Some(var_ptr) = self.variables.get(id) {
+                                if let Some(var_type) = self.type_env.get(id) {
+                                    let llvm_type = self.get_llvm_type(var_type);
 
-                            // Get the boxed_any_none function
-                            let boxed_any_none_fn = self.module.get_function("boxed_any_none")
-                                .ok_or_else(|| "boxed_any_none function not found".to_string())?;
+                                    let var_val = self
+                                        .builder
+                                        .build_load(llvm_type, *var_ptr, &format!("load_{}", id))
+                                        .unwrap();
 
-                            // Call boxed_any_none to create a None value
-                            let call_site_value = self.builder.build_call(
-                                boxed_any_none_fn,
-                                &[],
-                                &format!("none_for_{}", id)
-                            ).unwrap();
+                                    self.ensure_block_has_terminator();
 
-                            let none_val = call_site_value.try_as_basic_value().left()
-                                .ok_or_else(|| format!("Failed to create None value for {}", id))?;
-
-                            // Allocate storage for the variable
-                            let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-                            let var_ptr = self.builder.build_alloca(ptr_type, id).unwrap();
-
-                            // Store the None value
-                            self.builder.build_store(var_ptr, none_val).unwrap();
-
-                            // Register the variable
-                            self.register_variable(id.to_string(), Type::Any);
-                            self.variables.insert(id.to_string(), var_ptr);
-
-                            if let Some(current_scope) = self.scope_stack.current_scope_mut() {
-                                current_scope.add_variable(id.to_string(), var_ptr, Type::Any);
+                                    result_stack.push(ExprResult {
+                                        value: var_val,
+                                        ty: var_type.clone(),
+                                    });
+                                } else {
+                                    return Err(format!(
+                                        "Global variable found but type unknown: {}",
+                                        id
+                                    ));
+                                }
+                            } else {
+                                return Err(format!("Undefined variable: {}", id));
                             }
-
-                            result_stack.push(ExprResult {
-                                value: none_val,
-                                ty: Type::Any,
-                            });
                         }
                     }
                     Expr::IfExp {
