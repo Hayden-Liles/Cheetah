@@ -1359,38 +1359,6 @@ fn register_runtime_functions(
         );
     }
 
-    // Register BoxedList functions
-    if let Err(e) = cheetah::compiler::runtime::boxed_list::register_boxed_list_runtime_functions(engine, module) {
-        println!(
-            "{}",
-            format!("Warning: Failed to register BoxedList functions: {}", e).bright_yellow()
-        );
-    }
-
-    // Register BoxedDict functions
-    if let Err(e) = cheetah::compiler::runtime::boxed_dict::register_boxed_dict_runtime_functions(engine, module) {
-        println!(
-            "{}",
-            format!("Warning: Failed to register BoxedDict functions: {}", e).bright_yellow()
-        );
-    }
-
-    // Register BoxedTuple functions
-    if let Err(e) = cheetah::compiler::runtime::boxed_tuple::register_boxed_tuple_runtime_functions(engine, module) {
-        println!(
-            "{}",
-            format!("Warning: Failed to register BoxedTuple functions: {}", e).bright_yellow()
-        );
-    }
-
-    // Register BoxedAny print functions
-    if let Err(e) = cheetah::compiler::runtime::boxed_print_ops::register_boxed_print_runtime_functions(engine, module) {
-        println!(
-            "{}",
-            format!("Warning: Failed to register BoxedAny print functions: {}", e).bright_yellow()
-        );
-    }
-
     Ok(())
 }
 
@@ -1593,19 +1561,6 @@ fn register_boxed_any_jit_functions(
     // Comparison operations
     if let Some(function) = module.get_function("boxed_any_equals") {
         engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_equals as usize);
-    }
-
-    // Logical operations
-    if let Some(function) = module.get_function("boxed_any_and") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_and as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_or") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_or as usize);
-    }
-
-    if let Some(function) = module.get_function("boxed_any_not") {
-        engine.add_global_mapping(&function, cheetah::compiler::runtime::boxed_any::boxed_any_not as usize);
     }
 
     Ok(())
