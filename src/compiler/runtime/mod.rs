@@ -3,7 +3,6 @@
 pub mod boxed_any;
 pub mod boxed_any_ops;
 pub mod boxed_any_contains;
-pub mod boxed_bigint;
 pub mod boxed_dict;
 pub mod boxed_list;
 pub mod boxed_print_ops;
@@ -34,9 +33,6 @@ pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Mod
 
     // Register BoxedAny contains functions
     boxed_any_contains::register_boxed_any_contains_functions(context, module);
-
-    // Register BoxedBigInt functions
-    boxed_bigint::register_boxed_bigint_functions(context, module);
 
     // Register BoxedList functions
     boxed_list::register_boxed_list_functions(context, module);

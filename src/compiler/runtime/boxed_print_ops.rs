@@ -7,7 +7,6 @@ use inkwell::execution_engine::ExecutionEngine;
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use libc;
 
 use super::boxed_any::{BoxedAny, type_tags};
 use super::buffer;
@@ -186,21 +185,6 @@ pub extern "C" fn print_boxed_any(value: *const BoxedAny) {
 
                 // Free the keys list
                 super::boxed_list::boxed_list_free(keys);
-            },
-            type_tags::BIGINT => {
-                if (*value).data.ptr_val.is_null() {
-                    buffer::write_str("0");
-                } else {
-                    let bigint_ptr = (*value).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
-                    let str_ptr = super::boxed_bigint::bigint_to_string(bigint_ptr);
-                    let c_str = CStr::from_ptr(str_ptr);
-                    let s = c_str.to_str().unwrap_or("0");
-                    buffer::write_str(s);
-
-                    // Free the temporary string
-                    libc::free(str_ptr as *mut std::ffi::c_void);
-                }
-                buffer::flush();
             },
             _ => {
                 // For other types, use a generic representation

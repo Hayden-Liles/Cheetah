@@ -860,65 +860,6 @@ pub extern "C" fn boxed_any_set_item(container: *mut BoxedAny, key: *mut BoxedAn
     }
 }
 
-/// Compute the nth Fibonacci number
-#[no_mangle]
-pub extern "C" fn boxed_any_fibonacci(n: *const BoxedAny) -> *mut BoxedAny {
-    if n.is_null() {
-        return boxed_any_none();
-    }
-
-    unsafe {
-        match (*n).tag {
-            type_tags::INT => {
-                let n_val = (*n).data.int_val;
-
-                // Handle negative input
-                if n_val < 0 {
-                    return boxed_any_none();
-                }
-
-                // For small values, use regular algorithm with i64
-                if n_val <= 92 {
-                    // F(92) is the largest Fibonacci number that fits in i64
-                    let mut a = 0i64;
-                    let mut b = 1i64;
-
-                    if n_val == 0 {
-                        return boxed_any_from_int(0);
-                    }
-
-                    for _ in 2..=n_val {
-                        let temp = a;
-                        a = b;
-                        b = temp + b;
-                    }
-
-                    return boxed_any_from_int(b);
-                } else {
-                    // For larger values, use the BigInt implementation
-                    let big_result = super::boxed_bigint::bigint_fib(n_val as u64);
-                    return super::boxed_bigint::boxed_any_from_bigint(big_result);
-                }
-            },
-            type_tags::BIGINT => {
-                // Convert BigInt to u64 if possible
-                let big_n = (*n).data.ptr_val as *const super::boxed_bigint::BigIntRaw;
-                let n_val = super::boxed_bigint::bigint_to_i64(big_n);
-                // Ensure it's positive
-                let n_val = if n_val < 0 { 0 } else { n_val as u64 };
-
-                // Use the BigInt implementation
-                let big_result = super::boxed_bigint::bigint_fib(n_val);
-                return super::boxed_bigint::boxed_any_from_bigint(big_result);
-            },
-            _ => {
-                // Type error - can only compute Fibonacci for integers
-                return boxed_any_none();
-            }
-        }
-    }
-}
-
 /// Register BoxedAny operations for JIT execution
 pub fn register_boxed_any_ops_runtime_functions(
     engine: &inkwell::execution_engine::ExecutionEngine<'_>,
@@ -935,11 +876,6 @@ pub fn register_boxed_any_ops_runtime_functions(
 
     if let Some(f) = module.get_function("boxed_any_multiply") {
         engine.add_global_mapping(&f, super::boxed_any::boxed_any_multiply as usize);
-    }
-
-    // Fibonacci function
-    if let Some(f) = module.get_function("boxed_any_fibonacci") {
-        engine.add_global_mapping(&f, boxed_any_fibonacci as usize);
     }
 
     if let Some(f) = module.get_function("boxed_any_divide") {
@@ -1122,9 +1058,6 @@ pub fn register_boxed_any_ops_functions<'ctx>(
 
     // Register bitwise NOT function
     module.add_function("boxed_any_bitwise_not", unary_op_fn_type, None);
-
-    // Register Fibonacci function
-    module.add_function("boxed_any_fibonacci", unary_op_fn_type, None);
 
     // Register function to get an item from a container
     module.add_function("boxed_any_get_item", get_item_fn_type, None);
