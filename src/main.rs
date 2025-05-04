@@ -1189,15 +1189,6 @@ fn register_runtime_functions(
         );
     }
 
-    if let Err(e) = cheetah::compiler::runtime::list_print::register_list_print_runtime_functions(
-        engine, module,
-    ) {
-        println!(
-            "{}",
-            format!("Warning: Failed to register list print runtime functions: {}", e).bright_yellow()
-        );
-    }
-
     if let Some(function) = module.get_function("int_to_string") {
         {
             engine.add_global_mapping(&function, jit_int_to_string as usize);
@@ -1360,8 +1351,6 @@ fn register_runtime_functions(
         }
     }
 
-
-
     Ok(())
 }
 
@@ -1469,5 +1458,3 @@ extern "C" fn jit_string_length(string: *const c_char) -> i64 {
     let s = cstr.to_str().unwrap_or("");
     s.len() as i64
 }
-
-

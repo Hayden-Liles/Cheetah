@@ -6,7 +6,6 @@ pub mod dict;
 pub mod exception;
 pub mod int_ops;
 pub mod list;
-pub mod list_print;
 pub mod memory_profiler;
 pub mod min_max_ops;
 pub mod parallel_ops;
@@ -21,9 +20,6 @@ use inkwell::module::Module;
 pub fn register_runtime_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
     // Register list operation functions
     list::register_list_functions(context, module);
-
-    // Register list printing functions
-    list_print::register_list_print_functions(context, module);
 
     // Register string operation functions
     string::register_string_functions(context, module);
