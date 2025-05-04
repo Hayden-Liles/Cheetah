@@ -1696,7 +1696,7 @@ impl ExprParser for Parser {
                             column,
                         })
                     } else {
-                        let first_expr = self.parse_expression()?;
+                        let first_expr = self.parse_or_test()?;
 
                         if self.match_token(TokenType::For) {
                             return self.with_context(ParserContext::Comprehension, |this| {

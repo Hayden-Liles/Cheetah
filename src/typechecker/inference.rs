@@ -844,24 +844,15 @@ impl TypeInference {
             return Ok(Type::Any);
         }
 
-        if types.len() == 1 {
-            return Ok(types[0].clone());
-        }
-
         let mut result = types[0].clone();
-
         for ty in &types[1..] {
-            if let Some(common) = Type::unify(&result, ty) {
-                result = common;
-            } else {
-                return Err(TypeError::IncompatibleTypes {
-                    expected: result,
-                    got: ty.clone(),
-                    operation: "type unification".to_string(),
-                });
+            match Type::unify(&result, ty) {
+                // happy path – we found something both sides agree on
+                Some(common) => result = common,
+                // heterogeneous ‑> treat as dynamic
+                None => return Ok(Type::Any),
             }
         }
-
         Ok(result)
     }
 
