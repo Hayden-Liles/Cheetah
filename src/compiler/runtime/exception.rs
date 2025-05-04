@@ -170,44 +170,28 @@ pub fn register_exception_state<'ctx>(
     // Global variable
     let global = module.add_global(ptr_t, None, "__current_exception");
     global.set_initializer(&ptr_t.const_null());
-    // get_current_exception
-    let get_fn = module.add_function(
+
+    // Declare these functions as external instead of defining them
+    // This prevents duplicate symbol errors during linking
+
+    // get_current_exception - declare as external
+    module.add_function(
         "get_current_exception",
         ptr_t.fn_type(&[], false),
         None,
     );
-    {
-        let entry = context.append_basic_block(get_fn, "entry");
-        let builder = context.create_builder();
-        builder.position_at_end(entry);
-        let val = builder.build_load(ptr_t, global.as_pointer_value(), "val").unwrap();
-        builder.build_return(Some(&val)).unwrap();
-    }
-    // set_current_exception
-    let set_fn = module.add_function(
+
+    // set_current_exception - declare as external
+    module.add_function(
         "set_current_exception",
         context.void_type().fn_type(&[ptr_t.into()], false),
         None,
     );
-    {
-        let entry = context.append_basic_block(set_fn, "entry");
-        let builder = context.create_builder();
-        builder.position_at_end(entry);
-        let exc = set_fn.get_nth_param(0).unwrap().into_pointer_value();
-        let _ = builder.build_store(global.as_pointer_value(), exc);
-        builder.build_return(None).unwrap();
-    }
-    // clear_current_exception
-    let clear_fn = module.add_function(
+
+    // clear_current_exception - declare as external
+    module.add_function(
         "clear_current_exception",
         context.void_type().fn_type(&[], false),
         None,
     );
-    {
-        let entry = context.append_basic_block(clear_fn, "entry");
-        let builder = context.create_builder();
-        builder.position_at_end(entry);
-        let _ = builder.build_store(global.as_pointer_value(), ptr_t.const_null());
-        builder.build_return(None).unwrap();
-    }
 }
