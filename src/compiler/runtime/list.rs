@@ -138,6 +138,8 @@ pub extern "C" fn list_len(list_ptr: *mut RawList) -> i64 {
     }
 }
 
+
+
 /// Register list operation functions in the LLVM module
 pub fn register_list_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
     let _list_struct_type = context.struct_type(
@@ -215,6 +217,15 @@ pub fn register_list_functions<'ctx>(context: &'ctx Context, module: &mut Module
         context.i64_type().fn_type(&[context.ptr_type(AddressSpace::default()).into()], false),
         None,
     );
+
+    module.add_function(
+        "list_to_string",
+        context.ptr_type(AddressSpace::default()).fn_type(
+            &[context.ptr_type(AddressSpace::default()).into()],
+            false
+        ),
+        None,
+    );
 }
 
 pub fn get_list_struct_type<'ctx>(context: &'ctx Context) -> StructType<'ctx> {
@@ -247,5 +258,6 @@ pub fn register_list_runtime_functions(
     if let Some(f) = module.get_function("list_slice") { engine.add_global_mapping(&f, list_slice as usize); }
     if let Some(f) = module.get_function("list_free") { engine.add_global_mapping(&f, list_free as usize); }
     if let Some(f) = module.get_function("list_len") { engine.add_global_mapping(&f, list_len as usize); }
+    // list_to_string is registered in list_print.rs
     Ok(())
 }

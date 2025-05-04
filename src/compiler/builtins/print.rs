@@ -15,33 +15,38 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // print_string
         if m.get_function("print_string").is_none() {
-            let t = ctx.void_type().fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
+            let t = ctx
+                .void_type()
+                .fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
             m.add_function("print_string", t, None);
         }
         // print_int
         if m.get_function("print_int").is_none() {
-            let t = ctx.void_type().fn_type(&[ctx.i64_type().into()], false);
+            let t = ctx
+                .void_type()
+                .fn_type(&[ctx.i64_type().into()], false);
             m.add_function("print_int", t, None);
         }
         // print_float
         if m.get_function("print_float").is_none() {
-            let t = ctx.void_type().fn_type(&[ctx.f64_type().into()], false);
+            let t = ctx
+                .void_type()
+                .fn_type(&[ctx.f64_type().into()], false);
             m.add_function("print_float", t, None);
         }
         // print_bool
         if m.get_function("print_bool").is_none() {
-            let t = ctx.void_type().fn_type(&[ctx.bool_type().into()], false);
+            let t = ctx
+                .void_type()
+                .fn_type(&[ctx.bool_type().into()], false);
             m.add_function("print_bool", t, None);
         }
         // println_string
         if m.get_function("println_string").is_none() {
-            let t = ctx.void_type().fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
+            let t = ctx
+                .void_type()
+                .fn_type(&[ctx.ptr_type(AddressSpace::default()).into()], false);
             m.add_function("println_string", t, None);
-        }
-
-        // Bind the high‑level `print` to print_string (for overloading simplicity)
-        if let Some(f) = m.get_function("print_string") {
-            self.functions.insert("print".to_string(), f);
         }
     }
 
@@ -58,19 +63,27 @@ impl<'ctx> CompilationContext<'ctx> {
     }
 
     /// Compile a call to the print() function
-    pub fn compile_print_call(
-        &mut self,
-        args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        let print_str_fn   = self.module.get_function("print_string")
+    pub fn compile_print_call(&mut self, args: &[Expr]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Look up runtime print functions
+        let print_str_fn = self
+            .module
+            .get_function("print_string")
             .ok_or("print_string not found".to_string())?;
-        let print_int_fn   = self.module.get_function("print_int")
+        let print_int_fn = self
+            .module
+            .get_function("print_int")
             .ok_or("print_int not found".to_string())?;
-        let print_flt_fn   = self.module.get_function("print_float")
+        let print_flt_fn = self
+            .module
+            .get_function("print_float")
             .ok_or("print_float not found".to_string())?;
-        let print_bool_fn  = self.module.get_function("print_bool")
+        let print_bool_fn = self
+            .module
+            .get_function("print_bool")
             .ok_or("print_bool not found".to_string())?;
-        let println_fn     = self.module.get_function("println_string")
+        let println_fn = self
+            .module
+            .get_function("println_string")
             .ok_or("println_string not found".to_string())?;
 
         for (i, arg) in args.iter().enumerate() {
@@ -88,6 +101,68 @@ impl<'ctx> CompilationContext<'ctx> {
                 }
                 Type::Bool => {
                     let _ = self.builder.build_call(print_bool_fn, &[val.into()], "print_bool");
+                }
+                Type::List(inner_ty) => {
+                    match *inner_ty {
+                        Type::Int => {
+                            let load_i = self.builder.build_load(
+                                self.llvm_context.i64_type(),
+                                val.into_pointer_value(),
+                                "load_int"
+                            ).unwrap().into_int_value();
+                            let _ = self.builder.build_call(print_int_fn, &[load_i.into()], "print_int");
+                        }
+                        Type::Float => {
+                            let load_f = self.builder.build_load(
+                                self.llvm_context.f64_type(),
+                                val.into_pointer_value(),
+                                "load_float"
+                            ).unwrap().into_float_value();
+                            let _ = self.builder.build_call(print_flt_fn, &[load_f.into()], "print_flt");
+                        }
+                        Type::String => {
+                            let str_ptr = self.builder.build_load(
+                                self.llvm_context.ptr_type(AddressSpace::default()),
+                                val.into_pointer_value(),
+                                "load_str"
+                            ).unwrap().into_pointer_value();
+                            let _ = self.builder.build_call(print_str_fn, &[str_ptr.into()], "print_str");
+                        }
+                        Type::Bool => {
+                            let load_b = self.builder.build_load(
+                                self.llvm_context.bool_type(),
+                                val.into_pointer_value(),
+                                "load_bool"
+                            ).unwrap().into_int_value();
+                            let _ = self.builder.build_call(print_bool_fn, &[load_b.into()], "print_bool");
+                        }
+                        Type::List(_) => {
+                            let list_to_string = self
+                                .module
+                                .get_function("list_to_string")
+                                .ok_or("list_to_string not found".to_string())?;
+                            let call_result = self.builder.build_call(
+                                list_to_string,
+                                &[val.into()],
+                                "sublist_to_string"
+                            )
+                            .unwrap();
+                            let str_val = call_result
+                                .try_as_basic_value()
+                                .left()
+                                .unwrap()
+                                .into_pointer_value();
+                            let _ = self.builder.build_call(print_str_fn, &[str_val.into()], "print_str");
+                        }
+                        _ => {
+                            let ph = self.make_cstr("ph", b"<unsupported>\0");
+                            let _ = self.builder.build_call(print_str_fn, &[ph.into()], "print_ph");
+                        }
+                    }
+                }
+                Type::None => {
+                    let none_ptr = self.make_cstr("none", b"None\0");
+                    let _ = self.builder.build_call(print_str_fn, &[none_ptr.into()], "print_none");
                 }
                 other => {
                     // Fallback: print a placeholder for unsupported types
