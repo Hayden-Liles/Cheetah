@@ -994,99 +994,83 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                         // Check if this is a method call on a list
                         if id == "append" && args.len() == 1 {
-                            // Look for a pending method call
-                            for (global_name, (method_name, _element_type)) in self.pending_method_calls.clone() {
-                                if method_name == "append" {
-                                    // Get the list pointer from the global variable
-                                    let global = self.module.get_global(&global_name).unwrap();
-                                    let list_ptr = self.builder
-                                        .build_load(
-                                            self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
-                                            global.as_pointer_value(),
-                                            "load_list_ptr"
-                                        )
-                                        .unwrap()
-                                        .into_pointer_value();
-
-                                    // Get the list_append function
-                                    let list_append_fn = match self.module.get_function("list_append") {
-                                        Some(f) => f,
-                                        None => return Err("list_append function not found".to_string()),
-                                    };
-
-                                    // Prepare the argument
-                                    let arg_val = arg_values[0];
-                                    let arg_type = &arg_types[0];
-
-                                    let element_ptr = if crate::compiler::types::is_reference_type(arg_type) {
-                                        arg_val
-                                    } else {
-                                        let element_alloca = self
-                                            .builder
-                                            .build_alloca(arg_val.get_type(), "list_append_element")
-                                            .unwrap();
-                                        self.builder.build_store(element_alloca, arg_val).unwrap();
-                                        element_alloca.into()
-                                    };
-
-                                    // Call list_append
-                                    self.builder
-                                        .build_call(
-                                            list_append_fn,
-                                            &[list_ptr.into(), element_ptr.into()],
-                                            "list_append_call",
-                                        )
-                                        .unwrap();
-
-                                    // Remove the pending method call
-                                    self.pending_method_calls.remove(&global_name);
-
-                                    // Return None as the result
-                                    return Ok((self.llvm_context.i32_type().const_zero().into(), Type::None));
-                                }
-                            }
-
-                            // If we get here, we didn't find a pending method call
-                            // This might be a direct call to append, so let's try to handle it
-
-                            // Get the list_append function
-                            let list_append_fn = match self.module.get_function("list_append") {
-                                Some(f) => f,
-                                None => return Err("list_append function not found".to_string()),
-                            };
-
-                            // Special case for seq.append in fibonacci function
-                            let seq_ptr = self.scope_stack.get_variable_respecting_declarations("seq");
-                            if seq_ptr.is_some() {
-                                let list_ptr = seq_ptr.unwrap();
-
-                                // Prepare the argument
-                                let arg_val = arg_values[0];
-                                let arg_type = &arg_types[0];
-
-                                let element_ptr = if crate::compiler::types::is_reference_type(arg_type) {
-                                    arg_val
-                                } else {
-                                    let element_alloca = self
-                                        .builder
-                                        .build_alloca(arg_val.get_type(), "list_append_element")
-                                        .unwrap();
-                                    self.builder.build_store(element_alloca, arg_val).unwrap();
-                                    element_alloca.into()
-                                };
-
-                                // Call list_append
+                            // Where is the list pointer coming from?
+                            let list_ptr: inkwell::values::PointerValue<'ctx> = if let Some((global_name, _)) =
+                                self.pending_method_calls
+                                    .clone()
+                                    .into_iter()
+                                    .find(|(_, (m, _))| m == "append")
+                            {
+                                // ① deferred “obj.append(...)”  — load the global list variable
+                                let glob = self.module.get_global(&global_name).unwrap();
+                                self.pending_method_calls.remove(&global_name);
                                 self.builder
-                                    .build_call(
-                                        list_append_fn,
-                                        &[(*list_ptr).into(), element_ptr.into()],
-                                        "list_append_call",
+                                    .build_load(
+                                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                        glob.as_pointer_value(),
+                                        "load_list_ptr",
                                     )
+                                    .unwrap()
+                                    .into_pointer_value()
+                            } else if let Some(ptr) = self
+                                .scope_stack
+                                .get_variable_respecting_declarations("seq")
+                            {
+                                // ② special‑cased fibonacci/seq.append(...)
+                                *ptr
+                            } else {
+                                return Err("cannot find list object for append() call".to_string());
+                            };
+                        
+                            // Prepare the element value ------------------------------------------------
+                            let (arg_val, arg_type) = {
+                                // the single positional argument
+                                let (v, t) = self.compile_expr(&args[0])?;
+                                (v, t)
+                            };
+                        
+                            // If primitive → spill into alloca so we can pass a pointer
+                            let elem_ptr = if crate::compiler::types::is_reference_type(&arg_type) {
+                                arg_val
+                            } else {
+                                let slot = self
+                                    .builder
+                                    .build_alloca(arg_val.get_type(), "append_elem")
                                     .unwrap();
-
-                                // Return None as the result
-                                return Ok((self.llvm_context.i32_type().const_zero().into(), Type::None));
-                            }
+                                self.builder.build_store(slot, arg_val).unwrap();
+                                slot.into()
+                            };
+                        
+                            // Choose the tagged append helper and build the tag constant --------------
+                            let append_tagged_fn = self
+                                .module
+                                .get_function("list_append_tagged")
+                                .ok_or("list_append_tagged not found")?;
+                        
+                            use crate::compiler::runtime::list::TypeTag;
+                            let tag = match &arg_type {
+                                Type::None => TypeTag::None_,
+                                Type::Bool => TypeTag::Bool,
+                                Type::Int => TypeTag::Int,
+                                Type::Float => TypeTag::Float,
+                                Type::String => TypeTag::String,
+                                Type::List(_) => TypeTag::List,
+                                Type::Tuple(_) => TypeTag::Tuple,
+                                _ => TypeTag::Any,
+                            };
+                            let tag_val = self.llvm_context.i8_type().const_int(tag as u64, false);
+                        
+                            // Call list_append_tagged(list_ptr, elem_ptr, tag)
+                            self.builder
+                                .build_call(
+                                    append_tagged_fn,
+                                    &[list_ptr.into(), elem_ptr.into(), tag_val.into()],
+                                    "list_append_tagged_call",
+                                )
+                                .unwrap();
+                        
+                            // append() returns None
+                            return Ok((self.llvm_context.i32_type().const_zero().into(), Type::None));
                         }
 
                         if id == "len" {
@@ -1875,104 +1859,87 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     }
 
     fn build_list(
-    &self,
-    elements: Vec<(BasicValueEnum<'ctx>, Type)>,
-    common_type: &Type,
-) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-    use crate::compiler::types::{is_reference_type, Type};
-    use crate::compiler::runtime::list::TypeTag;
-
-    // ────────────────────────────────────────────────────────────────
-    // (1) allocate the RawList with enough capacity
-    // ────────────────────────────────────────────────────────────────
-    let with_cap = self
-        .module
-        .get_function("list_with_capacity")
-        .ok_or("list_with_capacity not found")?;
-    let len_val = self
-        .llvm_context
-        .i64_type()
-        .const_int(elements.len() as u64, false);
-    let list_ptr = self
-        .builder
-        .build_call(with_cap, &[len_val.into()], "list.new")
-        .unwrap()
-        .try_as_basic_value()
-        .left()
-        .ok_or("list_with_capacity returned void")?
-        .into_pointer_value();
-
-    // ────────────────────────────────────────────────────────────────
-    // (2) choose append routine
-    // ────────────────────────────────────────────────────────────────
-    let any_list = matches!(common_type, Type::Any);
-    let append_fn = if any_list {
-        self.module
+        &self,
+        elements: Vec<(BasicValueEnum<'ctx>, Type)>,
+        common_type: &Type,
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        use crate::compiler::runtime::list::TypeTag;
+        use crate::compiler::types::{is_reference_type, Type};
+    
+        // ── 1. allocate RawList with enough capacity ───────────────────
+        let with_cap = self
+            .module
+            .get_function("list_with_capacity")
+            .ok_or("list_with_capacity not found")?;
+        let len_val = self
+            .llvm_context
+            .i64_type()
+            .const_int(elements.len() as u64, false);
+        let list_ptr = self
+            .builder
+            .build_call(with_cap, &[len_val.into()], "list.new").unwrap()
+            .try_as_basic_value()
+            .left()
+            .ok_or("list_with_capacity returned void")?
+            .into_pointer_value();
+    
+        // ── 2. decide once which append helper we will use ─────────────
+        let append_tagged = self
+            .module
             .get_function("list_append_tagged")
-            .ok_or("list_append_tagged not found")?
-    } else {
-        self.module
+            .ok_or("list_append_tagged not found")?;
+        let append_plain = self
+            .module
             .get_function("list_append")
-            .ok_or("list_append not found")?
-    };
-
-    // Small helper to map `Type` → `TypeTag`
-    let tag_const = |ty: &Type, ctx: &'ctx inkwell::context::Context| {
-        let tag = match ty {
-            Type::None => TypeTag::None_,
-            Type::Bool => TypeTag::Bool,
-            Type::Int => TypeTag::Int,
-            Type::Float => TypeTag::Float,
-            Type::String => TypeTag::String,
-            Type::List(_) => TypeTag::List,
-            Type::Tuple(_) => TypeTag::Tuple,
-            _ => TypeTag::Any,
+            .ok_or("list_append not found")?;
+        let use_tagged = matches!(common_type, Type::Any);
+    
+        // helper: map Type → TypeTag (u8)
+        let tag_const = |ty: &Type, ctx: &'ctx inkwell::context::Context| {
+            let tag = match ty {
+                Type::None => TypeTag::None_,
+                Type::Bool => TypeTag::Bool,
+                Type::Int => TypeTag::Int,
+                Type::Float => TypeTag::Float,
+                Type::String => TypeTag::String,
+                Type::List(_) => TypeTag::List,
+                Type::Tuple(_) => TypeTag::Tuple,
+                _ => TypeTag::Any,
+            };
+            ctx.i8_type().const_int(tag as u64, false)
         };
-        ctx.i8_type().const_int(tag as u64, false)
-    };
-
-    // ────────────────────────────────────────────────────────────────
-    // (3) append every literal
-    // ────────────────────────────────────────────────────────────────
-    for (idx, (value, ty)) in elements.iter().enumerate() {
-        // decide whether we must spill the *value* into an alloca
-        let elem_ptr = if is_reference_type(ty) {
-            // already a pointer (list, string, dict, …)
-            *value
-        } else {
-            // primitive – store by value and pass its address
-            let slot = self
-                .builder
-                .build_alloca(value.get_type(), &format!("lit{}_slot", idx))
-                .unwrap();
-            self.builder.build_store(slot, *value).unwrap();
-            slot.into()
-        };
-
-        if any_list {
-            // append with (ptr, tag)
-            let tag = tag_const(ty, self.llvm_context);
-            self.builder
-                .build_call(
-                    append_fn,
+    
+        // ── 3. emit one append call per literal ────────────────────────
+        for (idx, (value, ty)) in elements.iter().enumerate() {
+            // ensure primitives are passed by address
+            let elem_ptr = if is_reference_type(ty) {
+                *value
+            } else {
+                let slot = self
+                    .builder
+                    .build_alloca(value.get_type(), &format!("lit{}_slot", idx)).unwrap();
+                self.builder.build_store(slot, *value).unwrap();
+                slot.into()
+            };
+    
+            if use_tagged {
+                let tag = tag_const(ty, self.llvm_context);
+                self.builder.build_call(
+                    append_tagged,
                     &[list_ptr.into(), elem_ptr.into(), tag.into()],
                     &format!("append_tagged_{}", idx),
-                )
-                .unwrap();
-        } else {
-            // homogeneous list – original two‑arg call
-            self.builder
-                .build_call(
-                    append_fn,
+                ).unwrap();
+            } else {
+                self.builder.build_call(
+                    append_plain,
                     &[list_ptr.into(), elem_ptr.into()],
                     &format!("append_{}", idx),
-                )
-                .unwrap();
+                ).unwrap();
+            }
         }
+    
+        Ok(list_ptr)
     }
-
-    Ok(list_ptr)
-}
 
     fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         let tuple_type = self.llvm_context.struct_type(&[], false);

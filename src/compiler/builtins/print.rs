@@ -282,11 +282,14 @@ impl<'ctx> CompilationContext<'ctx> {
         list_ptr: PointerValue<'ctx>,
         elem_ty: &Type,
     ) -> Result<(), String> {
-        let ctx               = self.llvm_context;
-        let i64_t             = ctx.i64_type();
-        let i8_t              = ctx.i8_type();
-        let void_ptr_t        = ctx.ptr_type(AddressSpace::default());          // i8*
-        let void_ptr_ptr_t    = void_ptr_t.ptr_type(AddressSpace::default());   // i8**
+        use inkwell::{AddressSpace, IntPredicate};
+        use crate::compiler::runtime::list::{get_list_struct_type, TypeTag};
+    
+        let ctx            = self.llvm_context;
+        let i64_t          = ctx.i64_type();
+        let i8_t           = ctx.i8_type();
+        let void_ptr_t     = ctx.ptr_type(AddressSpace::default());          // i8*
+        let void_ptr_ptr_t = void_ptr_t.ptr_type(AddressSpace::default());   // i8**
     
         // RawList layout (length, capacity, data, tags)
         let rawlist_ty = get_list_struct_type(ctx);
@@ -315,24 +318,22 @@ impl<'ctx> CompilationContext<'ctx> {
         let none_lit = self.make_cstr("none", b"None\0");
 
         // print “[”
-        self.builder.build_call(print_str, &[lbrack.into()], "plb").unwrap();
+        self.builder.build_call(print_str, &[lbrack.into()], "pr_lb").unwrap();
 
         // len = list.length
-        let len_ptr = self
-            .builder
-            .build_struct_gep(rawlist_ty, list_ptr, 0, "len_ptr")
-            .unwrap();
-        let len_val = self
-            .builder
-            .build_load(i64_t, len_ptr, "len")
-            .unwrap()
-            .into_int_value();
+        let len_val = {
+            let len_ptr = self
+                .builder
+                .build_struct_gep(rawlist_ty, list_ptr, 0, "len_ptr").unwrap();
+            self.builder
+                .build_load(i64_t, len_ptr, "len").unwrap()
+                .into_int_value()
+        };
 
         // i = 0
         let idx_ptr = self.builder.build_alloca(i64_t, "idx").unwrap();
         self.builder.build_store(idx_ptr, i64_t.const_zero()).unwrap();
 
-        // ‑‑‑ basic‑blocks
         let cur_fn   = self.current_fn();
         let bb_cond  = ctx.append_basic_block(cur_fn, "list.cond");
         let bb_body  = ctx.append_basic_block(cur_fn, "list.body");
@@ -343,16 +344,12 @@ impl<'ctx> CompilationContext<'ctx> {
         self.builder.position_at_end(bb_cond);
         let idx_val = self
             .builder
-            .build_load(i64_t, idx_ptr, "idx_val")
-            .unwrap()
+            .build_load(i64_t, idx_ptr, "idx_val").unwrap()
             .into_int_value();
         let cmp = self
             .builder
-            .build_int_compare(IntPredicate::ULT, idx_val, len_val, "cmp")
-            .unwrap();
-        self.builder
-            .build_conditional_branch(cmp, bb_body, bb_after)
-            .unwrap();
+            .build_int_compare(IntPredicate::ULT, idx_val, len_val, "cmp").unwrap();
+        self.builder.build_conditional_branch(cmp, bb_body, bb_after).unwrap();
 
         // ———————————————————  body
         self.builder.position_at_end(bb_body);
@@ -360,11 +357,10 @@ impl<'ctx> CompilationContext<'ctx> {
         // data_ptr = (*list).data      — **load as i8 ** not i8*
         let data_ptr_ptr = self
             .builder
-            .build_struct_gep(rawlist_ty, list_ptr, 2, "data_ptr_ptr")
-            .unwrap();
+            .build_struct_gep(rawlist_ty, list_ptr, 2, "data_ptr_ptr").unwrap();
         let data_ptr = self
             .builder
-            .build_load(void_ptr_ptr_t, data_ptr_ptr, "data_ptr").unwrap()      // ← fixed type
+            .build_load(void_ptr_ptr_t, data_ptr_ptr, "data_ptr").unwrap()
             .into_pointer_value();
 
         // elem_ptr = data_ptr[idx]
@@ -372,9 +368,8 @@ impl<'ctx> CompilationContext<'ctx> {
             self.builder
                 .build_in_bounds_gep(void_ptr_t, data_ptr, &[idx_val], "elem_addr").unwrap()
         };
-        let elem_ptr = self
-            .builder
-            .build_load(void_ptr_t, elem_addr, "elem_ptr").unwrap();
+        let elem_ptr = self.builder.build_load(void_ptr_t, elem_addr, "elem_ptr").unwrap();
+
 
         // ----------------------------------------------------------
         // STATIC path  (homogeneous list, elem_ty != Any)

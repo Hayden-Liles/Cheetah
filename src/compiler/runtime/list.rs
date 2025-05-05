@@ -65,22 +65,7 @@ pub extern "C" fn list_with_capacity(cap: i64) -> *mut RawList {
 
 #[no_mangle]
 pub extern "C" fn list_append(list_ptr: *mut RawList, value: *mut c_void) {
-    unsafe {
-        let rl = &mut *list_ptr;
-        if rl.length == rl.capacity {
-            let new_cap = if rl.capacity == 0 { 4 } else { rl.capacity * 2 };
-            let size = (new_cap as usize) * std::mem::size_of::<*mut c_void>();
-            let new_data = if rl.data.is_null() {
-                malloc(size)
-            } else {
-                realloc(rl.data as *mut _, size)
-            } as *mut *mut c_void;
-            rl.data = new_data;
-            rl.capacity = new_cap;
-        }
-        *rl.data.add(rl.length as usize) = value;
-        rl.length += 1;
-    }
+    list_append_tagged(list_ptr, value, TypeTag::Any);
 }
 
 #[no_mangle]
