@@ -10,24 +10,37 @@ use libc::{calloc, free, malloc, realloc};
 use std::ffi::c_void;
 use std::ptr;
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypeTag {
+    Any   = 0,
+    None_ = 1,
+    Bool  = 2,
+    Int   = 3,
+    Float = 4,
+    String = 5,
+    List  = 6,
+    Tuple = 7,
+}
+
 /// C-compatible raw list struct
 #[repr(C)]
 pub struct RawList {
-    pub length: i64,
+    pub length:   i64,
     pub capacity: i64,
-    pub data: *mut *mut c_void,
+    pub data:     *mut *mut c_void,
+    pub tags:     *mut TypeTag,
 }
 
 #[no_mangle]
 pub extern "C" fn list_new() -> *mut RawList {
-    let ptr = unsafe { malloc(std::mem::size_of::<RawList>()) as *mut RawList };
-    if ptr.is_null() {
-        return ptr;
-    }
+    let ptr = unsafe { malloc(std::mem::size_of::<RawList>()) } as *mut RawList;
+    if ptr.is_null() { return ptr; }
     unsafe {
-        (*ptr).length = 0;
+        (*ptr).length   = 0;
         (*ptr).capacity = 0;
-        (*ptr).data = ptr::null_mut();
+        (*ptr).data     = ptr::null_mut();
+        (*ptr).tags     = ptr::null_mut();
     }
     ptr
 }
@@ -37,8 +50,15 @@ pub extern "C" fn list_with_capacity(cap: i64) -> *mut RawList {
     unsafe {
         let rl = list_new();
         if rl.is_null() { return rl; }
+
         (*rl).capacity = cap;
-        (*rl).data = calloc(cap as usize, std::mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+        (*rl).data = calloc(cap as usize,
+                            std::mem::size_of::<*mut c_void>())
+                     as *mut *mut c_void;
+
+        (*rl).tags = calloc(cap as usize,
+                            std::mem::size_of::<TypeTag>())
+                     as *mut TypeTag;
         rl
     }
 }
@@ -60,6 +80,53 @@ pub extern "C" fn list_append(list_ptr: *mut RawList, value: *mut c_void) {
         }
         *rl.data.add(rl.length as usize) = value;
         rl.length += 1;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn list_append_tagged(list_ptr: *mut RawList,
+                                     value: *mut c_void,
+                                     tag:   TypeTag)
+{
+    unsafe {
+        let rl = &mut *list_ptr;
+
+        // Grow both arrays together
+        if rl.length == rl.capacity {
+            let new_cap      = if rl.capacity == 0 { 4 } else { rl.capacity * 2 };
+            let bytes_ptrs   = new_cap as usize * std::mem::size_of::<*mut c_void>();
+            let bytes_tags   = new_cap as usize * std::mem::size_of::<TypeTag>();
+
+            rl.data = if rl.data.is_null() {
+                malloc(bytes_ptrs)
+            } else {
+                realloc(rl.data as *mut _, bytes_ptrs)
+            } as *mut *mut c_void;
+
+            rl.tags = if rl.tags.is_null() {
+                malloc(bytes_tags)
+            } else {
+                realloc(rl.tags as *mut _, bytes_tags)
+            } as *mut TypeTag;
+
+            rl.capacity = new_cap;
+        }
+
+        *rl.data.add(rl.length as usize) = value;
+        *rl.tags.add(rl.length as usize) = tag;    // store tag in lock‑step
+        rl.length += 1;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn list_get_tag(list_ptr: *mut RawList, index: i64) -> TypeTag {
+    unsafe {
+        let rl = &*list_ptr;
+        if index < 0 || index >= rl.length {
+            TypeTag::Any
+        } else {
+            *rl.tags.add(index as usize)
+        }
     }
 }
 
@@ -142,9 +209,12 @@ pub extern "C" fn list_len(list_ptr: *mut RawList) -> i64 {
 pub fn register_list_functions<'ctx>(context: &'ctx Context, module: &mut Module<'ctx>) {
     let _list_struct_type = context.struct_type(
         &[
-            context.i64_type().into(), context.i64_type().into(),
-            context.ptr_type(AddressSpace::default()).into(),
-        ], false);
+            context.i64_type().into(),          // length
+            context.i64_type().into(),          // capacity
+            context.ptr_type(AddressSpace::default()).into(), // data **
+            context.ptr_type(AddressSpace::default()).into(), // tags **
+        ],
+        false);
 
     module.add_function(
         "list_new",
@@ -218,14 +288,23 @@ pub fn register_list_functions<'ctx>(context: &'ctx Context, module: &mut Module
 }
 
 pub fn get_list_struct_type<'ctx>(context: &'ctx Context) -> StructType<'ctx> {
-    context.struct_type(
+    // If we've already created it, just return the handle
+    if let Some(st) = context.get_struct_type("RawList") {
+        return st;
+    }
+
+    // Otherwise create an *opaque* named struct and set its body once
+    let st = context.opaque_struct_type("RawList");
+    st.set_body(
         &[
-            context.i64_type().into(),
-            context.i64_type().into(),
-            context.ptr_type(AddressSpace::default()).into(),
+            context.i64_type().into(),                    // length
+            context.i64_type().into(),                    // capacity
+            context.ptr_type(AddressSpace::default()).into(), // data **
+            context.ptr_type(AddressSpace::default()).into(), // tags **
         ],
         false,
-    )
+    );
+    st
 }
 
 pub fn get_list_element_ptr_type<'ctx>(context: &'ctx Context) -> BasicTypeEnum<'ctx> {
