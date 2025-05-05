@@ -282,59 +282,44 @@ impl<'ctx> CompilationContext<'ctx> {
         list_ptr: PointerValue<'ctx>,
         elem_ty: &Type,
     ) -> Result<(), String> {
-        let ctx          = self.llvm_context;
-        let i64_t        = ctx.i64_type();
-        let i8_t         = ctx.i8_type();
-        let void_ptr_t   = ctx.ptr_type(AddressSpace::default());
-
-        // RawList struct layout (length, capacity, data, tags)
+        let ctx               = self.llvm_context;
+        let i64_t             = ctx.i64_type();
+        let i8_t              = ctx.i8_type();
+        let void_ptr_t        = ctx.ptr_type(AddressSpace::default());          // i8*
+        let void_ptr_ptr_t    = void_ptr_t.ptr_type(AddressSpace::default());   // i8**
+    
+        // RawList layout (length, capacity, data, tags)
         let rawlist_ty = get_list_struct_type(ctx);
 
-        // With LLVM 15+ and opaque pointers, we don't need to cast the pointer type
-        // but we still need to use the same struct type instance for build_struct_gep
-
         // ——————————————————————————————————————————————————————————
-        // Grab / declare all runtime helpers we may call
+        // Runtime helpers we may call
         // ——————————————————————————————————————————————————————————
-        let print_str  = self
-            .module
-            .get_function("print_string")
-            .ok_or("print_string not found")?;
-        let _print_int  = self
-            .module
-            .get_function("print_int")
-            .ok_or("print_int not found")?;
-        let _print_flt  = self
-            .module
-            .get_function("print_float")
-            .ok_or("print_float not found")?;
-        let _print_bool = self
-            .module
-            .get_function("print_bool")
-            .ok_or("print_bool not found")?;
+        let print_str   = self.module.get_function("print_string").ok_or("print_string not found")?;
+        let _print_int  = self.module.get_function("print_int").ok_or("print_int not found")?;
+        let _print_flt  = self.module.get_function("print_float").ok_or("print_float not found")?;
+        let _print_bool = self.module.get_function("print_bool").ok_or("print_bool not found")?;
 
-        // list_get_tag(list, idx) → u8  (TypeTag)
+        // list_get_tag(list, idx) → u8
         let list_get_tag = self.module.get_function("list_get_tag").unwrap_or_else(|| {
             let fn_ty = i8_t.fn_type(&[void_ptr_t.into(), i64_t.into()], false);
             self.module.add_function("list_get_tag", fn_ty, None)
         });
 
         // ——————————————————————————————————————————————————————————
-        // Handy constants
+        // Handy literals
         // ——————————————————————————————————————————————————————————
-        let lbrack = self.make_cstr("lb", b"[\0");
-        let rbrack = self.make_cstr("rb", b"]\0");
-        let comma  = self.make_cstr("cm", b", \0");
-        let quote  = self.make_cstr("qt", b"'\0");
+        let lbrack   = self.make_cstr("lb", b"[\0");
+        let rbrack   = self.make_cstr("rb", b"]\0");
+        let comma    = self.make_cstr("cm", b", \0");
+        let quote    = self.make_cstr("qt", b"'\0");
         let none_lit = self.make_cstr("none", b"None\0");
 
         // print “[”
-        self.builder
-            .build_call(print_str, &[lbrack.into()], "plb")
-            .unwrap();
+        self.builder.build_call(print_str, &[lbrack.into()], "plb").unwrap();
 
-        // load RawList.length  (field #0)
-        let len_ptr = self.builder
+        // len = list.length
+        let len_ptr = self
+            .builder
             .build_struct_gep(rawlist_ty, list_ptr, 0, "len_ptr")
             .unwrap();
         let len_val = self
@@ -345,17 +330,13 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // i = 0
         let idx_ptr = self.builder.build_alloca(i64_t, "idx").unwrap();
-        self.builder
-            .build_store(idx_ptr, i64_t.const_zero())
-            .unwrap();
+        self.builder.build_store(idx_ptr, i64_t.const_zero()).unwrap();
 
-        // basic‑blocks — grab the function from the builder's insertion point
-        let cur_fn = self.current_fn();
-        let bb_cond    = ctx.append_basic_block(cur_fn, "list.cond");
-        let bb_body    = ctx.append_basic_block(cur_fn, "list.body");
-        let bb_after   = ctx.append_basic_block(cur_fn, "list.after");
-
-        // jump to cond
+        // ‑‑‑ basic‑blocks
+        let cur_fn   = self.current_fn();
+        let bb_cond  = ctx.append_basic_block(cur_fn, "list.cond");
+        let bb_body  = ctx.append_basic_block(cur_fn, "list.body");
+        let bb_after = ctx.append_basic_block(cur_fn, "list.after");
         self.builder.build_unconditional_branch(bb_cond).unwrap();
 
         // ———————————————————  cond
@@ -376,28 +357,24 @@ impl<'ctx> CompilationContext<'ctx> {
         // ———————————————————  body
         self.builder.position_at_end(bb_body);
 
-        // fetch element pointer  data[idx]
-        let data_ptr_ptr = self.builder
+        // data_ptr = (*list).data      — **load as i8 ** not i8*
+        let data_ptr_ptr = self
+            .builder
             .build_struct_gep(rawlist_ty, list_ptr, 2, "data_ptr_ptr")
-            .unwrap(); // field #2
+            .unwrap();
         let data_ptr = self
             .builder
-            .build_load(
-                ctx.ptr_type(AddressSpace::default()),
-                data_ptr_ptr,
-                "data_ptr",
-            )
-            .unwrap()
+            .build_load(void_ptr_ptr_t, data_ptr_ptr, "data_ptr").unwrap()      // ← fixed type
             .into_pointer_value();
+
+        // elem_ptr = data_ptr[idx]
         let elem_addr = unsafe {
             self.builder
-                .build_in_bounds_gep(void_ptr_t, data_ptr, &[idx_val], "elem_addr")
-                .unwrap()
+                .build_in_bounds_gep(void_ptr_t, data_ptr, &[idx_val], "elem_addr").unwrap()
         };
         let elem_ptr = self
             .builder
-            .build_load(void_ptr_t, elem_addr, "elem_ptr")
-            .unwrap();
+            .build_load(void_ptr_t, elem_addr, "elem_ptr").unwrap();
 
         // ----------------------------------------------------------
         // STATIC path  (homogeneous list, elem_ty != Any)
@@ -575,9 +552,7 @@ impl<'ctx> CompilationContext<'ctx> {
 
         // ———————————————————  after
         self.builder.position_at_end(bb_after);
-        self.builder
-            .build_call(print_str, &[rbrack.into()], "prb")
-            .unwrap();
+        self.builder.build_call(print_str, &[rbrack.into()], "prb").unwrap();
 
         Ok(())
     }
