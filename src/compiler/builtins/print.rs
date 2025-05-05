@@ -18,6 +18,14 @@ impl<'ctx> CompilationContext<'ctx> {
         builder.build_pointer_cast(v, dst_ty, name).unwrap_or(v)
     }
 
+    /// Get the current function from the builder's insertion point
+    fn current_fn(&self) -> inkwell::values::FunctionValue<'ctx> {
+        self.builder
+            .get_insert_block()
+            .and_then(|bb| bb.get_parent())
+            .expect("builder has no insertion point")
+    }
+
     /// Register print functions and bind `print`
     pub fn register_print_function(&mut self) {
         let ctx = self.llvm_context;
@@ -341,8 +349,8 @@ impl<'ctx> CompilationContext<'ctx> {
             .build_store(idx_ptr, i64_t.const_zero())
             .unwrap();
 
-        // basic‑blocks
-        let cur_fn     = self.current_function.unwrap();
+        // basic‑blocks — grab the function from the builder's insertion point
+        let cur_fn = self.current_fn();
         let bb_cond    = ctx.append_basic_block(cur_fn, "list.cond");
         let bb_body    = ctx.append_basic_block(cur_fn, "list.body");
         let bb_after   = ctx.append_basic_block(cur_fn, "list.after");
