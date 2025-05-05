@@ -235,6 +235,15 @@ pub fn register_list_functions<'ctx>(context: &'ctx Context, module: &mut Module
         None,
     );
     module.add_function(
+        "list_append_tagged",
+        context.void_type().fn_type(&[
+            context.ptr_type(AddressSpace::default()).into(),
+            context.ptr_type(AddressSpace::default()).into(),
+            context.i8_type().into(),
+        ], false),
+        None,
+    );
+    module.add_function(
         "list_get",
         context.ptr_type(AddressSpace::default()).fn_type(&[
             context.ptr_type(AddressSpace::default()).into(),
@@ -319,6 +328,7 @@ pub fn register_list_runtime_functions(
     if let Some(f) = module.get_function("list_new") { engine.add_global_mapping(&f, list_new as usize); }
     if let Some(f) = module.get_function("list_with_capacity") { engine.add_global_mapping(&f, list_with_capacity as usize); }
     if let Some(f) = module.get_function("list_append") { engine.add_global_mapping(&f, list_append as usize); }
+    if let Some(f) = module.get_function("list_append_tagged") { engine.add_global_mapping(&f, list_append_tagged as usize); }
     if let Some(f) = module.get_function("list_get") { engine.add_global_mapping(&f, list_get as usize); }
     if let Some(f) = module.get_function("list_set") { engine.add_global_mapping(&f, list_set as usize); }
     if let Some(f) = module.get_function("list_concat") { engine.add_global_mapping(&f, list_concat as usize); }

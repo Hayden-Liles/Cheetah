@@ -5,6 +5,7 @@ use crate::compiler::types::Type;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::BasicValueEnum;
 
+
 /// Extension trait for handling expression code generation
 pub trait ExprCompiler<'ctx> {
     fn evaluate_comprehension_conditions(
@@ -55,7 +56,7 @@ pub trait ExprCompiler<'ctx> {
     fn build_empty_list(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn build_list(
         &self,
-        elements: Vec<BasicValueEnum<'ctx>>,
+        elements: Vec<(BasicValueEnum<'ctx>, Type)>,
         element_type: &Type,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String>;
     fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String>;
@@ -1740,7 +1741,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                 println!("Final list element type: {:?}", final_element_type);
 
-                let list_ptr = self.build_list(element_values, &final_element_type)?;
+                let list_ptr = self.build_list(
+                    element_values.into_iter().zip(element_types).collect(),
+                    &final_element_type
+                )?;
 
                 Ok((list_ptr.into(), Type::List(Box::new(final_element_type))))
             }
@@ -1871,61 +1875,104 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     }
 
     fn build_list(
-        &self,
-        elements: Vec<BasicValueEnum<'ctx>>,
-        element_type: &Type,
-    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
-        let list_with_capacity_fn = match self.module.get_function("list_with_capacity") {
-            Some(f) => f,
-            None => return Err("list_with_capacity function not found".to_string()),
+    &self,
+    elements: Vec<(BasicValueEnum<'ctx>, Type)>,
+    common_type: &Type,
+) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+    use crate::compiler::types::{is_reference_type, Type};
+    use crate::compiler::runtime::list::TypeTag;
+
+    // ────────────────────────────────────────────────────────────────
+    // (1) allocate the RawList with enough capacity
+    // ────────────────────────────────────────────────────────────────
+    let with_cap = self
+        .module
+        .get_function("list_with_capacity")
+        .ok_or("list_with_capacity not found")?;
+    let len_val = self
+        .llvm_context
+        .i64_type()
+        .const_int(elements.len() as u64, false);
+    let list_ptr = self
+        .builder
+        .build_call(with_cap, &[len_val.into()], "list.new")
+        .unwrap()
+        .try_as_basic_value()
+        .left()
+        .ok_or("list_with_capacity returned void")?
+        .into_pointer_value();
+
+    // ────────────────────────────────────────────────────────────────
+    // (2) choose append routine
+    // ────────────────────────────────────────────────────────────────
+    let any_list = matches!(common_type, Type::Any);
+    let append_fn = if any_list {
+        self.module
+            .get_function("list_append_tagged")
+            .ok_or("list_append_tagged not found")?
+    } else {
+        self.module
+            .get_function("list_append")
+            .ok_or("list_append not found")?
+    };
+
+    // Small helper to map `Type` → `TypeTag`
+    let tag_const = |ty: &Type, ctx: &'ctx inkwell::context::Context| {
+        let tag = match ty {
+            Type::None => TypeTag::None_,
+            Type::Bool => TypeTag::Bool,
+            Type::Int => TypeTag::Int,
+            Type::Float => TypeTag::Float,
+            Type::String => TypeTag::String,
+            Type::List(_) => TypeTag::List,
+            Type::Tuple(_) => TypeTag::Tuple,
+            _ => TypeTag::Any,
+        };
+        ctx.i8_type().const_int(tag as u64, false)
+    };
+
+    // ────────────────────────────────────────────────────────────────
+    // (3) append every literal
+    // ────────────────────────────────────────────────────────────────
+    for (idx, (value, ty)) in elements.iter().enumerate() {
+        // decide whether we must spill the *value* into an alloca
+        let elem_ptr = if is_reference_type(ty) {
+            // already a pointer (list, string, dict, …)
+            *value
+        } else {
+            // primitive – store by value and pass its address
+            let slot = self
+                .builder
+                .build_alloca(value.get_type(), &format!("lit{}_slot", idx))
+                .unwrap();
+            self.builder.build_store(slot, *value).unwrap();
+            slot.into()
         };
 
-        let len = elements.len() as u64;
-        let len_value = self.llvm_context.i64_type().const_int(len, false);
-
-        let call_site_value = self
-            .builder
-            .build_call(
-                list_with_capacity_fn,
-                &[len_value.into()],
-                "list_with_capacity",
-            )
-            .unwrap();
-        let list_ptr = call_site_value
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| "Failed to create list with capacity".to_string())?;
-
-        let list_ptr = list_ptr.into_pointer_value();
-
-        let list_append_fn = match self.module.get_function("list_append") {
-            Some(f) => f,
-            None => return Err("list_append function not found".to_string()),
-        };
-
-        for (i, element) in elements.iter().enumerate() {
-            let element_ptr = if crate::compiler::types::is_reference_type(element_type) {
-                *element
-            } else {
-                let element_alloca = self
-                    .builder
-                    .build_alloca(element.get_type(), &format!("list_element_{}", i))
-                    .unwrap();
-                self.builder.build_store(element_alloca, *element).unwrap();
-                element_alloca.into()
-            };
-
+        if any_list {
+            // append with (ptr, tag)
+            let tag = tag_const(ty, self.llvm_context);
             self.builder
                 .build_call(
-                    list_append_fn,
-                    &[list_ptr.into(), element_ptr.into()],
-                    &format!("list_append_{}", i),
+                    append_fn,
+                    &[list_ptr.into(), elem_ptr.into(), tag.into()],
+                    &format!("append_tagged_{}", idx),
+                )
+                .unwrap();
+        } else {
+            // homogeneous list – original two‑arg call
+            self.builder
+                .build_call(
+                    append_fn,
+                    &[list_ptr.into(), elem_ptr.into()],
+                    &format!("append_{}", idx),
                 )
                 .unwrap();
         }
-
-        Ok(list_ptr)
     }
+
+    Ok(list_ptr)
+}
 
     fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         let tuple_type = self.llvm_context.struct_type(&[], false);
@@ -3180,7 +3227,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 }
             };
 
-            let list_ptr = self.build_list(element_values, &element_type)?;
+            let list_ptr = self.build_list(
+                element_values.into_iter().zip(element_types).collect(),
+                &element_type
+            )?;
 
             self.handle_list_iteration_for_comprehension(
                 elt,

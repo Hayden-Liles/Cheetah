@@ -795,27 +795,30 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     }
 
                     let mut elements = Vec::with_capacity(elements_count);
-                    let mut element_type = Type::Unknown;
+                    let mut element_types = Vec::with_capacity(elements_count);
+                    let mut common_element_type = Type::Unknown;
 
                     for _ in 0..elements_count {
                         let idx = result_stack.len() - 1;
                         let element = result_stack.remove(idx);
-                        elements.push(element.value);
+                        elements.push((element.value, element.ty.clone()));
+                        element_types.push(element.ty.clone());
 
-                        if element_type == Type::Unknown {
-                            element_type = element.ty;
-                        } else if element_type != element.ty {
-                            element_type = Type::Any;
+                        if common_element_type == Type::Unknown {
+                            common_element_type = element.ty;
+                        } else if common_element_type != element.ty {
+                            common_element_type = Type::Any;
                         }
                     }
 
                     elements.reverse();
+                    element_types.reverse();
 
-                    let list_ptr = self.build_list(elements, &element_type)?;
+                    let list_ptr = self.build_list(elements, &common_element_type)?;
 
                     result_stack.push(ExprResult {
                         value: list_ptr.into(),
-                        ty: Type::List(Box::new(element_type)),
+                        ty: Type::List(Box::new(common_element_type)),
                     });
                 }
                 ExprTask::ProcessDict { elements_count } => {
