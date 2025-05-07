@@ -1021,14 +1021,14 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             } else {
                                 return Err("cannot find list object for append() call".to_string());
                             };
-                        
+
                             // Prepare the element value ------------------------------------------------
                             let (arg_val, arg_type) = {
                                 // the single positional argument
                                 let (v, t) = self.compile_expr(&args[0])?;
                                 (v, t)
                             };
-                        
+
                             // If primitive → spill into alloca so we can pass a pointer
                             let elem_ptr = if crate::compiler::types::is_reference_type(&arg_type) {
                                 arg_val
@@ -1040,13 +1040,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 self.builder.build_store(slot, arg_val).unwrap();
                                 slot.into()
                             };
-                        
+
                             // Choose the tagged append helper and build the tag constant --------------
                             let append_tagged_fn = self
                                 .module
                                 .get_function("list_append_tagged")
                                 .ok_or("list_append_tagged not found")?;
-                        
+
                             use crate::compiler::runtime::list::TypeTag;
                             let tag = match &arg_type {
                                 Type::None => TypeTag::None_,
@@ -1059,7 +1059,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                 _ => TypeTag::Any,
                             };
                             let tag_val = self.llvm_context.i8_type().const_int(tag as u64, false);
-                        
+
                             // Call list_append_tagged(list_ptr, elem_ptr, tag)
                             self.builder
                                 .build_call(
@@ -1068,7 +1068,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     "list_append_tagged_call",
                                 )
                                 .unwrap();
-                        
+
                             // append() returns None
                             return Ok((self.llvm_context.i32_type().const_zero().into(), Type::None));
                         }
@@ -1865,7 +1865,14 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         use crate::compiler::runtime::list::TypeTag;
         use crate::compiler::types::{is_reference_type, Type};
-    
+
+        println!("DEBUG: build_list called with {} elements, common_type: {:?}", elements.len(), common_type);
+
+        // Print details about each element
+        for (idx, (value, ty)) in elements.iter().enumerate() {
+            println!("DEBUG: Element {}: type={:?}, value_kind={:?}", idx, ty, value.get_type());
+        }
+
         // ── 1. allocate RawList with enough capacity ───────────────────
         let with_cap = self
             .module
@@ -1882,7 +1889,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .left()
             .ok_or("list_with_capacity returned void")?
             .into_pointer_value();
-    
+
+        println!("DEBUG: Created list with capacity {}", elements.len());
+
         // ── 2. decide once which append helper we will use ─────────────
         let append_tagged = self
             .module
@@ -1893,7 +1902,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .get_function("list_append")
             .ok_or("list_append not found")?;
         let use_tagged = matches!(common_type, Type::Any);
-    
+
+        println!("DEBUG: Using tagged append: {}", use_tagged);
+
         // helper: map Type → TypeTag (u8)
         let tag_const = |ty: &Type, ctx: &'ctx inkwell::context::Context| {
             let tag = match ty {
@@ -1906,30 +1917,37 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 Type::Tuple(_) => TypeTag::Tuple,
                 _ => TypeTag::Any,
             };
+            println!("DEBUG: Mapping type {:?} to tag {:?} ({})", ty, tag, tag as u8);
             ctx.i8_type().const_int(tag as u64, false)
         };
-    
+
         // ── 3. emit one append call per literal ────────────────────────
         for (idx, (value, ty)) in elements.iter().enumerate() {
+            println!("DEBUG: Processing element {} of type {:?}", idx, ty);
+
             // ensure primitives are passed by address
             let elem_ptr = if is_reference_type(ty) {
+                println!("DEBUG: Element {} is a reference type", idx);
                 *value
             } else {
+                println!("DEBUG: Element {} is a primitive type, allocating slot", idx);
                 let slot = self
                     .builder
                     .build_alloca(value.get_type(), &format!("lit{}_slot", idx)).unwrap();
                 self.builder.build_store(slot, *value).unwrap();
                 slot.into()
             };
-    
+
             if use_tagged {
                 let tag = tag_const(ty, self.llvm_context);
+                println!("DEBUG: Appending element {} with tag value {}", idx, tag.get_zero_extended_constant().unwrap());
                 self.builder.build_call(
                     append_tagged,
                     &[list_ptr.into(), elem_ptr.into(), tag.into()],
                     &format!("append_tagged_{}", idx),
                 ).unwrap();
             } else {
+                println!("DEBUG: Appending element {} without tag", idx);
                 self.builder.build_call(
                     append_plain,
                     &[list_ptr.into(), elem_ptr.into()],
@@ -1937,7 +1955,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 ).unwrap();
             }
         }
-    
+
+        println!("DEBUG: Successfully built list with {} elements", elements.len());
         Ok(list_ptr)
     }
 

@@ -74,7 +74,15 @@ pub extern "C" fn list_append_tagged(list_ptr: *mut RawList,
                                      tag:   TypeTag)
 {
     unsafe {
+        println!("DEBUG: list_append_tagged called with tag: {:?} ({})", tag, tag as u8);
+
+        if list_ptr.is_null() {
+            println!("DEBUG: ERROR - list_ptr is null!");
+            return;
+        }
+
         let rl = &mut *list_ptr;
+        println!("DEBUG: Current list length: {}, capacity: {}", rl.length, rl.capacity);
 
         // Grow both arrays together
         if rl.length == rl.capacity {
@@ -82,35 +90,67 @@ pub extern "C" fn list_append_tagged(list_ptr: *mut RawList,
             let bytes_ptrs   = new_cap as usize * std::mem::size_of::<*mut c_void>();
             let bytes_tags   = new_cap as usize * std::mem::size_of::<TypeTag>();
 
+            println!("DEBUG: Growing list capacity from {} to {}", rl.capacity, new_cap);
+
             rl.data = if rl.data.is_null() {
+                println!("DEBUG: Allocating new data array");
                 malloc(bytes_ptrs)
             } else {
+                println!("DEBUG: Reallocating data array");
                 realloc(rl.data as *mut _, bytes_ptrs)
             } as *mut *mut c_void;
 
             rl.tags = if rl.tags.is_null() {
+                println!("DEBUG: Allocating new tags array");
                 malloc(bytes_tags)
             } else {
+                println!("DEBUG: Reallocating tags array");
                 realloc(rl.tags as *mut _, bytes_tags)
             } as *mut TypeTag;
 
             rl.capacity = new_cap;
         }
 
+        if rl.data.is_null() {
+            println!("DEBUG: ERROR - data pointer is null after allocation!");
+            return;
+        }
+
+        if rl.tags.is_null() {
+            println!("DEBUG: ERROR - tags pointer is null after allocation!");
+            return;
+        }
+
+        println!("DEBUG: Storing value at index {}", rl.length);
         *rl.data.add(rl.length as usize) = value;
+
+        println!("DEBUG: Storing tag {:?} ({}) at index {}", tag, tag as u8, rl.length);
         *rl.tags.add(rl.length as usize) = tag;    // store tag in lock‑step
+
         rl.length += 1;
+        println!("DEBUG: List length increased to {}", rl.length);
     }
 }
 
 #[no_mangle]
 pub extern "C" fn list_get_tag(list_ptr: *mut RawList, index: i64) -> TypeTag {
     unsafe {
+        println!("DEBUG: list_get_tag called with index {}", index);
         let rl = &*list_ptr;
+        println!("DEBUG: list length: {}, capacity: {}", rl.length, rl.capacity);
+
         if index < 0 || index >= rl.length {
+            println!("DEBUG: Index out of bounds, returning TypeTag::Any");
             TypeTag::Any
         } else {
-            *rl.tags.add(index as usize)
+            if rl.tags.is_null() {
+                println!("DEBUG: Tags pointer is null, returning TypeTag::Any");
+                TypeTag::Any
+            } else {
+                let tag = *rl.tags.add(index as usize);
+                println!("DEBUG: Retrieved tag: {:?} ({})", tag, tag as u8);
+                tag
+            }
         }
     }
 }
@@ -118,11 +158,28 @@ pub extern "C" fn list_get_tag(list_ptr: *mut RawList, index: i64) -> TypeTag {
 #[no_mangle]
 pub extern "C" fn list_get(list_ptr: *mut RawList, index: i64) -> *mut c_void {
     unsafe {
+        println!("DEBUG: list_get called with index {}", index);
+
+        if list_ptr.is_null() {
+            println!("DEBUG: ERROR - list_ptr is null!");
+            return ptr::null_mut();
+        }
+
         let rl = &*list_ptr;
+        println!("DEBUG: List length: {}, capacity: {}", rl.length, rl.capacity);
+
         if index < 0 || index >= rl.length {
+            println!("DEBUG: Index out of bounds, returning null");
             ptr::null_mut()
         } else {
-            *rl.data.add(index as usize)
+            if rl.data.is_null() {
+                println!("DEBUG: ERROR - data pointer is null!");
+                return ptr::null_mut();
+            }
+
+            let value_ptr = *rl.data.add(index as usize);
+            println!("DEBUG: Retrieved value pointer: {:?} at index {}", value_ptr, index);
+            value_ptr
         }
     }
 }

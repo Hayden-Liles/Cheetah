@@ -282,17 +282,19 @@ impl<'ctx> CompilationContext<'ctx> {
         list_ptr: PointerValue<'ctx>,
         elem_ty: &Type,
     ) -> Result<(), String> {
+        println!("DEBUG: print_list called with element type: {:?}", elem_ty);
         use inkwell::{AddressSpace, IntPredicate};
         use crate::compiler::runtime::list::{get_list_struct_type, TypeTag};
-    
+
         let ctx            = self.llvm_context;
         let i64_t          = ctx.i64_type();
         let i8_t           = ctx.i8_type();
         let void_ptr_t     = ctx.ptr_type(AddressSpace::default());          // i8*
         let void_ptr_ptr_t = void_ptr_t.ptr_type(AddressSpace::default());   // i8**
-    
+
         // RawList layout (length, capacity, data, tags)
         let rawlist_ty = get_list_struct_type(ctx);
+        println!("DEBUG: Got RawList struct type");
 
         // ——————————————————————————————————————————————————————————
         // Runtime helpers we may call
@@ -301,12 +303,15 @@ impl<'ctx> CompilationContext<'ctx> {
         let _print_int  = self.module.get_function("print_int").ok_or("print_int not found")?;
         let _print_flt  = self.module.get_function("print_float").ok_or("print_float not found")?;
         let _print_bool = self.module.get_function("print_bool").ok_or("print_bool not found")?;
+        println!("DEBUG: Got print functions");
 
         // list_get_tag(list, idx) → u8
         let list_get_tag = self.module.get_function("list_get_tag").unwrap_or_else(|| {
+            println!("DEBUG: Creating list_get_tag function");
             let fn_ty = i8_t.fn_type(&[void_ptr_t.into(), i64_t.into()], false);
             self.module.add_function("list_get_tag", fn_ty, None)
         });
+        println!("DEBUG: Got list_get_tag function");
 
         // ——————————————————————————————————————————————————————————
         // Handy literals
@@ -316,28 +321,38 @@ impl<'ctx> CompilationContext<'ctx> {
         let comma    = self.make_cstr("cm", b", \0");
         let quote    = self.make_cstr("qt", b"'\0");
         let none_lit = self.make_cstr("none", b"None\0");
+        println!("DEBUG: Created string literals");
 
         // print “[”
         self.builder.build_call(print_str, &[lbrack.into()], "pr_lb").unwrap();
+        println!("DEBUG: Printed opening bracket");
 
         // len = list.length
         let len_val = {
             let len_ptr = self
                 .builder
                 .build_struct_gep(rawlist_ty, list_ptr, 0, "len_ptr").unwrap();
-            self.builder
+            let len = self.builder
                 .build_load(i64_t, len_ptr, "len").unwrap()
-                .into_int_value()
+                .into_int_value();
+            if let Some(len_const) = len.get_zero_extended_constant() {
+                println!("DEBUG: List length: {}", len_const);
+            } else {
+                println!("DEBUG: List length is not a constant");
+            }
+            len
         };
 
         // i = 0
         let idx_ptr = self.builder.build_alloca(i64_t, "idx").unwrap();
         self.builder.build_store(idx_ptr, i64_t.const_zero()).unwrap();
+        println!("DEBUG: Initialized index to 0");
 
         let cur_fn   = self.current_fn();
         let bb_cond  = ctx.append_basic_block(cur_fn, "list.cond");
         let bb_body  = ctx.append_basic_block(cur_fn, "list.body");
         let bb_after = ctx.append_basic_block(cur_fn, "list.after");
+        println!("DEBUG: Created basic blocks for loop");
         self.builder.build_unconditional_branch(bb_cond).unwrap();
 
         // ———————————————————  cond
@@ -349,10 +364,12 @@ impl<'ctx> CompilationContext<'ctx> {
         let cmp = self
             .builder
             .build_int_compare(IntPredicate::ULT, idx_val, len_val, "cmp").unwrap();
+        println!("DEBUG: Built loop condition");
         self.builder.build_conditional_branch(cmp, bb_body, bb_after).unwrap();
 
         // ———————————————————  body
         self.builder.position_at_end(bb_body);
+        println!("DEBUG: Entering loop body");
 
         // data_ptr = (*list).data      — **load as i8 ** not i8*
         let data_ptr_ptr = self
@@ -362,6 +379,7 @@ impl<'ctx> CompilationContext<'ctx> {
             .builder
             .build_load(void_ptr_ptr_t, data_ptr_ptr, "data_ptr").unwrap()
             .into_pointer_value();
+        println!("DEBUG: Got data pointer from list");
 
         // elem_ptr = data_ptr[idx]
         let elem_addr = unsafe {
@@ -369,18 +387,60 @@ impl<'ctx> CompilationContext<'ctx> {
                 .build_in_bounds_gep(void_ptr_t, data_ptr, &[idx_val], "elem_addr").unwrap()
         };
         let elem_ptr = self.builder.build_load(void_ptr_t, elem_addr, "elem_ptr").unwrap();
+        if let Some(idx_const) = idx_val.get_zero_extended_constant() {
+            println!("DEBUG: Got element pointer at index {}", idx_const);
+        } else {
+            println!("DEBUG: Got element pointer at dynamic index");
+        }
 
 
         // ----------------------------------------------------------
         // STATIC path  (homogeneous list, elem_ty != Any)
         // ----------------------------------------------------------
         if elem_ty != &Type::Any {
+            println!("DEBUG: Using STATIC path for homogeneous list with element type: {:?}", elem_ty);
             self.print_value_by_type(elem_ptr, elem_ty, quote, none_lit)?;
+
+            // Handle comma, increment index for static path
+            // Print ", " if idx < len-1
+            let is_last = self.builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    idx_val,
+                    self.builder
+                        .build_int_sub(len_val, i64_t.const_int(1, false), "len-1")
+                        .unwrap(),
+                    "is_last_static",
+                )
+                .unwrap();
+
+            let bb_comma_static = ctx.append_basic_block(cur_fn, "comma_static");
+            let bb_no_static = ctx.append_basic_block(cur_fn, "no_comma_static");
+            self.builder
+                .build_conditional_branch(is_last, bb_no_static, bb_comma_static)
+                .unwrap();
+
+            // Print comma if not the last element
+            self.builder.position_at_end(bb_comma_static);
+            self.builder
+                .build_call(print_str, &[comma.into()], "pc_static")
+                .unwrap();
+            self.builder.build_unconditional_branch(bb_no_static).unwrap();
+
+            // Increment index and continue
+            self.builder.position_at_end(bb_no_static);
+            // idx = idx + 1
+            let next = self.builder
+                .build_int_add(idx_val, i64_t.const_int(1, false), "inc_static")
+                .unwrap();
+            self.builder.build_store(idx_ptr, next).unwrap();
+            self.builder.build_unconditional_branch(bb_cond).unwrap();
         }
         // ----------------------------------------------------------
         // DYNAMIC path  (elem_ty == Any) – dispatch by TypeTag
         // ----------------------------------------------------------
         else {
+            println!("DEBUG: Using DYNAMIC path for heterogeneous list (Any type)");
             // tag = list_get_tag(list, idx)
             let tag_val = self
                 .builder
@@ -395,6 +455,12 @@ impl<'ctx> CompilationContext<'ctx> {
                 .unwrap()
                 .into_int_value();
 
+            if let Some(tag_const) = tag_val.get_zero_extended_constant() {
+                println!("DEBUG: Element tag value: {}", tag_const);
+            } else {
+                println!("DEBUG: Element tag value is not a constant");
+            }
+
             // prepare blocks for the switch
             let bb_int    = ctx.append_basic_block(cur_fn, "tag.int");
             let bb_flt    = ctx.append_basic_block(cur_fn, "tag.flt");
@@ -404,6 +470,7 @@ impl<'ctx> CompilationContext<'ctx> {
             let bb_tuple  = ctx.append_basic_block(cur_fn, "tag.tuple");
             let bb_none   = ctx.append_basic_block(cur_fn, "tag.none");
             let bb_deflt  = ctx.append_basic_block(cur_fn, "tag.deflt");
+            println!("DEBUG: Created basic blocks for tag switch");
 
             // switch(tag_val)
             self.builder
@@ -442,34 +509,54 @@ impl<'ctx> CompilationContext<'ctx> {
                     ],
                 )
                 .unwrap();
+            println!("DEBUG: Built switch statement for tag dispatch");
 
-            // helper to end each tag‐block by branching to cond
-            let branch_back = |builder: &inkwell::builder::Builder<'ctx>| {
-                builder.build_unconditional_branch(bb_cond).unwrap();
-            };
+            // Create a common tail block for all tag cases
+            let bb_tag_tail = ctx.append_basic_block(cur_fn, "tag.tail");
 
             // INT
             self.builder.position_at_end(bb_int);
+            println!("DEBUG: Handling INT element");
             self.print_value_by_type(elem_ptr, &Type::Int, quote, none_lit)?;
-            branch_back(&self.builder);
+            self.builder.build_unconditional_branch(bb_tag_tail).unwrap();
 
             // FLOAT
             self.builder.position_at_end(bb_flt);
+            println!("DEBUG: Handling FLOAT element");
             self.print_value_by_type(elem_ptr, &Type::Float, quote, none_lit)?;
-            branch_back(&self.builder);
+            self.builder.build_unconditional_branch(bb_tag_tail).unwrap();
 
             // BOOL
             self.builder.position_at_end(bb_bool);
+            println!("DEBUG: Handling BOOL element");
             self.print_value_by_type(elem_ptr, &Type::Bool, quote, none_lit)?;
-            branch_back(&self.builder);
+            self.builder.build_unconditional_branch(bb_tag_tail).unwrap();
 
             // STRING
             self.builder.position_at_end(bb_str);
+            println!("DEBUG: Handling STRING element");
             self.print_value_by_type(elem_ptr, &Type::String, quote, none_lit)?;
-            branch_back(&self.builder);
+            self.builder.build_unconditional_branch(bb_tag_tail).unwrap();
 
             // LIST   (recurse)
             self.builder.position_at_end(bb_list);
+            println!("DEBUG: Handling nested LIST element");
+
+            // Check if the element pointer is the same as the current list pointer
+            // to prevent infinite recursion
+            let is_same_list = self.builder.build_int_compare(
+                inkwell::IntPredicate::EQ,
+                self.builder.build_ptr_to_int(elem_ptr.into_pointer_value(), ctx.i64_type(), "elem_ptr_int").unwrap(),
+                self.builder.build_ptr_to_int(list_ptr, ctx.i64_type(), "list_ptr_int").unwrap(),
+                "is_same_list"
+            ).unwrap();
+
+            let bb_safe_recurse = ctx.append_basic_block(cur_fn, "safe_recurse");
+            let bb_skip_recurse = ctx.append_basic_block(cur_fn, "skip_recurse");
+            self.builder.build_conditional_branch(is_same_list, bb_skip_recurse, bb_safe_recurse).unwrap();
+
+            // Safe to recurse - different list
+            self.builder.position_at_end(bb_safe_recurse);
             let list_ptr_cast = Self::cast_or_self(
                 &self.builder,
                 elem_ptr.into_pointer_value(),
@@ -477,10 +564,33 @@ impl<'ctx> CompilationContext<'ctx> {
                 "cast_list",
             );
             self.print_list(list_ptr_cast, &Type::Any)?;
-            branch_back(&self.builder);
+            self.builder.build_unconditional_branch(bb_skip_recurse).unwrap();
+
+            // Skip recursion - same list (would cause infinite recursion)
+            self.builder.position_at_end(bb_skip_recurse);
+            let placeholder = self.make_cstr("cycle", b"<cycle>\0");
+            self.builder.build_call(print_str, &[placeholder.into()], "print_cycle").unwrap();
+            self.builder.build_unconditional_branch(bb_tag_tail).unwrap();
 
             // TUPLE  (recurse)
             self.builder.position_at_end(bb_tuple);
+            println!("DEBUG: Handling TUPLE element");
+
+            // Check if the element pointer is the same as the current list pointer
+            // to prevent infinite recursion (could happen with nested structures)
+            let is_same_ptr = self.builder.build_int_compare(
+                inkwell::IntPredicate::EQ,
+                self.builder.build_ptr_to_int(elem_ptr.into_pointer_value(), ctx.i64_type(), "elem_ptr_int_tup").unwrap(),
+                self.builder.build_ptr_to_int(list_ptr, ctx.i64_type(), "list_ptr_int_tup").unwrap(),
+                "is_same_ptr_tup"
+            ).unwrap();
+
+            let bb_safe_recurse_tup = ctx.append_basic_block(cur_fn, "safe_recurse_tup");
+            let bb_skip_recurse_tup = ctx.append_basic_block(cur_fn, "skip_recurse_tup");
+            self.builder.build_conditional_branch(is_same_ptr, bb_skip_recurse_tup, bb_safe_recurse_tup).unwrap();
+
+            // Safe to recurse - different pointer
+            self.builder.position_at_end(bb_safe_recurse_tup);
             let tup_ptr_ty = self
                 .llvm_context
                 .ptr_type(AddressSpace::default()); // tuple prints take *void anyway
@@ -491,25 +601,74 @@ impl<'ctx> CompilationContext<'ctx> {
                 "cast_tup",
             );
             self.print_tuple(tup_ptr, &vec![])?; // element types unknown; tuple printer handles Any
-            branch_back(&self.builder);
+            self.builder.build_unconditional_branch(bb_skip_recurse_tup).unwrap();
+
+            // Skip recursion - same pointer (would cause infinite recursion)
+            self.builder.position_at_end(bb_skip_recurse_tup);
+            let placeholder = self.make_cstr("cycle_tup", b"<cycle>\0");
+            self.builder.build_call(print_str, &[placeholder.into()], "print_cycle_tup").unwrap();
+            self.builder.build_unconditional_branch(bb_tag_tail).unwrap();
 
             // NONE
             self.builder.position_at_end(bb_none);
+            println!("DEBUG: Handling NONE element");
             self.builder
                 .build_call(print_str, &[none_lit.into()], "pnone")
                 .unwrap();
-            branch_back(&self.builder);
+            self.builder.build_unconditional_branch(bb_tag_tail).unwrap();
 
             // DEFAULT  (“<Any>” placeholder – should be rare)
             self.builder.position_at_end(bb_deflt);
+            println!("DEBUG: Handling DEFAULT case (unknown tag)");
             let ph = self.make_cstr("ph", b"<Any>\0");
             self.builder
                 .build_call(print_str, &[ph.into()], "ph_any")
                 .unwrap();
-            branch_back(&self.builder);
+            self.builder.build_unconditional_branch(bb_tag_tail).unwrap();
+
+            // Common tail for all tag cases - handle comma, increment index, and branch back to condition
+            self.builder.position_at_end(bb_tag_tail);
+
+            // Print ", " if idx < len-1
+            let is_last = self.builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    idx_val,
+                    self.builder
+                        .build_int_sub(len_val, i64_t.const_int(1, false), "len-1")
+                        .unwrap(),
+                    "is_last",
+                )
+                .unwrap();
+
+            let bb_comma_dyn = ctx.append_basic_block(cur_fn, "comma_dyn");
+            let bb_no_dyn = ctx.append_basic_block(cur_fn, "no_comma_dyn");
+            self.builder
+                .build_conditional_branch(is_last, bb_no_dyn, bb_comma_dyn)
+                .unwrap();
+
+            // Print comma if not the last element
+            self.builder.position_at_end(bb_comma_dyn);
+            self.builder
+                .build_call(print_str, &[comma.into()], "pc_dyn")
+                .unwrap();
+            self.builder.build_unconditional_branch(bb_no_dyn).unwrap();
+
+            // Increment index and continue
+            self.builder.position_at_end(bb_no_dyn);
+            // idx = idx + 1
+            let next = self.builder
+                .build_int_add(idx_val, i64_t.const_int(1, false), "inc")
+                .unwrap();
+            self.builder.build_store(idx_ptr, next).unwrap();
+            self.builder.build_unconditional_branch(bb_cond).unwrap();
         }
 
+        // We've moved the comma handling logic into both the static and dynamic paths
+        // so we no longer need this section
+
         // ————————————————————————————————————————————————
+        // Skip the old comma handling code since we've moved it into the static and dynamic paths
         // Print “, ” if idx < len‑1
         // ————————————————————————————————————————————————
         self.builder.position_at_end(bb_body); // (printer left us somewhere inside)
@@ -530,21 +689,20 @@ impl<'ctx> CompilationContext<'ctx> {
             .build_conditional_branch(is_last, bb_no, bb_comma)
             .unwrap();
 
+        println!("DEBUG: Added comma if needed");
         self.builder.position_at_end(bb_comma);
         self.builder
             .build_call(print_str, &[comma.into()], "pc")
             .unwrap();
         self.builder.build_unconditional_branch(bb_no).unwrap();
 
-        // increment idx
+        // We no longer need to increment the index here since we do it in both static and dynamic paths
         self.builder.position_at_end(bb_no);
-        let next = self
-            .builder
-            .build_int_add(idx_val, i64_t.const_int(1, false), "idx+1")
-            .unwrap();
-        self.builder.build_store(idx_ptr, next).unwrap();
+        println!("DEBUG: Skipping duplicate index increment");
+        // Branch directly to the condition block
         self.builder.build_unconditional_branch(bb_cond).unwrap();
 
+        println!("DEBUG: Printed closing bracket");
         // ———————————————————  after
         self.builder.position_at_end(bb_after);
         self.builder.build_call(print_str, &[rbrack.into()], "prb").unwrap();
