@@ -74,7 +74,16 @@ pub extern "C" fn list_append_tagged(list_ptr: *mut RawList,
                                      tag:   TypeTag)
 {
     unsafe {
+        // More extensive null checks
+        if list_ptr.is_null() {
+            eprintln!("[ERROR] list_append_tagged: list_ptr is null");
+            return;
+        }
+        
         let rl = &mut *list_ptr;
+        eprintln!("[DEBUG] Appending value {:p} with tag {:?} to list at {:p}", 
+                  value, tag, list_ptr);
+        eprintln!("[DEBUG] Current list length: {}, capacity: {}", rl.length, rl.capacity);
 
         // Grow both arrays together
         if rl.length == rl.capacity {
@@ -82,35 +91,142 @@ pub extern "C" fn list_append_tagged(list_ptr: *mut RawList,
             let bytes_ptrs   = new_cap as usize * std::mem::size_of::<*mut c_void>();
             let bytes_tags   = new_cap as usize * std::mem::size_of::<TypeTag>();
 
+            eprintln!("[DEBUG] Growing list capacity from {} to {}", rl.capacity, new_cap);
+            
+            // Store old pointers for verification
+            let old_data = rl.data;
+            let old_tags = rl.tags;
+
             rl.data = if rl.data.is_null() {
+                eprintln!("[DEBUG] Allocating new data array");
                 malloc(bytes_ptrs)
             } else {
+                eprintln!("[DEBUG] Reallocating data array");
                 realloc(rl.data as *mut _, bytes_ptrs)
             } as *mut *mut c_void;
 
             rl.tags = if rl.tags.is_null() {
+                eprintln!("[DEBUG] Allocating new tags array");
                 malloc(bytes_tags)
             } else {
+                eprintln!("[DEBUG] Reallocating tags array");
                 realloc(rl.tags as *mut _, bytes_tags)
             } as *mut TypeTag;
+
+            // Verify new allocations
+            if rl.data.is_null() || rl.tags.is_null() {
+                eprintln!("[ERROR] Memory allocation failed during list growth");
+                // Restore old pointers to avoid memory corruption
+                if rl.data.is_null() { rl.data = old_data; }
+                if rl.tags.is_null() { rl.tags = old_tags; }
+                return;
+            }
 
             rl.capacity = new_cap;
         }
 
+        if rl.data.is_null() || rl.tags.is_null() {
+            eprintln!("[ERROR] Data or tags array is null");
+            return;
+        }
+
+        // Add the new element and tag
         *rl.data.add(rl.length as usize) = value;
-        *rl.tags.add(rl.length as usize) = tag;    // store tag in lock‑step
+        *rl.tags.add(rl.length as usize) = tag;
+        
+        // Debug output for the new element
+        eprintln!("[DEBUG] Added element {} at index {}: value={:p}, tag={:?}", 
+                  rl.length, rl.length, value, tag);
+        
         rl.length += 1;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn list_debug_print(list_ptr: *mut RawList) {
+    unsafe {
+        if list_ptr.is_null() {
+            eprintln!("[DEBUG] List pointer is null");
+            return;
+        }
+        
+        let rl = &*list_ptr;
+        eprintln!("[DEBUG] List @ {:p}:", list_ptr);
+        eprintln!("  length: {}", rl.length);
+        eprintln!("  capacity: {}", rl.capacity);
+        eprintln!("  data ptr: {:p}", rl.data);
+        eprintln!("  tags ptr: {:p}", rl.tags);
+        
+        if rl.length > 10000 {
+            eprintln!("  [WARN] Unreasonable length value - likely corrupted");
+            return;
+        }
+        
+        if !rl.tags.is_null() && !rl.data.is_null() && rl.length > 0 {
+            eprintln!("  Elements:");
+            for i in 0..std::cmp::min(rl.length, 10) {
+                let tag = *rl.tags.add(i as usize);
+                let elem_ptr = *rl.data.add(i as usize);
+                
+                // Describe tag
+                let tag_str = match tag {
+                    TypeTag::Any => "Any",
+                    TypeTag::None_ => "None",
+                    TypeTag::Bool => "Bool",
+                    TypeTag::Int => "Int",
+                    TypeTag::Float => "Float",
+                    TypeTag::String => "String",
+                    TypeTag::List => "List",
+                    TypeTag::Tuple => "Tuple",
+                };
+                
+                eprintln!("    [{}]: tag={} ({}), ptr={:p}", i, tag as u8, tag_str, elem_ptr);
+            }
+            
+            if rl.length > 10 {
+                eprintln!("    ... and {} more elements", rl.length - 10);
+            }
+        }
     }
 }
 
 #[no_mangle]
 pub extern "C" fn list_get_tag(list_ptr: *mut RawList, index: i64) -> TypeTag {
     unsafe {
+        // Check for null pointer
+        if list_ptr.is_null() {
+            eprintln!("[DEBUG] list_get_tag: list_ptr is null");
+            return TypeTag::Any;
+        }
+        
         let rl = &*list_ptr;
+        
+        // Sanity check for length
+        if rl.length < 0 || rl.length > 10000 {
+            eprintln!("[DEBUG] list_get_tag: invalid length {}", rl.length);
+            return TypeTag::Any;
+        }
+        
+        // Check if tags pointer is null
+        if rl.tags.is_null() {
+            eprintln!("[DEBUG] list_get_tag: tags pointer is null");
+            return TypeTag::Any;
+        }
+        
+        // Check valid index
         if index < 0 || index >= rl.length {
-            TypeTag::Any
-        } else {
-            *rl.tags.add(index as usize)
+            eprintln!("[DEBUG] list_get_tag: index out of bounds - {} not in [0, {})", index, rl.length);
+            return TypeTag::Any;
+        }
+        
+        // Read the tag at this index
+        let tag = *rl.tags.add(index as usize);
+        
+        // Validate the tag value (prevent undefined behavior with corrupted tags)
+        match tag {
+            TypeTag::Any | TypeTag::None_ | TypeTag::Bool | 
+            TypeTag::Int | TypeTag::Float | TypeTag::String |
+            TypeTag::List | TypeTag::Tuple => tag,
         }
     }
 }

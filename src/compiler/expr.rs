@@ -1866,6 +1866,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         use crate::compiler::runtime::list::TypeTag;
         use crate::compiler::types::{is_reference_type, Type};
     
+        // Explicitly enable debugging for this critical function
+        eprintln!("[DEBUG] Building list with {} elements, common type: {:?}", 
+                  elements.len(), common_type);
+        
         // ── 1. allocate RawList with enough capacity ───────────────────
         let with_cap = self
             .module
@@ -1883,19 +1887,15 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .ok_or("list_with_capacity returned void")?
             .into_pointer_value();
     
-        // ── 2. decide once which append helper we will use ─────────────
+        // For heterogeneous lists, we must use tagged append
         let append_tagged = self
             .module
             .get_function("list_append_tagged")
             .ok_or("list_append_tagged not found")?;
-        let append_plain = self
-            .module
-            .get_function("list_append")
-            .ok_or("list_append not found")?;
-        let use_tagged = matches!(common_type, Type::Any);
-    
-        // helper: map Type → TypeTag (u8)
-        let tag_const = |ty: &Type, ctx: &'ctx inkwell::context::Context| {
+            
+        // ── 3. emit one append call per element, ensuring proper tagging ────────────────────────
+        for (idx, (value, ty)) in elements.iter().enumerate() {
+            // Determine the proper tag for this element
             let tag = match ty {
                 Type::None => TypeTag::None_,
                 Type::Bool => TypeTag::Bool,
@@ -1906,11 +1906,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 Type::Tuple(_) => TypeTag::Tuple,
                 _ => TypeTag::Any,
             };
-            ctx.i8_type().const_int(tag as u64, false)
-        };
-    
-        // ── 3. emit one append call per literal ────────────────────────
-        for (idx, (value, ty)) in elements.iter().enumerate() {
+            
+            eprintln!("[DEBUG] Element {}: type={:?}, tag={:?}", idx, ty, tag);
+            
             // ensure primitives are passed by address
             let elem_ptr = if is_reference_type(ty) {
                 *value
@@ -1922,22 +1920,16 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 slot.into()
             };
     
-            if use_tagged {
-                let tag = tag_const(ty, self.llvm_context);
-                self.builder.build_call(
-                    append_tagged,
-                    &[list_ptr.into(), elem_ptr.into(), tag.into()],
-                    &format!("append_tagged_{}", idx),
-                ).unwrap();
-            } else {
-                self.builder.build_call(
-                    append_plain,
-                    &[list_ptr.into(), elem_ptr.into()],
-                    &format!("append_{}", idx),
-                ).unwrap();
-            }
+            // Always use tagged append for safety
+            let tag_const = self.llvm_context.i8_type().const_int(tag as u64, false);
+            self.builder.build_call(
+                append_tagged,
+                &[list_ptr.into(), elem_ptr.into(), tag_const.into()],
+                &format!("append_tagged_{}", idx),
+            ).unwrap();
         }
     
+        eprintln!("[DEBUG] List construction complete");
         Ok(list_ptr)
     }
 
