@@ -1,9 +1,0 @@
-Stack size increased to 256MB for handling large ranges
-JIT compiling and executing ./examples/lists.ch
-List element type: String
-List element type: Int
-List elements have different types, using common type: Any
-Final list element type: Any
-Assignment value type: List(Any)
-Added variable 'tstArray' to current scope
-Added variable 'tstArray' to current scope
