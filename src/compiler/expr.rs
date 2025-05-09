@@ -1861,12 +1861,12 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     fn build_list(
         &self,
         elements: Vec<(BasicValueEnum<'ctx>, Type)>,
-        common_type: &Type,
+        _common_type: &Type,                    // kept to avoid changing the call‑sites
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         use crate::compiler::runtime::list::TypeTag;
         use crate::compiler::types::{is_reference_type, Type};
-    
-        // ── 1. allocate RawList with enough capacity ───────────────────
+
+        /* ── 1. allocate the backing RawList with exact capacity ───────── */
         let with_cap = self
             .module
             .get_function("list_with_capacity")
@@ -1877,69 +1877,60 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .const_int(elements.len() as u64, false);
         let list_ptr = self
             .builder
-            .build_call(with_cap, &[len_val.into()], "list.new").unwrap()
+            .build_call(with_cap, &[len_val.into()], "list.new")
+            .unwrap()
             .try_as_basic_value()
             .left()
             .ok_or("list_with_capacity returned void")?
             .into_pointer_value();
-    
-        // ── 2. decide once which append helper we will use ─────────────
+
+        /* ── 2. helper and append function we’ll use for every element ─── */
         let append_tagged = self
             .module
             .get_function("list_append_tagged")
             .ok_or("list_append_tagged not found")?;
-        let append_plain = self
-            .module
-            .get_function("list_append")
-            .ok_or("list_append not found")?;
-        let use_tagged = matches!(common_type, Type::Any);
-    
-        // helper: map Type → TypeTag (u8)
+
         let tag_const = |ty: &Type, ctx: &'ctx inkwell::context::Context| {
             let tag = match ty {
-                Type::None => TypeTag::None_,
-                Type::Bool => TypeTag::Bool,
-                Type::Int => TypeTag::Int,
-                Type::Float => TypeTag::Float,
-                Type::String => TypeTag::String,
-                Type::List(_) => TypeTag::List,
-                Type::Tuple(_) => TypeTag::Tuple,
-                _ => TypeTag::Any,
+                Type::None        => TypeTag::None_,
+                Type::Bool        => TypeTag::Bool,
+                Type::Int         => TypeTag::Int,
+                Type::Float       => TypeTag::Float,
+                Type::String      => TypeTag::String,
+                Type::List(_)     => TypeTag::List,
+                Type::Tuple(_)    => TypeTag::Tuple,
+                _                 => TypeTag::Any,
             };
             ctx.i8_type().const_int(tag as u64, false)
         };
-    
-        // ── 3. emit one append call per literal ────────────────────────
+
+        /* ── 3. append every literal value together with its tag ───────── */
         for (idx, (value, ty)) in elements.iter().enumerate() {
-            // ensure primitives are passed by address
+            // scalars live on the stack, references are already pointers
             let elem_ptr = if is_reference_type(ty) {
                 *value
             } else {
                 let slot = self
                     .builder
-                    .build_alloca(value.get_type(), &format!("lit{}_slot", idx)).unwrap();
+                    .build_alloca(value.get_type(), &format!("lit{}_slot", idx))
+                    .unwrap();
                 self.builder.build_store(slot, *value).unwrap();
                 slot.into()
             };
-    
-            if use_tagged {
-                let tag = tag_const(ty, self.llvm_context);
-                self.builder.build_call(
+
+            let tag = tag_const(ty, self.llvm_context);
+            self.builder
+                .build_call(
                     append_tagged,
                     &[list_ptr.into(), elem_ptr.into(), tag.into()],
                     &format!("append_tagged_{}", idx),
-                ).unwrap();
-            } else {
-                self.builder.build_call(
-                    append_plain,
-                    &[list_ptr.into(), elem_ptr.into()],
-                    &format!("append_{}", idx),
-                ).unwrap();
-            }
+                )
+                .unwrap();
         }
-    
+
         Ok(list_ptr)
     }
+
 
     fn build_empty_tuple(&self, name: &str) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         let tuple_type = self.llvm_context.struct_type(&[], false);
