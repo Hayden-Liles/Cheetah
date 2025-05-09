@@ -111,10 +111,10 @@ impl<'ctx> CompilationContext<'ctx> {
                     self.builder.build_call(print_bool, &[val.into()], "print_bool").unwrap();
                 }
                 Type::List(elem_ty) => {
-                    self.print_list(val.into_pointer_value(), &*elem_ty)?;
+                    self.print_list(val.into_pointer_value(), &*elem_ty, 0)?;
                 }
                 Type::Tuple(elem_tys) => {
-                    self.print_tuple(val.into_pointer_value(), &elem_tys)?;
+                    self.print_tuple(val.into_pointer_value(), &elem_tys, 0)?;
                 }
                 other => {
                     // fallback
@@ -249,7 +249,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     list_ptr_ty,
                     "listcast",
                 );
-                self.print_list(list_ptr, &*inner)?;
+                self.print_list(list_ptr, &*inner, 0)?;
             }
             Type::Tuple(elem_tys) => {
                 println!("1.1: Tuple");
@@ -260,7 +260,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     tup_ptr_ty,
                     "tupcast",
                 );
-                self.print_tuple(tup_ptr, elem_tys)?;
+                self.print_tuple(tup_ptr, elem_tys, 0)?;
             }
             _ => {
                 println!("1.1: Fallback");
@@ -288,18 +288,32 @@ impl<'ctx> CompilationContext<'ctx> {
     fn print_list(
         &mut self,
         list_ptr: PointerValue<'ctx>,
-        elem_ty: &Type,
+        elem_type: &Type,
+        recursion_depth: usize,
     ) -> Result<(), String> {
         use inkwell::{AddressSpace, IntPredicate};
         use crate::compiler::runtime::list::{get_list_struct_type, TypeTag};
+    
+        // Prevent infinite recursion
+        const MAX_RECURSION_DEPTH: usize = 3;
+        if recursion_depth >= MAX_RECURSION_DEPTH {
+            println!("Hit maximum recursion depth: {}", recursion_depth);
+            let max_depth_str = self.make_cstr("max_depth", b"[max recursion depth]\0");
+            let print_str = self
+                .module
+                .get_function("print_string")
+                .ok_or("print_string not found")?;
+            self.builder.build_call(print_str, &[max_depth_str.into()], "pr_max_depth").unwrap();
+            return Ok(());
+        }
     
         // ─────────────────────────────────────────────  shorthands
         let ctx         = self.llvm_context;
         let i64_t       = ctx.i64_type();
         let i8_t        = ctx.i8_type();
         let void_ptr_t  = ctx.ptr_type(AddressSpace::default());
-
-        println!("0: Building List");
+    
+        println!("0: Building List (depth: {})", recursion_depth);
     
         // Ensure the two helpers are declared in this Module
         let list_get = self.module.get_function("list_get").unwrap_or_else(|| {
@@ -323,7 +337,7 @@ impl<'ctx> CompilationContext<'ctx> {
         let quote    = self.make_cstr("qt", b"'\0");
         let none_lit = self.make_cstr("none", b"None\0");
     
-        // “[”
+        // "["
         self.builder.build_call(print_str, &[lbrack.into()], "pr_lb").unwrap();
     
         // len = list.length
@@ -361,12 +375,37 @@ impl<'ctx> CompilationContext<'ctx> {
             .left()
             .ok_or("list_get returned void")?;
     
-        if elem_ty != &Type::Any {
+        // Handle homogeneous vs. heterogeneous lists
+        if elem_type != &Type::Any {
             println!("1: Homogeneous List");
             // homogeneous list
-            self.print_value_by_type(elem_ptr, elem_ty, quote, none_lit)?;
+            self.print_value_by_type(elem_ptr, elem_type, quote, none_lit)?;
+            
+            // Move to next iteration - add comma if needed
+            let is_last = self.builder.build_int_compare(
+                IntPredicate::EQ,
+                idx_val,
+                self.builder.build_int_sub(len_val, i64_t.const_int(1, false), "len-1").unwrap(),
+                "is_last",
+            ).unwrap();
+            
+            let bb_comma = ctx.append_basic_block(cur_fn, "comma");
+            let bb_no_comma = ctx.append_basic_block(cur_fn, "no_comma");
+            
+            self.builder.build_conditional_branch(is_last, bb_no_comma, bb_comma).unwrap();
+            
+            // Add comma if needed
+            self.builder.position_at_end(bb_comma);
+            self.builder.build_call(print_str, &[comma.into()], "pc").unwrap();
+            self.builder.build_unconditional_branch(bb_no_comma).unwrap();
+            
+            // Next iteration
+            self.builder.position_at_end(bb_no_comma);
+            let next = self.builder.build_int_add(idx_val, i64_t.const_int(1, false), "idx+1").unwrap();
+            self.builder.build_store(idx_ptr, next).unwrap();
+            self.builder.build_unconditional_branch(bb_cond).unwrap();
         } else {
-            println!("2: Hetrogeneous List");
+            println!("2: Heterogeneous List");
             // heterogeneous list – look up the run‑time tag
             let tag_val = self
                 .builder
@@ -375,18 +414,21 @@ impl<'ctx> CompilationContext<'ctx> {
                 .left()
                 .unwrap()
                 .into_int_value();
+            
             println!("2.1: Tag Value '{}'", tag_val);
     
-            // tag‑based dispatch
-            let bb_int   = ctx.append_basic_block(cur_fn, "tag.int");
-            let bb_flt   = ctx.append_basic_block(cur_fn, "tag.flt");
-            let bb_bool  = ctx.append_basic_block(cur_fn, "tag.bool");
-            let bb_str   = ctx.append_basic_block(cur_fn, "tag.str");
-            let bb_list  = ctx.append_basic_block(cur_fn, "tag.list");
-            let bb_tuple = ctx.append_basic_block(cur_fn, "tag.tuple");
-            let bb_none  = ctx.append_basic_block(cur_fn, "tag.none");
-            let bb_deflt = ctx.append_basic_block(cur_fn, "tag.deflt");
+            // We'll create basic blocks for each tag and for iterations
+            let bb_int    = ctx.append_basic_block(cur_fn, "tag.int");
+            let bb_flt    = ctx.append_basic_block(cur_fn, "tag.flt");
+            let bb_bool   = ctx.append_basic_block(cur_fn, "tag.bool");
+            let bb_str    = ctx.append_basic_block(cur_fn, "tag.str");
+            let bb_list   = ctx.append_basic_block(cur_fn, "tag.list");
+            let bb_tuple  = ctx.append_basic_block(cur_fn, "tag.tuple");
+            let bb_none   = ctx.append_basic_block(cur_fn, "tag.none");
+            let bb_deflt  = ctx.append_basic_block(cur_fn, "tag.deflt");
+            let bb_next   = ctx.append_basic_block(cur_fn, "tag.next");
     
+            // Switch based on tag
             self.builder.build_switch(
                 tag_val,
                 bb_deflt,
@@ -400,44 +442,39 @@ impl<'ctx> CompilationContext<'ctx> {
                     (i8_t.const_int(TypeTag::None_  as u64, false), bb_none),
                 ],
             ).unwrap();
-
+    
             println!("3: just seeing");
-
-    
-            let back = |b: &inkwell::builder::Builder<'ctx>| b.build_unconditional_branch(bb_cond).unwrap();
-    
             println!("3.1: just seeing");
-            
-
+    
             // INT
             self.builder.position_at_end(bb_int);
             self.print_value_by_type(elem_ptr, &Type::Int, quote, none_lit)?;
-            back(&self.builder);
+            self.builder.build_unconditional_branch(bb_next).unwrap();
             
             println!("3.2: just seeing");
-
+    
             // FLOAT
             self.builder.position_at_end(bb_flt);
             self.print_value_by_type(elem_ptr, &Type::Float, quote, none_lit)?;
-            back(&self.builder);
+            self.builder.build_unconditional_branch(bb_next).unwrap();
             
             println!("3.3: just seeing");
-
+    
             // BOOL
             self.builder.position_at_end(bb_bool);
             self.print_value_by_type(elem_ptr, &Type::Bool, quote, none_lit)?;
-            back(&self.builder);
+            self.builder.build_unconditional_branch(bb_next).unwrap();
     
             println!("3.4: just seeing");
     
             // STRING
             self.builder.position_at_end(bb_str);
             self.print_value_by_type(elem_ptr, &Type::String, quote, none_lit)?;
-            back(&self.builder);
-
+            self.builder.build_unconditional_branch(bb_next).unwrap();
+    
             println!("3.5: just seeing");
     
-            // LIST
+            // LIST - Fixed to prevent infinite recursion
             self.builder.position_at_end(bb_list);
             let list_ptr_cast = Self::cast_or_self(
                 &self.builder,
@@ -445,9 +482,44 @@ impl<'ctx> CompilationContext<'ctx> {
                 list_ptr.get_type(),
                 "cast_list",
             );
-            self.print_list(list_ptr_cast, &Type::Any)?;
-            back(&self.builder);
-
+    
+            // Check if the nested list is empty
+            let list_len_fn = match self.module.get_function("list_len") {
+                Some(f) => f,
+                None => return Err("list_len function not found".to_string()),
+            };
+    
+            let call_site_value = self
+                .builder
+                .build_call(list_len_fn, &[list_ptr_cast.into()], "get_nested_list_len")
+                .unwrap();
+    
+            let nested_list_len = call_site_value
+                .try_as_basic_value()
+                .left()
+                .ok_or_else(|| "Failed to get list length".to_string())?;
+    
+            // Check if the list is empty to avoid unnecessary processing
+            let is_empty = self.builder.build_int_compare(
+                inkwell::IntPredicate::EQ,
+                nested_list_len.into_int_value(),
+                self.llvm_context.i64_type().const_zero(),
+                "is_empty_list"
+            ).unwrap();
+    
+            // Use a conditional to avoid processing empty lists
+            let process_block = self.llvm_context.append_basic_block(cur_fn, "process_nested_list");
+            let skip_list_block = self.llvm_context.append_basic_block(cur_fn, "skip_nested_list");
+            self.builder.build_conditional_branch(is_empty, skip_list_block, process_block).unwrap();
+    
+            self.builder.position_at_end(process_block);
+            // Use String as the element type to prevent infinite recursion with Type::Any
+            self.print_list(list_ptr_cast, &Type::String, recursion_depth + 1)?;
+            self.builder.build_unconditional_branch(skip_list_block).unwrap();
+    
+            self.builder.position_at_end(skip_list_block);
+            self.builder.build_unconditional_branch(bb_next).unwrap();
+    
             println!("3.6: just seeing");
     
             // TUPLE
@@ -459,105 +531,134 @@ impl<'ctx> CompilationContext<'ctx> {
                 tup_ptr_ty,
                 "cast_tup",
             );
-            self.print_tuple(tup_ptr, &vec![])?;          // tuple printer handles Any
-            back(&self.builder);
-
+            
+            // Pass empty vector to print_tuple for Any type, with increased recursion depth
+            self.print_tuple(tup_ptr, &vec![], recursion_depth + 1)?;
+            self.builder.build_unconditional_branch(bb_next).unwrap();
+    
             println!("3.7: just seeing");
             
             // NONE
             self.builder.position_at_end(bb_none);
             self.builder.build_call(print_str, &[none_lit.into()], "pnone").unwrap();
-            back(&self.builder);
-
+            self.builder.build_unconditional_branch(bb_next).unwrap();
+    
             println!("3.8: just seeing");
             
             // DEFAULT
             self.builder.position_at_end(bb_deflt);
             let ph = self.make_cstr("ph_any", b"<Any>\0");
             self.builder.build_call(print_str, &[ph.into()], "ph_any").unwrap();
-            back(&self.builder);
+            self.builder.build_unconditional_branch(bb_next).unwrap();
+            
             println!("3.9: just seeing");
+    
+            // All tag handling blocks converge here
+            self.builder.position_at_end(bb_next);
+            
+            // Move to next iteration - add comma if needed
+            let is_last = self.builder.build_int_compare(
+                IntPredicate::EQ,
+                idx_val,
+                self.builder.build_int_sub(len_val, i64_t.const_int(1, false), "len-1").unwrap(),
+                "is_last",
+            ).unwrap();
+            
+            let bb_comma = ctx.append_basic_block(cur_fn, "comma");
+            let bb_no_comma = ctx.append_basic_block(cur_fn, "no_comma");
+            
+            self.builder.build_conditional_branch(is_last, bb_no_comma, bb_comma).unwrap();
+            
+            // Add comma if needed
+            self.builder.position_at_end(bb_comma);
+            self.builder.build_call(print_str, &[comma.into()], "pc").unwrap();
+            self.builder.build_unconditional_branch(bb_no_comma).unwrap();
+            
+            // Next iteration
+            self.builder.position_at_end(bb_no_comma);
+            let next = self.builder.build_int_add(idx_val, i64_t.const_int(1, false), "idx+1").unwrap();
+            self.builder.build_store(idx_ptr, next).unwrap();
+            self.builder.build_unconditional_branch(bb_cond).unwrap();
         }
-    
-        // comma if idx < len‑1
-        self.builder.position_at_end(bb_body); // in case we branched inside
-        let is_last = self.builder.build_int_compare(
-            IntPredicate::EQ,
-            idx_val,
-            self.builder.build_int_sub(len_val, i64_t.const_int(1, false), "len-1").unwrap(),
-            "is_last",
-        ).unwrap();
-        let bb_comma = ctx.append_basic_block(cur_fn, "comma");
-        let bb_no    = ctx.append_basic_block(cur_fn, "no_comma");
-        self.builder.build_conditional_branch(is_last, bb_no, bb_comma).unwrap();
-    
-        self.builder.position_at_end(bb_comma);
-        self.builder.build_call(print_str, &[comma.into()], "pc").unwrap();
-        self.builder.build_unconditional_branch(bb_no).unwrap();
-    
-        // idx += 1
-        self.builder.position_at_end(bb_no);
-        let next = self.builder.build_int_add(idx_val, i64_t.const_int(1, false), "idx+1").unwrap();
-        self.builder.build_store(idx_ptr, next).unwrap();
-        self.builder.build_unconditional_branch(bb_cond).unwrap();
     
         // ───────── after
         self.builder.position_at_end(bb_after);
         self.builder.build_call(print_str, &[rbrack.into()], "pr_rb").unwrap();
-        println!("Done Print List");
+        println!("Done Print List (depth: {})", recursion_depth);
         Ok(())
-    }    
+    }
+            
 
 
     /// Print a Tuple with parentheses and comma-sep fields
-    fn print_tuple(&mut self, tup: PointerValue<'ctx>, types: &[Type]) -> Result<(), String> {
-        println!("Printing Tuple");
-        let print_str  = self.module.get_function("print_string").unwrap();
-        let print_int  = self.module.get_function("print_int").unwrap();
-        let print_flt  = self.module.get_function("print_float").unwrap();
+    fn print_tuple(&mut self, tup: PointerValue<'ctx>, types: &[Type], recursion_depth: usize) -> Result<(), String> {
+        println!("Printing Tuple (depth: {})", recursion_depth);
+        
+        // Check recursion depth
+        const MAX_RECURSION_DEPTH: usize = 3;
+        if recursion_depth >= MAX_RECURSION_DEPTH {
+            println!("Hit maximum recursion depth in tuple: {}", recursion_depth);
+            let max_depth_str = self.make_cstr("max_tuple_depth", b"[max tuple recursion depth]\0");
+            let print_str = self
+                .module
+                .get_function("print_string")
+                .ok_or("print_string not found")?;
+            self.builder.build_call(print_str, &[max_depth_str.into()], "pr_max_tuple_depth").unwrap();
+            return Ok(());
+        }
+    
+        let print_str = self.module.get_function("print_string").unwrap();
+        let print_int = self.module.get_function("print_int").unwrap();
+        let print_flt = self.module.get_function("print_float").unwrap();
         let print_bool = self.module.get_function("print_bool").unwrap();
-
-        let lp        = self.make_cstr("lp", b"(\0");
-        let rp        = self.make_cstr("rp", b")\0");
-        let comma     = self.make_cstr("cm", b", \0");
-        let sq        = self.make_cstr("sq", b"'\0");
-        let none_lit  = self.make_cstr("none", b"None\0");
-
+    
+        let lp = self.make_cstr("lp", b"(\0");
+        let rp = self.make_cstr("rp", b")\0");
+        let comma = self.make_cstr("cm", b", \0");
+        let sq = self.make_cstr("sq", b"'\0");
+        let none_lit = self.make_cstr("none", b"None\0");
+    
+        // Print opening parenthesis
         self.builder.build_call(print_str, &[lp.into()], "print_lp").unwrap();
-
-        // get the LLVM StructType for this tuple
+    
+        // Get the LLVM StructType for this tuple
         let struct_ty = match self.get_llvm_type(&Type::Tuple(types.to_vec())) {
             inkwell::types::BasicTypeEnum::StructType(st) => st,
             _ => return Err("Expected tuple struct".into()),
         };
-
-        let _i64_ty = self.llvm_context.i64_type();
+    
         let ptr_ty = self.llvm_context.ptr_type(AddressSpace::default());
-
+    
         // Cast the opaque pointer to the tuple struct type
         let tup_ptr_ty = self.llvm_context.ptr_type(AddressSpace::default());
         let tup = Self::cast_or_self(&self.builder, tup, tup_ptr_ty, "tup_typed");
-
+    
+        // Print each tuple element
         for (i, ty) in types.iter().enumerate() {
+            // Add comma between elements
             if i > 0 {
                 self.builder.build_call(print_str, &[comma.into()], "print_comma").unwrap();
             }
-            // load the field
+            
+            // Load the field
             let field_ptr = self.builder
                 .build_struct_gep(struct_ty, tup, i as u32, &format!("fp{}", i))
                 .unwrap();
             let val = self.builder.build_load(struct_ty.get_field_types()[i], field_ptr, "fv").unwrap();
-
+    
+            // Print based on type
             match ty {
                 Type::None => {
                     self.builder.build_call(print_str, &[none_lit.into()], "tp_none").unwrap();
                 }
                 Type::String => {
                     self.builder.build_call(print_str, &[sq.into()], "tp_q1").unwrap();
-                    let s_ptr = Self::cast_or_self(&self.builder,
-                                                   val.into_pointer_value(),
-                                                   ptr_ty,
-                                                   "cast_str");
+                    let s_ptr = Self::cast_or_self(
+                        &self.builder,
+                        val.into_pointer_value(),
+                        ptr_ty,
+                        "cast_str"
+                    );
                     self.builder.build_call(print_str, &[s_ptr.into()], "tp_str").unwrap();
                     self.builder.build_call(print_str, &[sq.into()], "tp_q2").unwrap();
                 }
@@ -575,11 +676,13 @@ impl<'ctx> CompilationContext<'ctx> {
                 }
                 Type::List(inner) => {
                     let lptr = val.into_pointer_value();
-                    self.print_list(lptr, inner)?;
+                    // Pass the increased recursion depth
+                    self.print_list(lptr, inner, recursion_depth + 1)?;
                 }
                 Type::Tuple(inner) => {
                     let tptr = val.into_pointer_value();
-                    self.print_tuple(tptr, inner)?;
+                    // Pass the increased recursion depth
+                    self.print_tuple(tptr, inner, recursion_depth + 1)?;
                 }
                 other => {
                     let ph = self.make_cstr("ph", format!("<{:?}>\0", other).as_bytes());
@@ -587,15 +690,18 @@ impl<'ctx> CompilationContext<'ctx> {
                 }
             }
         }
-
-        // single-element tuple needs trailing comma
+    
+        // Add trailing comma for single-element tuples (Python syntax)
         if types.len() == 1 {
             let tc = self.make_cstr("tc", b",\0");
             self.builder.build_call(print_str, &[tc.into()], "tp_trailing").unwrap();
         }
+        
+        // Print closing parenthesis
         self.builder.build_call(print_str, &[rp.into()], "print_rp").unwrap();
-        println!("Done Printing Tuple");
+        
+        println!("Done Printing Tuple (depth: {})", recursion_depth);
         Ok(())
-    }
+    }    
 
 }
