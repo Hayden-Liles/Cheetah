@@ -143,6 +143,7 @@ impl<'ctx> CompilationContext<'ctx> {
 
         match ty {
             Type::Int => {
+                println!("1.1: Int");
                 let int_ptr_ty = self.llvm_context.ptr_type(AddressSpace::default());
                 let int_ptr = Self::cast_or_self(
                     &self.builder,
@@ -163,6 +164,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     .unwrap();
             }
             Type::Float => {
+                println!("1.1: Float");
                 let f_ptr_ty = self.llvm_context.ptr_type(AddressSpace::default());
                 let f_ptr = Self::cast_or_self(
                     &self.builder,
@@ -183,6 +185,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     .unwrap();
             }
             Type::Bool => {
+                println!("1.1: Bool");
                 let b_ptr_ty = self.llvm_context.ptr_type(AddressSpace::default());
                 let b_ptr = Self::cast_or_self(
                     &self.builder,
@@ -203,6 +206,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     .unwrap();
             }
             Type::String => {
+                println!("1.1: String");
                 let str_ptr = Self::cast_or_self(
                     &self.builder,
                     opaque_ptr.into_pointer_value(),
@@ -227,6 +231,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     .unwrap();
             }
             Type::None => {
+                println!("1.1: None");
                 let print_str = self
                     .module
                     .get_function("print_string")
@@ -236,6 +241,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     .unwrap();
             }
             Type::List(inner) => {
+                println!("1.1: List");
                 let list_ptr_ty = opaque_ptr.into_pointer_value().get_type();
                 let list_ptr = Self::cast_or_self(
                     &self.builder,
@@ -246,6 +252,7 @@ impl<'ctx> CompilationContext<'ctx> {
                 self.print_list(list_ptr, &*inner)?;
             }
             Type::Tuple(elem_tys) => {
+                println!("1.1: Tuple");
                 let tup_ptr_ty = self.llvm_context.ptr_type(AddressSpace::default());
                 let tup_ptr = Self::cast_or_self(
                     &self.builder,
@@ -256,6 +263,7 @@ impl<'ctx> CompilationContext<'ctx> {
                 self.print_tuple(tup_ptr, elem_tys)?;
             }
             _ => {
+                println!("1.1: Fallback");
                 // fallback
                 let ph = self.make_cstr("ph2", b"<Any>\0");
                 let print_str = self
@@ -290,6 +298,8 @@ impl<'ctx> CompilationContext<'ctx> {
         let i64_t       = ctx.i64_type();
         let i8_t        = ctx.i8_type();
         let void_ptr_t  = ctx.ptr_type(AddressSpace::default());
+
+        println!("0: Building List");
     
         // Ensure the two helpers are declared in this Module
         let list_get = self.module.get_function("list_get").unwrap_or_else(|| {
@@ -352,9 +362,11 @@ impl<'ctx> CompilationContext<'ctx> {
             .ok_or("list_get returned void")?;
     
         if elem_ty != &Type::Any {
+            println!("1: Homogeneous List");
             // homogeneous list
             self.print_value_by_type(elem_ptr, elem_ty, quote, none_lit)?;
         } else {
+            println!("2: Hetrogeneous List");
             // heterogeneous list – look up the run‑time tag
             let tag_val = self
                 .builder
@@ -363,6 +375,7 @@ impl<'ctx> CompilationContext<'ctx> {
                 .left()
                 .unwrap()
                 .into_int_value();
+            println!("2.1: Tag Value '{}'", tag_val);
     
             // tag‑based dispatch
             let bb_int   = ctx.append_basic_block(cur_fn, "tag.int");
@@ -387,30 +400,44 @@ impl<'ctx> CompilationContext<'ctx> {
                     (i8_t.const_int(TypeTag::None_  as u64, false), bb_none),
                 ],
             ).unwrap();
+
+            println!("3: just seeing");
+
     
             let back = |b: &inkwell::builder::Builder<'ctx>| b.build_unconditional_branch(bb_cond).unwrap();
     
+            println!("3.1: just seeing");
+            
+
             // INT
             self.builder.position_at_end(bb_int);
             self.print_value_by_type(elem_ptr, &Type::Int, quote, none_lit)?;
             back(&self.builder);
-    
+            
+            println!("3.2: just seeing");
+
             // FLOAT
             self.builder.position_at_end(bb_flt);
             self.print_value_by_type(elem_ptr, &Type::Float, quote, none_lit)?;
             back(&self.builder);
-    
+            
+            println!("3.3: just seeing");
+
             // BOOL
             self.builder.position_at_end(bb_bool);
             self.print_value_by_type(elem_ptr, &Type::Bool, quote, none_lit)?;
             back(&self.builder);
     
+            println!("3.4: just seeing");
+    
             // STRING
             self.builder.position_at_end(bb_str);
             self.print_value_by_type(elem_ptr, &Type::String, quote, none_lit)?;
             back(&self.builder);
+
+            println!("3.5: just seeing");
     
-            // LIST  (recurse)
+            // LIST
             self.builder.position_at_end(bb_list);
             let list_ptr_cast = Self::cast_or_self(
                 &self.builder,
@@ -420,8 +447,10 @@ impl<'ctx> CompilationContext<'ctx> {
             );
             self.print_list(list_ptr_cast, &Type::Any)?;
             back(&self.builder);
+
+            println!("3.6: just seeing");
     
-            // TUPLE (recurse)
+            // TUPLE
             self.builder.position_at_end(bb_tuple);
             let tup_ptr_ty = ctx.ptr_type(AddressSpace::default());
             let tup_ptr = Self::cast_or_self(
@@ -432,17 +461,22 @@ impl<'ctx> CompilationContext<'ctx> {
             );
             self.print_tuple(tup_ptr, &vec![])?;          // tuple printer handles Any
             back(&self.builder);
-    
+
+            println!("3.7: just seeing");
+            
             // NONE
             self.builder.position_at_end(bb_none);
             self.builder.build_call(print_str, &[none_lit.into()], "pnone").unwrap();
             back(&self.builder);
-    
+
+            println!("3.8: just seeing");
+            
             // DEFAULT
             self.builder.position_at_end(bb_deflt);
             let ph = self.make_cstr("ph_any", b"<Any>\0");
             self.builder.build_call(print_str, &[ph.into()], "ph_any").unwrap();
             back(&self.builder);
+            println!("3.9: just seeing");
         }
     
         // comma if idx < len‑1
@@ -470,13 +504,14 @@ impl<'ctx> CompilationContext<'ctx> {
         // ───────── after
         self.builder.position_at_end(bb_after);
         self.builder.build_call(print_str, &[rbrack.into()], "pr_rb").unwrap();
-    
+        println!("Done Print List");
         Ok(())
     }    
 
 
     /// Print a Tuple with parentheses and comma-sep fields
     fn print_tuple(&mut self, tup: PointerValue<'ctx>, types: &[Type]) -> Result<(), String> {
+        println!("Printing Tuple");
         let print_str  = self.module.get_function("print_string").unwrap();
         let print_int  = self.module.get_function("print_int").unwrap();
         let print_flt  = self.module.get_function("print_float").unwrap();
@@ -559,6 +594,7 @@ impl<'ctx> CompilationContext<'ctx> {
             self.builder.build_call(print_str, &[tc.into()], "tp_trailing").unwrap();
         }
         self.builder.build_call(print_str, &[rp.into()], "print_rp").unwrap();
+        println!("Done Printing Tuple");
         Ok(())
     }
 
