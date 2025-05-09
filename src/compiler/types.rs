@@ -915,7 +915,7 @@ impl Type {
                     .zip(to_elems.iter())
                     .all(|(from, to)| from.can_coerce_to(to))
             }
-
+            (Type::List(_), Type::Tuple(_)) => true,
             (
                 Type::Class {
                     name: from_name, ..
