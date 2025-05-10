@@ -10,8 +10,6 @@ use crate::parser::{ParseError, Parser};
 
 /// Parser methods for expressions
 pub trait ExprParser {
-    fn parse_argument(&mut self) -> Result<Expr, ParseError>;
-    fn parse_function_call_expr(&mut self, func_expr: Expr) -> Result<Expr, ParseError>;
     /// Parse an expression
     fn parse_expression(&mut self) -> Result<Expr, ParseError>;
 
@@ -813,101 +811,6 @@ impl ExprParser for Parser {
         }
     }
 
-    fn parse_argument(&mut self) -> Result<Expr, ParseError> {
-        let start_position = self.current_position();
-        let (line, column) = start_position;
-        
-        // Handle simple expressions first
-        if self.check_identifier() {
-            let id_token = self.current.clone().unwrap();
-            let id_name = match &id_token.token_type {
-                TokenType::Identifier(name) => name.clone(),
-                _ => unreachable!(),
-            };
-            
-            self.advance();
-            
-            // Check if this is a function call
-            if self.check(TokenType::LeftParen) {
-                return self.parse_function_call_expr(Expr::Name {
-                    id: id_name,
-                    ctx: ExprContext::Load,
-                    line,
-                    column,
-                });
-            }
-            
-            // Check if this is a slice operation
-            if self.check(TokenType::LeftBracket) {
-                let name_expr = Expr::Name {
-                    id: id_name,
-                    ctx: ExprContext::Load,
-                    line,
-                    column,
-                };
-                
-                self.advance(); // Consume the left bracket
-                
-                let slice_expr = self.parse_slice()?;
-                self.consume(TokenType::RightBracket, "]")?;
-                
-                return Ok(Expr::Subscript {
-                    value: Box::new(name_expr),
-                    slice: Box::new(slice_expr),
-                    ctx: ExprContext::Load,
-                    line,
-                    column,
-                });
-            }
-            
-            // Regular name
-            return Ok(Expr::Name {
-                id: id_name,
-                ctx: ExprContext::Load,
-                line,
-                column,
-            });
-        }
-        
-        // If not a simple identifier, parse a full expression
-        self.parse_expression()
-    }
-    
-    // Helper function to parse a function call expression
-    fn parse_function_call_expr(&mut self, func_expr: Expr) -> Result<Expr, ParseError> {
-        let line = func_expr.get_line();
-        let column = func_expr.get_column();
-        
-        self.advance(); // Consume the left parenthesis
-        
-        let mut args = Vec::new();
-        let mut keywords = Vec::new();
-        
-        if !self.check(TokenType::RightParen) {
-            // Parse first argument
-            args.push(Box::new(self.parse_or_test()?));
-            
-            // Parse additional arguments
-            while self.match_token(TokenType::Comma) {
-                if self.check(TokenType::RightParen) {
-                    break;
-                }
-                
-                args.push(Box::new(self.parse_or_test()?));
-            }
-        }
-        
-        self.consume(TokenType::RightParen, ")")?;
-        
-        Ok(Expr::Call {
-            func: Box::new(func_expr),
-            args,
-            keywords,
-            line,
-            column,
-        })
-    }
-
     fn parse_more_arguments(
         &mut self,
     ) -> Result<(Vec<Box<Expr>>, Vec<(Option<String>, Box<Expr>)>), ParseError> {
@@ -967,7 +870,7 @@ impl ExprParser for Parser {
                     ));
                 }
             } else if !saw_keyword {
-                args.push(Box::new(self.parse_argument()?));
+                args.push(Box::new(self.parse_or_test()?));
             } else {
                 return Err(ParseError::invalid_syntax(
                     "Positional argument after keyword argument",
