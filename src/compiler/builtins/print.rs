@@ -2,10 +2,8 @@ use crate::ast::Expr;
 use crate::compiler::context::CompilationContext;
 use crate::compiler::expr::ExprCompiler;
 use crate::compiler::types::Type;
-use crate::compiler::runtime::list::{TypeTag, get_list_struct_type};
 use inkwell::AddressSpace;
 use inkwell::values::{BasicValueEnum, PointerValue};
-use inkwell::IntPredicate;
 
 impl<'ctx> CompilationContext<'ctx> {
     /// Helper function to safely cast a pointer or return the original if the cast is a no-op

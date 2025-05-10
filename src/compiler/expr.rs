@@ -3713,6 +3713,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         self.builder.position_at_end(loop_body_block);
 
+        // IMPORTANT: Add the iteration variable to the scope FIRST, before any evaluation
         if let Expr::Name { id, .. } = generator.target.as_ref() {
             let index_alloca = self
                 .builder
@@ -3722,15 +3723,17 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 .build_store(index_alloca, current_index)
                 .unwrap();
             self.scope_stack
-                .add_variable(id.to_string(), index_alloca, Type::Int);
+                .add_variable(id.clone(), index_alloca, Type::Int);
         } else {
             return Err(
                 "Only simple variable targets are supported in list comprehensions".to_string(),
             );
         }
 
+        // Now that the variable is in scope, evaluate conditions
         let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
 
+        // Process the element, which can now access the variable
         self.process_list_comprehension_element(
             elt,
             should_append,
@@ -3756,6 +3759,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         Ok(())
     }
+
 
     fn handle_list_iteration_for_comprehension(
         &mut self,
@@ -3896,16 +3900,18 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             _ => element_type,
         };
 
-        match generator.target.as_ref() {
+        // Add the variable to the scope - this needs to happen FIRST
+        // before we evaluate conditions or the element expression
+        match &*generator.target {
             Expr::Name { id, .. } => {
                 println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
-                self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), element_type.clone());
+                self.scope_stack.add_variable(id.clone(), element_ptr.into_pointer_value(), element_type.clone());
             },
             Expr::Tuple { elts, .. } => {
                 if let Type::Tuple(tuple_element_types) = &element_type {
                     if elts.len() != tuple_element_types.len() {
                         return Err(format!("Tuple unpacking mismatch: expected {} elements, got {}",
-                                          elts.len(), tuple_element_types.len()));
+                                        elts.len(), tuple_element_types.len()));
                     }
 
                     let llvm_types: Vec<BasicTypeEnum> = tuple_element_types.iter()
@@ -3938,7 +3944,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             self.builder.build_store(element_alloca, element_val).unwrap();
 
                             println!("Setting unpacked tuple element '{}' to type: {:?}", id, element_type);
-                            self.scope_stack.add_variable(id.to_string(), element_alloca, element_type.clone());
+                            self.scope_stack.add_variable(id.clone(), element_alloca, element_type.clone());
                         } else {
                             return Err("Only simple variable names are supported in tuple unpacking".to_string());
                         }
@@ -3950,8 +3956,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             _ => return Err("Only simple variable targets or tuple unpacking are supported in list comprehensions".to_string()),
         }
 
+        // Now evaluate conditions AFTER the variable has been added to the scope
         let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
 
+        // Process the element expression AFTER the variable has been added to the scope
         self.process_list_comprehension_element(
             elt,
             should_append,
@@ -4076,17 +4084,20 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .unwrap();
         self.builder.build_store(char_ptr, char_val).unwrap();
 
+        // IMPORTANT: Add the variable to scope FIRST
         if let Expr::Name { id, .. } = generator.target.as_ref() {
             self.scope_stack
-                .add_variable(id.to_string(), char_ptr, Type::Int);
+                .add_variable(id.clone(), char_ptr, Type::Int);
         } else {
             return Err(
                 "Only simple variable targets are supported in list comprehensions".to_string(),
             );
         }
 
+        // Now evaluate conditions AFTER variable is in scope
         let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
 
+        // Process element expression AFTER variable is in scope
         self.process_list_comprehension_element(
             elt,
             should_append,
@@ -4137,13 +4148,16 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     .unwrap();
 
                 if let Expr::Name { id, .. } = generator.target.as_ref() {
+                    // IMPORTANT: Add variable to scope FIRST
                     println!("Setting tuple variable '{}' to type: {:?}", id, iter_type);
                     self.scope_stack
-                        .add_variable(id.to_string(), tuple_ptr, iter_type.clone());
+                        .add_variable(id.clone(), tuple_ptr, iter_type.clone());
 
+                    // THEN evaluate conditions
                     let should_append =
                         self.evaluate_comprehension_conditions(generator, current_function)?;
 
+                    // FINALLY process the element
                     self.process_list_comprehension_element(
                         elt,
                         should_append,
@@ -4168,6 +4182,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
                         let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
 
+                        // IMPORTANT: Add all tuple variables to scope FIRST
                         for (i, target_elt) in elts.iter().enumerate() {
                             if let Expr::Name { id, .. } = &**target_elt {
                                 let element_ptr = self
@@ -4206,7 +4221,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                                     id, element_type
                                 );
                                 self.scope_stack.add_variable(
-                                    id.to_string(),
+                                    id.clone(),
                                     element_alloca,
                                     element_type.clone(),
                                 );
@@ -4218,9 +4233,11 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             }
                         }
 
+                        // THEN evaluate conditions
                         let should_append =
                             self.evaluate_comprehension_conditions(generator, current_function)?;
 
+                        // FINALLY process the element
                         self.process_list_comprehension_element(
                             elt,
                             should_append,
@@ -4235,6 +4252,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             }
             _ => {
                 if let Expr::Name { id, .. } = generator.target.as_ref() {
+                    // Create a dummy variable with the right type
                     let dummy_val = self.llvm_context.i64_type().const_int(0, false);
                     let dummy_ptr = self
                         .builder
@@ -4242,8 +4260,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         .unwrap();
                     self.builder.build_store(dummy_ptr, dummy_val).unwrap();
 
+                    // IMPORTANT: Add variable to scope FIRST
                     self.scope_stack
-                        .add_variable(id.to_string(), dummy_ptr, Type::Int);
+                        .add_variable(id.clone(), dummy_ptr, Type::Int);
 
                     let current_function = self
                         .builder
@@ -4252,9 +4271,11 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         .get_parent()
                         .unwrap();
 
+                    // THEN evaluate conditions
                     let should_append =
                         self.evaluate_comprehension_conditions(generator, current_function)?;
 
+                    // FINALLY process the element
                     self.process_list_comprehension_element(
                         elt,
                         should_append,
@@ -4273,6 +4294,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         Ok(())
     }
+
 
     /// Evaluate all conditions (if clauses) in a comprehension
     fn evaluate_comprehension_conditions(

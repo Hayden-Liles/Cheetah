@@ -1,8 +1,3 @@
-a = [1, 2, 3]
-b = [1, 2, 3]
-c = [1, 2, 3]
-d = [a, b, c, a]
-print(a)
-print(b)
-print(c)
-print(d)
+print("\n── Test 5: comprehension – simple ──")
+squares = [x * x for x in [1, 2, 3, 4]]
+print(squares)              # → [1, 4, 9, 16]
