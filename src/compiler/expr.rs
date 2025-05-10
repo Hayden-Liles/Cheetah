@@ -200,10 +200,13 @@ pub trait ExprCompiler<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
     /// Special case for simple list comprehensions like [x * x for x in [1, 2, 3, 4]]
+    /// or list comprehensions with predicates like [x for x in [1, 2, 3, 4, 5, 6] if x % 2 == 0]
     fn compile_simple_list_comprehension(
         &mut self,
         var_name: &str,
         elements: &[Box<Expr>],
+        predicates: &[Box<Expr>],
+        elt: &Expr,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
     /// Compile a dictionary comprehension expression
@@ -3282,25 +3285,82 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             return Err("List comprehension must have at least one generator".to_string());
         }
 
-        // Special case for the simple list comprehension in examples/lists.ch
-        // This is a temporary workaround for the dominance issues
-        if let Expr::BinOp { left, op: Operator::Mult, right, .. } = elt {
-            if let (Expr::Name { id: left_id, .. }, Expr::Name { id: right_id, .. }) = (left.as_ref(), right.as_ref()) {
-                if left_id == right_id && generators.len() == 1 {
-                    if let Expr::Name { id: target_id, .. } = generators[0].target.as_ref() {
-                        if target_id == left_id {
-                            if let Expr::List { elts, .. } = &*generators[0].iter {
-                                println!("Using special case for simple list comprehension");
-                                return self.compile_simple_list_comprehension(left_id, elts);
+        // Special case for list comprehensions to work around dominance issues
+        if generators.len() == 1 {
+            if let Expr::Name { id: target_id, .. } = generators[0].target.as_ref() {
+                if let Expr::List { elts, .. } = &*generators[0].iter {
+                    // Case 1: [x * x for x in [1, 2, 3, 4]] - Squaring operation
+                    if let Expr::BinOp { left, op: Operator::Mult, right, .. } = elt {
+                        if let (Expr::Name { id: left_id, .. }, Expr::Name { id: right_id, .. }) = (left.as_ref(), right.as_ref()) {
+                            if left_id == right_id && target_id == left_id {
+                                println!("Using special case for simple list comprehension (squaring)");
+                                return self.compile_simple_list_comprehension(left_id, elts, &generators[0].ifs, elt);
                             }
                         }
                     }
+
+                    // Case 2: [x for x in [1, 2, 3, 4, 5, 6] if x % 2 == 0] - Identity with predicate
+                    if let Expr::Name { id: expr_id, .. } = elt {
+                        if expr_id == target_id {
+                            println!("Using special case for list comprehension with identity");
+                            return self.compile_simple_list_comprehension(target_id, elts, &generators[0].ifs, elt);
+                        }
+                    }
+
+                    // Case 3: [x + 1 for x in [1, 2, 3, 4]] - Addition operation
+                    if let Expr::BinOp { left, op: Operator::Add, right, .. } = elt {
+                        if let Expr::Name { id: var_id, .. } = left.as_ref() {
+                            if var_id == target_id {
+                                println!("Using special case for list comprehension (addition)");
+                                return self.compile_simple_list_comprehension(target_id, elts, &generators[0].ifs, elt);
+                            }
+                        }
+                        if let Expr::Name { id: var_id, .. } = right.as_ref() {
+                            if var_id == target_id {
+                                println!("Using special case for list comprehension (addition)");
+                                return self.compile_simple_list_comprehension(target_id, elts, &generators[0].ifs, elt);
+                            }
+                        }
+                    }
+
+                    // Case 4: [x - 1 for x in [1, 2, 3, 4]] - Subtraction operation
+                    if let Expr::BinOp { left, op: Operator::Sub, right: _, .. } = elt {
+                        if let Expr::Name { id: var_id, .. } = left.as_ref() {
+                            if var_id == target_id {
+                                println!("Using special case for list comprehension (subtraction)");
+                                return self.compile_simple_list_comprehension(target_id, elts, &generators[0].ifs, elt);
+                            }
+                        }
+                    }
+
+                    // Case 5: [x / 2 for x in [1, 2, 3, 4]] - Division operation
+                    if let Expr::BinOp { left, op: Operator::Div, right: _, .. } = elt {
+                        if let Expr::Name { id: var_id, .. } = left.as_ref() {
+                            if var_id == target_id {
+                                println!("Using special case for list comprehension (division)");
+                                return self.compile_simple_list_comprehension(target_id, elts, &generators[0].ifs, elt);
+                            }
+                        }
+                    }
+
+                    // Case 6: General case for any expression involving the target variable
+                    println!("Using special case for general list comprehension");
+                    return self.compile_simple_list_comprehension(target_id, elts, &generators[0].ifs, elt);
                 }
             }
         }
 
+        // Get the current function (unused for now but may be needed later)
+        let _current_function = self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+
         self.ensure_block_has_terminator();
 
+        // Create a result list to hold the comprehension results
         let result_list = self.build_empty_list("list_comp_result")?;
 
         self.ensure_block_has_terminator();
@@ -4379,27 +4439,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     ) -> Result<(), String> {
         println!("Processing list comprehension element: {:?}", elt);
 
-        // Debug: Check if variables are in scope
-        if let Expr::BinOp { left, right, .. } = elt {
-            if let Expr::Name { id: left_id, .. } = left.as_ref() {
-                println!("Checking if left variable '{}' is in scope", left_id);
-                if let Some(var_type) = self.scope_stack.get_type(left_id) {
-                    println!("Variable '{}' is in scope with type: {:?}", left_id, var_type);
-                } else {
-                    println!("Variable '{}' is NOT in scope!", left_id);
-                }
-            }
-
-            if let Expr::Name { id: right_id, .. } = right.as_ref() {
-                println!("Checking if right variable '{}' is in scope", right_id);
-                if let Some(var_type) = self.scope_stack.get_type(right_id) {
-                    println!("Variable '{}' is in scope with type: {:?}", right_id, var_type);
-                } else {
-                    println!("Variable '{}' is NOT in scope!", right_id);
-                }
-            }
-        }
-
+        // Create blocks for the element evaluation
         let then_block = self
             .llvm_context
             .append_basic_block(current_function, "comp_then");
@@ -4407,54 +4447,131 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .llvm_context
             .append_basic_block(current_function, "comp_continue");
 
+        // Branch based on the predicate result
         self.builder
             .build_conditional_branch(should_append, then_block, continue_block)
             .unwrap();
 
+        // Then block - element passes the predicate
         self.builder.position_at_end(then_block);
 
-        // Special handling for BinOp with Name operands to avoid dominance issues
-        let (element_val, mut element_type) = if let Expr::BinOp { left, op, right, .. } = elt {
-            if let (Expr::Name { id: left_id, .. }, Expr::Name { id: right_id, .. }) = (left.as_ref(), right.as_ref()) {
-                println!("Special handling for BinOp with Name operands");
+        // Compile the element expression
+        let (element_val, mut element_type) = match elt {
+            // Special case for x * x pattern (squaring)
+            Expr::BinOp { left, op: Operator::Mult, right, .. } => {
+                if let (Expr::Name { id: left_id, .. }, Expr::Name { id: right_id, .. }) = (left.as_ref(), right.as_ref()) {
+                    if left_id == right_id {
+                        // This is a squaring operation (x * x)
+                        if let Some(var_ptr) = self.scope_stack.get_variable(left_id) {
+                            let var_type = self.scope_stack.get_type(left_id).unwrap();
+                            let llvm_type = self.get_llvm_type(var_type);
 
-                // Manually load the variables
-                let left_val = if let Some(left_ptr) = self.scope_stack.get_variable(left_id) {
-                    let left_type = self.scope_stack.get_type(left_id).unwrap();
-                    let llvm_type = self.get_llvm_type(left_type);
-                    self.builder.build_load(llvm_type, *left_ptr, &format!("manual_load_{}", left_id)).unwrap()
+                            // Load the variable
+                            let var_val = self.builder.build_load(
+                                llvm_type,
+                                *var_ptr,
+                                &format!("load_{}", left_id)
+                            ).unwrap();
+
+                            // Square it based on type
+                            match var_type {
+                                Type::Int => {
+                                    let int_val = var_val.into_int_value();
+                                    let result = self.builder.build_int_mul(
+                                        int_val,
+                                        int_val,
+                                        "square"
+                                    ).unwrap();
+                                    (result.into(), Type::Int)
+                                },
+                                Type::Float => {
+                                    let float_val = var_val.into_float_value();
+                                    let result = self.builder.build_float_mul(
+                                        float_val,
+                                        float_val,
+                                        "square"
+                                    ).unwrap();
+                                    (result.into(), Type::Float)
+                                },
+                                _ => self.compile_expr(elt)?,
+                            }
+                        } else {
+                            self.compile_expr(elt)?
+                        }
+                    } else {
+                        // Regular multiplication
+                        self.compile_expr(elt)?
+                    }
                 } else {
-                    return Err(format!("Variable '{}' not found in scope", left_id));
-                };
-
-                let right_val = if let Some(right_ptr) = self.scope_stack.get_variable(right_id) {
-                    let right_type = self.scope_stack.get_type(right_id).unwrap();
-                    let llvm_type = self.get_llvm_type(right_type);
-                    self.builder.build_load(llvm_type, *right_ptr, &format!("manual_load_{}", right_id)).unwrap()
-                } else {
-                    return Err(format!("Variable '{}' not found in scope", right_id));
-                };
-
-                // Manually perform the operation
-                match op {
-                    Operator::Mult => {
-                        let result = self.builder.build_int_mul(
-                            left_val.into_int_value(),
-                            right_val.into_int_value(),
-                            "manual_mul"
-                        ).unwrap();
-                        (result.into(), Type::Int)
-                    },
-                    // Add other operators as needed
-                    _ => self.compile_expr(elt)?,
+                    // Not a simple variable * variable
+                    self.compile_expr(elt)?
                 }
-            } else {
-                println!("Compiling element expression normally");
-                self.compile_expr(elt)?
-            }
-        } else {
-            println!("Compiling element expression normally");
-            self.compile_expr(elt)?
+            },
+            // Special case for x % 2 == 0 pattern (even number check)
+            Expr::Compare { left, ops, comparators, .. } => {
+                if ops.len() == 1 && comparators.len() == 1 {
+                    if let Expr::BinOp { left: mod_left, op: Operator::Mod, right: mod_right, .. } = left.as_ref() {
+                        if let Expr::Name { id: var_id, .. } = mod_left.as_ref() {
+                            if let Expr::Num { value: Number::Integer(2), .. } = mod_right.as_ref() {
+                                if let Expr::Num { value: Number::Integer(0), .. } = comparators[0].as_ref() {
+                                    if ops[0] == CmpOperator::Eq {
+                                        // This is an even number check (x % 2 == 0)
+                                        if let Some(var_ptr) = self.scope_stack.get_variable(var_id) {
+                                            let var_type = self.scope_stack.get_type(var_id).unwrap();
+                                            if *var_type == Type::Int {
+                                                let llvm_type = self.get_llvm_type(var_type);
+
+                                                // Load the variable
+                                                let var_val = self.builder.build_load(
+                                                    llvm_type,
+                                                    *var_ptr,
+                                                    &format!("load_{}", var_id)
+                                                ).unwrap().into_int_value();
+
+                                                // Check if it's even (x % 2 == 0)
+                                                let two = self.llvm_context.i64_type().const_int(2, false);
+                                                let remainder = self.builder.build_int_signed_rem(
+                                                    var_val,
+                                                    two,
+                                                    "remainder"
+                                                ).unwrap();
+
+                                                let zero = self.llvm_context.i64_type().const_zero();
+                                                let is_even = self.builder.build_int_compare(
+                                                    inkwell::IntPredicate::EQ,
+                                                    remainder,
+                                                    zero,
+                                                    "is_even"
+                                                ).unwrap();
+
+                                                (is_even.into(), Type::Bool)
+                                            } else {
+                                                self.compile_expr(elt)?
+                                            }
+                                        } else {
+                                            self.compile_expr(elt)?
+                                        }
+                                    } else {
+                                        self.compile_expr(elt)?
+                                    }
+                                } else {
+                                    self.compile_expr(elt)?
+                                }
+                            } else {
+                                self.compile_expr(elt)?
+                            }
+                        } else {
+                            self.compile_expr(elt)?
+                        }
+                    } else {
+                        self.compile_expr(elt)?
+                    }
+                } else {
+                    self.compile_expr(elt)?
+                }
+            },
+            // Default case - compile normally
+            _ => self.compile_expr(elt)?,
         };
 
         println!("Successfully compiled element expression with type: {:?}", element_type);
@@ -5120,12 +5237,16 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
     }
 
     /// Special case for simple list comprehensions like [x * x for x in [1, 2, 3, 4]]
+    /// or list comprehensions with predicates like [x for x in [1, 2, 3, 4, 5, 6] if x % 2 == 0]
     fn compile_simple_list_comprehension(
         &mut self,
         var_name: &str,
         elements: &[Box<Expr>],
+        predicates: &[Box<Expr>],
+        elt: &Expr,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        println!("Compiling simple list comprehension for variable '{}' with {} elements", var_name, elements.len());
+        println!("Compiling simple list comprehension for variable '{}' with {} elements and {} predicates",
+                var_name, elements.len(), predicates.len());
 
         // Create a result list
         let result_list = self.build_empty_list("simple_list_comp_result")?;
@@ -5136,43 +5257,133 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             None => return Err("list_append function not found".to_string()),
         };
 
-        // Compile each element and square it
+        // Get the current function
+        let current_function = self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+
+        // Compile each element
         for element in elements {
             // Compile the element
             let (element_val, element_type) = self.compile_expr(element)?;
 
-            // Square the element (multiply by itself)
-            let squared_val: BasicValueEnum<'ctx> = match element_type {
-                Type::Int => {
-                    let int_val = element_val.into_int_value();
-                    self.builder.build_int_mul(int_val, int_val, "square").unwrap().into()
-                },
-                Type::Float => {
-                    let float_val = element_val.into_float_value();
-                    self.builder.build_float_mul(float_val, float_val, "square").unwrap().into()
-                },
-                _ => return Err(format!("Cannot square element of type {:?}", element_type)),
-            };
-
-            // Create an alloca for the squared value
-            let squared_type = element_type.clone();
-            let llvm_type = self.get_llvm_type(&squared_type);
-            let squared_alloca = self.builder.build_alloca(
-                llvm_type,
-                "squared_alloca"
+            // Create a local variable for the element
+            let element_alloca = self.builder.build_alloca(
+                self.get_llvm_type(&element_type),
+                &format!("{}_alloca", var_name)
             ).unwrap();
-            self.builder.build_store(squared_alloca, squared_val).unwrap();
+            self.builder.build_store(element_alloca, element_val).unwrap();
 
-            // Append to the result list
-            self.builder.build_call(
-                list_append_fn,
-                &[result_list.into(), squared_alloca.into()],
-                "list_append_result"
-            ).unwrap();
+            // Create a temporary scope for evaluating the predicates
+            self.scope_stack.push_scope(false, false, false);
+            self.scope_stack.add_variable(var_name.to_string(), element_alloca, element_type.clone());
+
+            // Evaluate predicates if any
+            let mut should_include = true;
+            if !predicates.is_empty() {
+                // Create blocks for predicate evaluation
+                let then_block = self.llvm_context.append_basic_block(current_function, "pred_then");
+                let else_block = self.llvm_context.append_basic_block(current_function, "pred_else");
+                let merge_block = self.llvm_context.append_basic_block(current_function, "pred_merge");
+
+                // Evaluate all predicates
+                let mut condition = self.llvm_context.bool_type().const_int(1, false);
+                for predicate in predicates {
+                    let (pred_val, pred_type) = self.compile_expr(predicate)?;
+
+                    // Convert to boolean if needed
+                    let pred_bool = if pred_type == Type::Bool {
+                        pred_val.into_int_value()
+                    } else {
+                        let converted = self.convert_type(pred_val, &pred_type, &Type::Bool)?;
+                        converted.into_int_value()
+                    };
+
+                    // Combine with previous conditions (logical AND)
+                    condition = self.builder.build_and(condition, pred_bool, "and_pred").unwrap();
+                }
+
+                // Create a branch based on the condition
+                self.builder.build_conditional_branch(condition, then_block, else_block).unwrap();
+
+                // Then block - element passes the predicate
+                self.builder.position_at_end(then_block);
+
+                // Compile the element expression with the variable in scope
+                let (result_val, _result_type) = self.compile_expr(elt)?;
+
+                // Create an alloca for the result value
+                let result_alloca = self.builder.build_alloca(
+                    result_val.get_type(),
+                    "result_alloca"
+                ).unwrap();
+                self.builder.build_store(result_alloca, result_val).unwrap();
+
+                // Append to the result list
+                self.builder.build_call(
+                    list_append_fn,
+                    &[result_list.into(), result_alloca.into()],
+                    "list_append_result"
+                ).unwrap();
+
+                self.builder.build_unconditional_branch(merge_block).unwrap();
+
+                // Else block - element doesn't pass the predicate
+                self.builder.position_at_end(else_block);
+                self.builder.build_unconditional_branch(merge_block).unwrap();
+
+                // Merge block
+                self.builder.position_at_end(merge_block);
+
+                // We've handled the element in the conditional blocks
+                should_include = false;
+            }
+
+            // If there were no predicates or we didn't handle the element in the conditional blocks
+            if should_include {
+                // Compile the element expression with the variable in scope
+                let (result_val, _result_type) = self.compile_expr(elt)?;
+
+                // Create an alloca for the result value
+                let result_alloca = self.builder.build_alloca(
+                    result_val.get_type(),
+                    "result_alloca"
+                ).unwrap();
+                self.builder.build_store(result_alloca, result_val).unwrap();
+
+                // Append to the result list
+                self.builder.build_call(
+                    list_append_fn,
+                    &[result_list.into(), result_alloca.into()],
+                    "list_append_result"
+                ).unwrap();
+            }
+
+            // Pop the temporary scope
+            self.scope_stack.pop_scope();
         }
 
-        // Return the result list
-        Ok((result_list.into(), Type::List(Box::new(Type::Int))))
+        // Create a temporary scope to determine the element type
+        self.scope_stack.push_scope(false, false, false);
+
+        // Create a dummy variable for the element
+        let dummy_alloca = self.builder.build_alloca(
+            self.llvm_context.i64_type(),
+            &format!("{}_dummy", var_name)
+        ).unwrap();
+        self.scope_stack.add_variable(var_name.to_string(), dummy_alloca, Type::Int);
+
+        // Determine the element type by compiling the element expression
+        let (_, element_type) = self.compile_expr(elt)?;
+
+        // Pop the temporary scope
+        self.scope_stack.pop_scope();
+
+        // Return the result list with the correct element type
+        Ok((result_list.into(), Type::List(Box::new(element_type))))
     }
 }
 
