@@ -258,8 +258,8 @@ impl<'ctx> CompilationContext<'ctx> {
     use inkwell::{AddressSpace, IntPredicate};
     use crate::compiler::runtime::list::{get_list_struct_type, TypeTag};
 
-    // Bail out if the nesting gets silly
-    const MAX_RECURSION_DEPTH: usize = 5;
+    // Bail out if the nesting gets silly, but increase the limit to handle nested list comprehensions
+    const MAX_RECURSION_DEPTH: usize = 10;
     if recursion_depth >= MAX_RECURSION_DEPTH {
         let max_depth_str = self.make_cstr("max_depth", b"[max recursion depth]\0");
         let print_str = self.module.get_function("print_string").ok_or("print_string not found")?;
@@ -390,8 +390,45 @@ impl<'ctx> CompilationContext<'ctx> {
             self.print_tuple(elem_ptr.into_pointer_value(), &[], recursion_depth + 1)?;
             self.builder.build_unconditional_branch(bb_next).unwrap();
 
-            // default branch ‑ unknown tag
+            // default branch - try to handle unknown tag by checking if it's a string
             self.builder.position_at_end(bb_deflt);
+
+            // Try to get the tag value to see if we can determine the type
+            let tag_val_int = self.builder.build_int_z_extend(
+                tag_val,
+                self.llvm_context.i64_type(),
+                "tag_val_extended"
+            ).unwrap();
+
+            // Check if it's a string (tag value 5)
+            let is_string = self.builder.build_int_compare(
+                IntPredicate::EQ,
+                tag_val_int,
+                self.llvm_context.i64_type().const_int(5, false),
+                "is_string"
+            ).unwrap();
+
+            let bb_try_string = self.llvm_context.append_basic_block(
+                self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                "try_string"
+            );
+            let bb_unknown = self.llvm_context.append_basic_block(
+                self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                "unknown_type"
+            );
+
+            self.builder.build_conditional_branch(is_string, bb_try_string, bb_unknown).unwrap();
+
+            // Try to print as string
+            self.builder.position_at_end(bb_try_string);
+            let sq = self.make_cstr("sq", b"'\0");
+            self.builder.build_call(print_str, &[sq.into()], "str_quote1").unwrap();
+            self.builder.build_call(print_str, &[elem_ptr.into()], "str_val").unwrap();
+            self.builder.build_call(print_str, &[sq.into()], "str_quote2").unwrap();
+            self.builder.build_unconditional_branch(bb_next).unwrap();
+
+            // Unknown type - fallback
+            self.builder.position_at_end(bb_unknown);
             let ph = self.make_cstr("ph_any", b"<Any>\0");
             self.builder.build_call(print_str, &[ph.into()], "ph_any").unwrap();
             self.builder.build_unconditional_branch(bb_next).unwrap();
@@ -435,15 +472,15 @@ impl<'ctx> CompilationContext<'ctx> {
     Ok(())
 }
 
-            
+
 
 
     /// Print a Tuple with parentheses and comma-sep fields
     fn print_tuple(&mut self, tup: PointerValue<'ctx>, types: &[Type], recursion_depth: usize) -> Result<(), String> {
         println!("Printing Tuple (depth: {})", recursion_depth);
-        
-        // Check recursion depth
-        const MAX_RECURSION_DEPTH: usize = 3;
+
+        // Check recursion depth - increase to handle nested list comprehensions
+        const MAX_RECURSION_DEPTH: usize = 10;
         if recursion_depth >= MAX_RECURSION_DEPTH {
             println!("Hit maximum recursion depth in tuple: {}", recursion_depth);
             let max_depth_str = self.make_cstr("max_tuple_depth", b"[max tuple recursion depth]\0");
@@ -454,46 +491,46 @@ impl<'ctx> CompilationContext<'ctx> {
             self.builder.build_call(print_str, &[max_depth_str.into()], "pr_max_tuple_depth").unwrap();
             return Ok(());
         }
-    
+
         let print_str = self.module.get_function("print_string").unwrap();
         let print_int = self.module.get_function("print_int").unwrap();
         let print_flt = self.module.get_function("print_float").unwrap();
         let print_bool = self.module.get_function("print_bool").unwrap();
-    
+
         let lp = self.make_cstr("lp", b"(\0");
         let rp = self.make_cstr("rp", b")\0");
         let comma = self.make_cstr("cm", b", \0");
         let sq = self.make_cstr("sq", b"'\0");
         let none_lit = self.make_cstr("none", b"None\0");
-    
+
         // Print opening parenthesis
         self.builder.build_call(print_str, &[lp.into()], "print_lp").unwrap();
-    
+
         // Get the LLVM StructType for this tuple
         let struct_ty = match self.get_llvm_type(&Type::Tuple(types.to_vec())) {
             inkwell::types::BasicTypeEnum::StructType(st) => st,
             _ => return Err("Expected tuple struct".into()),
         };
-    
+
         let ptr_ty = self.llvm_context.ptr_type(AddressSpace::default());
-    
+
         // Cast the opaque pointer to the tuple struct type
         let tup_ptr_ty = self.llvm_context.ptr_type(AddressSpace::default());
         let tup = Self::cast_or_self(&self.builder, tup, tup_ptr_ty, "tup_typed");
-    
+
         // Print each tuple element
         for (i, ty) in types.iter().enumerate() {
             // Add comma between elements
             if i > 0 {
                 self.builder.build_call(print_str, &[comma.into()], "print_comma").unwrap();
             }
-            
+
             // Load the field
             let field_ptr = self.builder
                 .build_struct_gep(struct_ty, tup, i as u32, &format!("fp{}", i))
                 .unwrap();
             let val = self.builder.build_load(struct_ty.get_field_types()[i], field_ptr, "fv").unwrap();
-    
+
             // Print based on type
             match ty {
                 Type::None => {
@@ -538,18 +575,18 @@ impl<'ctx> CompilationContext<'ctx> {
                 }
             }
         }
-    
+
         // Add trailing comma for single-element tuples (Python syntax)
         if types.len() == 1 {
             let tc = self.make_cstr("tc", b",\0");
             self.builder.build_call(print_str, &[tc.into()], "tp_trailing").unwrap();
         }
-        
+
         // Print closing parenthesis
         self.builder.build_call(print_str, &[rp.into()], "print_rp").unwrap();
-        
+
         println!("Done Printing Tuple (depth: {})", recursion_depth);
         Ok(())
-    }    
+    }
 
 }

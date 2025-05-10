@@ -1904,20 +1904,6 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .get_function("list_append_tagged")
             .ok_or("list_append_tagged not found")?;
 
-        let tag_const = |ty: &Type, ctx: &'ctx inkwell::context::Context| {
-            let tag = match ty {
-                Type::None        => TypeTag::None_,
-                Type::Bool        => TypeTag::Bool,
-                Type::Int         => TypeTag::Int,
-                Type::Float       => TypeTag::Float,
-                Type::String      => TypeTag::String,
-                Type::List(_)     => TypeTag::List,
-                Type::Tuple(_)    => TypeTag::Tuple,
-                _                 => TypeTag::Any,
-            };
-            ctx.i8_type().const_int(tag as u64, false)
-        };
-
         /* ── 3. append every literal value together with its tag ───────── */
         for (idx, (value, ty)) in elements.iter().enumerate() {
             // scalars live on the stack, references are already pointers
@@ -1932,11 +1918,23 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 slot.into()
             };
 
-            let tag = tag_const(ty, self.llvm_context);
+            // Create the appropriate tag based on the element type
+            let tag = match ty {
+                Type::None => TypeTag::None_,
+                Type::Bool => TypeTag::Bool,
+                Type::Int => TypeTag::Int,
+                Type::Float => TypeTag::Float,
+                Type::String => TypeTag::String,
+                Type::List(_) => TypeTag::List,
+                Type::Tuple(_) => TypeTag::Tuple,
+                _ => TypeTag::Any,
+            };
+
+            let tag_val = self.llvm_context.i8_type().const_int(tag as u64, false);
             self.builder
                 .build_call(
                     append_tagged,
-                    &[list_ptr.into(), elem_ptr.into(), tag.into()],
+                    &[list_ptr.into(), elem_ptr.into(), tag_val.into()],
                     &format!("append_tagged_{}", idx),
                 )
                 .unwrap();
@@ -4645,11 +4643,46 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             }
         };
 
+        // Use list_append_tagged to properly tag the element
+        let list_append_tagged_fn = match self.module.get_function("list_append_tagged") {
+            Some(f) => f,
+            None => {
+                // Fall back to regular append if tagged append is not available
+                self.builder
+                    .build_call(
+                        list_append_fn,
+                        &[result_list.into(), element_ptr.into()],
+                        "list_append_result",
+                    )
+                    .unwrap();
+                return Ok(());
+            }
+        };
+
+        // Create the appropriate tag based on the element type
+        use crate::compiler::runtime::list::TypeTag;
+        let tag = match &element_type {
+            Type::None => TypeTag::None_,
+            Type::Bool => TypeTag::Bool,
+            Type::Int => TypeTag::Int,
+            Type::Float => TypeTag::Float,
+            Type::String => {
+                println!("Explicitly tagging string element in list comprehension");
+                TypeTag::String
+            },
+            Type::List(_) => TypeTag::List,
+            Type::Tuple(_) => TypeTag::Tuple,
+            _ => TypeTag::Any,
+        };
+
+        println!("Tagging list comprehension element as {:?}", tag);
+        let tag_val = self.llvm_context.i8_type().const_int(tag as u64, false);
+
         self.builder
             .build_call(
-                list_append_fn,
-                &[result_list.into(), element_ptr.into()],
-                "list_append_result",
+                list_append_tagged_fn,
+                &[result_list.into(), element_ptr.into(), tag_val.into()],
+                "list_append_tagged_result",
             )
             .unwrap();
 
@@ -5269,6 +5302,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             None => return Err("list_append function not found".to_string()),
         };
 
+        // Get the list_append_tagged function
+        let list_append_tagged_fn = self.module.get_function("list_append_tagged");
+
         // Get the current function
         let current_function = self
             .builder
@@ -5288,6 +5324,15 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 &format!("{}_alloca", var_name)
             ).unwrap();
             self.builder.build_store(element_alloca, element_val).unwrap();
+
+            // For string elements, we need to ensure we're storing the actual string pointer
+            // not just the pointer to the pointer
+            let element_to_use = if element_type == Type::String {
+                println!("Handling string element in list comprehension: preserving string value");
+                element_val
+            } else {
+                element_alloca.into()
+            };
 
             // Create a temporary scope for evaluating the predicates
             self.scope_stack.push_scope(false, false, false);
@@ -5325,7 +5370,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 self.builder.position_at_end(then_block);
 
                 // Compile the element expression with the variable in scope
-                let (result_val, _result_type) = self.compile_expr(elt)?;
+                let (result_val, result_type) = self.compile_expr(elt)?;
 
                 // Create an alloca for the result value
                 let result_alloca = self.builder.build_alloca(
@@ -5334,12 +5379,45 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 ).unwrap();
                 self.builder.build_store(result_alloca, result_val).unwrap();
 
-                // Append to the result list
-                self.builder.build_call(
-                    list_append_fn,
-                    &[result_list.into(), result_alloca.into()],
-                    "list_append_result"
-                ).unwrap();
+                // For string values, we need to use the value directly, not the alloca
+                let result_ptr = if result_type == Type::String {
+                    println!("Using string value directly in list comprehension result");
+                    result_val.into_pointer_value()
+                } else {
+                    result_alloca
+                };
+
+                // Use tagged append if available
+                if let Some(tagged_fn) = list_append_tagged_fn {
+                    // Create the appropriate tag based on the element type
+                    use crate::compiler::runtime::list::TypeTag;
+                    let tag = match &result_type {
+                        Type::None => TypeTag::None_,
+                        Type::Bool => TypeTag::Bool,
+                        Type::Int => TypeTag::Int,
+                        Type::Float => TypeTag::Float,
+                        Type::String => TypeTag::String,
+                        Type::List(_) => TypeTag::List,
+                        Type::Tuple(_) => TypeTag::Tuple,
+                        _ => TypeTag::Any,
+                    };
+
+                    println!("Tagging list comprehension element as {:?}", tag);
+                    let tag_val = self.llvm_context.i8_type().const_int(tag as u64, false);
+
+                    self.builder.build_call(
+                        tagged_fn,
+                        &[result_list.into(), result_ptr.into(), tag_val.into()],
+                        "list_append_tagged_result"
+                    ).unwrap();
+                } else {
+                    // Fall back to regular append
+                    self.builder.build_call(
+                        list_append_fn,
+                        &[result_list.into(), result_ptr.into()],
+                        "list_append_result"
+                    ).unwrap();
+                }
 
                 self.builder.build_unconditional_branch(merge_block).unwrap();
 
@@ -5357,7 +5435,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             // If there were no predicates or we didn't handle the element in the conditional blocks
             if should_include {
                 // Compile the element expression with the variable in scope
-                let (result_val, _result_type) = self.compile_expr(elt)?;
+                let (result_val, result_type) = self.compile_expr(elt)?;
 
                 // Create an alloca for the result value
                 let result_alloca = self.builder.build_alloca(
@@ -5366,12 +5444,45 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 ).unwrap();
                 self.builder.build_store(result_alloca, result_val).unwrap();
 
-                // Append to the result list
-                self.builder.build_call(
-                    list_append_fn,
-                    &[result_list.into(), result_alloca.into()],
-                    "list_append_result"
-                ).unwrap();
+                // For string values, we need to use the value directly, not the alloca
+                let result_ptr = if result_type == Type::String {
+                    println!("Using string value directly in list comprehension result");
+                    result_val.into_pointer_value()
+                } else {
+                    result_alloca
+                };
+
+                // Use tagged append if available
+                if let Some(tagged_fn) = list_append_tagged_fn {
+                    // Create the appropriate tag based on the element type
+                    use crate::compiler::runtime::list::TypeTag;
+                    let tag = match &result_type {
+                        Type::None => TypeTag::None_,
+                        Type::Bool => TypeTag::Bool,
+                        Type::Int => TypeTag::Int,
+                        Type::Float => TypeTag::Float,
+                        Type::String => TypeTag::String,
+                        Type::List(_) => TypeTag::List,
+                        Type::Tuple(_) => TypeTag::Tuple,
+                        _ => TypeTag::Any,
+                    };
+
+                    println!("Tagging list comprehension element as {:?}", tag);
+                    let tag_val = self.llvm_context.i8_type().const_int(tag as u64, false);
+
+                    self.builder.build_call(
+                        tagged_fn,
+                        &[result_list.into(), result_ptr.into(), tag_val.into()],
+                        "list_append_tagged_result"
+                    ).unwrap();
+                } else {
+                    // Fall back to regular append
+                    self.builder.build_call(
+                        list_append_fn,
+                        &[result_list.into(), result_ptr.into()],
+                        "list_append_result"
+                    ).unwrap();
+                }
             }
 
             // Pop the temporary scope
