@@ -64,11 +64,71 @@ impl<'ctx> CompilationContext<'ctx> {
         )
     }
 
+    pub fn compile_len_function_call(
+        &mut self,
+        arg: &Expr,
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        match arg {
+            Expr::Name { id, .. } => {
+                if let Some(var_ptr) = self.get_variable_ptr(id) {
+                    if let Some(var_type) = self.lookup_variable_type(id) {
+                        match var_type {
+                            Type::List(_) => {
+                                let list_len_fn = self.module.get_function("list_len").ok_or("list_len not found")?;
+                                let list_ptr = self.builder.build_load(
+                                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                    var_ptr,
+                                    &format!("load_{}", id),
+                                ).unwrap();
+                                
+                                let call_site_value = self.builder.build_call(
+                                    list_len_fn,
+                                    &[list_ptr.into()],
+                                    "list_len_result",
+                                ).unwrap();
+                                
+                                let length = call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to get list length".to_string())?;
+                                
+                                return Ok((length, Type::Int));
+                            },
+                            Type::String => {
+                                let string_len_fn = self.module.get_function("string_len").ok_or("string_len not found")?;
+                                let str_ptr = self.builder.build_load(
+                                    self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                    var_ptr,
+                                    &format!("load_{}", id),
+                                ).unwrap();
+                                
+                                let call_site_value = self.builder.build_call(
+                                    string_len_fn,
+                                    &[str_ptr.into()],
+                                    "string_len_result",
+                                ).unwrap();
+                                
+                                let length = call_site_value.try_as_basic_value().left()
+                                    .ok_or_else(|| "Failed to get string length".to_string())?;
+                                
+                                return Ok((length, Type::Int));
+                            },
+                            // Handle other types as needed
+                            _ => return Err(format!("Cannot get length of type {:?}", var_type)),
+                        }
+                    }
+                }
+                Err(format!("Undefined variable in len call: {}", id))
+            },
+            _ => Err("Expected variable name in len call".to_string()),
+        }
+    }
+
+
     /// Compile a call to print(), supporting None, primitives, lists, and tuples
     pub fn compile_print_call(
         &mut self,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Get function references
         let print_str = self.module.get_function("print_string").ok_or("print_string not found")?;
         let print_int = self.module.get_function("print_int").ok_or("print_int not found")?;
         let print_flt = self.module.get_function("print_float").ok_or("print_float not found")?;
@@ -80,11 +140,35 @@ impl<'ctx> CompilationContext<'ctx> {
         let none_lit = self.make_cstr("none", b"None\0");
         let space = self.make_cstr("sp", b" \0");
 
+        // Print each argument with appropriate spacing
         for (i, arg) in args.iter().enumerate() {
-            let (val, ty) = self.compile_expr(arg)?;
+            let (val, ty) = match arg {
+                // Handle function call arguments specially
+                Expr::Call { func, args, .. } => {
+                    if let Expr::Name { id, .. } = func.as_ref() {
+                        if id == "len" {
+                            let compiled_arg = self.compile_expr(&args[0])?;
+                            self.compile_len_function_call(&args[0])?
+                        } else {
+                            self.compile_expr(arg)?
+                        }
+                    } else {
+                        self.compile_expr(arg)?
+                    }
+                },
+                // Handle slice expressions specially
+                Expr::Subscript { value, slice, .. } => {
+                    self.compile_subscript(value, slice)?
+                },
+                // Normal argument processing
+                _ => self.compile_expr(arg)?,
+            };
+
             if i > 0 {
                 self.builder.build_call(print_str, &[space.into()], "print_space").unwrap();
             }
+            
+            // Print based on type
             match ty {
                 Type::None => {
                     self.builder.build_call(print_str, &[none_lit.into()], "print_none").unwrap();
@@ -95,7 +179,7 @@ impl<'ctx> CompilationContext<'ctx> {
                     let str_ptr = Self::cast_or_self(
                         &self.builder,
                         val.into_pointer_value(),
-                        self.llvm_context.ptr_type(AddressSpace::default()),
+                        self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
                         "str_ptr",
                     );
                     self.builder.build_call(print_str, &[str_ptr.into()], "print_str").unwrap();
@@ -129,6 +213,7 @@ impl<'ctx> CompilationContext<'ctx> {
         self.builder.build_call(println_fn, &[nl.into()], "print_nl").unwrap();
         Ok((self.llvm_context.i64_type().const_zero().into(), Type::None))
     }
+
 
     /// Helper: print one value whose *static* LLVM type is known.
     /// Handles quoting for strings, etc.
