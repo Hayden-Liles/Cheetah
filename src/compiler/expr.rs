@@ -3,15 +3,11 @@ use crate::compiler::context::CompilationContext;
 use crate::compiler::types::is_reference_type;
 use crate::compiler::types::Type;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue};
+use inkwell::values::BasicValueEnum;
 
 
 /// Extension trait for handling expression code generation
 pub trait ExprCompiler<'ctx> {
-    fn insert_runtime_assert(&mut self, cond: inkwell::values::IntValue<'ctx>, msg: &str) -> Result<(), String>;
-    fn load_and_assign(&mut self, target: &Expr, list_val: BasicValueEnum<'ctx>, list_get: FunctionValue<'ctx>, index: IntValue<'ctx>, elem_ty: &Type) -> Result<(), String>;
-    fn unpack_list(&mut self, elts: &[Box<Expr>], list_val: BasicValueEnum<'ctx>, elem_ty: &Type) -> Result<(), String>;
-    fn unpack_tuple(&mut self, elts: &[Box<Expr>], tuple_val: BasicValueEnum<'ctx>, element_types: &[Type]) -> Result<(), String>;
     fn evaluate_comprehension_conditions(
         &mut self,
         generator: &crate::ast::Comprehension,
@@ -1974,193 +1970,6 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         Ok(tuple_ptr)
     }
-
-    fn unpack_tuple(
-        &mut self,
-        elts: &[Box<Expr>],
-        tuple_val: BasicValueEnum<'ctx>,
-        element_types: &[Type],
-    ) -> Result<(), String> {
-        if elts.len() != element_types.len() {
-            return Err(format!(
-                "Tuple unpack mismatch: {} targets, {} values",
-                elts.len(),
-                element_types.len()
-            ));
-        }
-
-        let struct_ty = tuple_val.get_type();
-        let ptr = if tuple_val.is_pointer_value() {
-            tuple_val.into_pointer_value()
-        } else {
-            // value was passed by value – store it on the stack to index it
-            let alloca = self.builder.build_alloca(struct_ty, "tuple.tmp").unwrap();
-            self.builder.build_store(alloca, tuple_val).unwrap();
-            alloca
-        };
-
-        for (i, (elt, ty)) in elts.iter().zip(element_types).enumerate() {
-            let gep = self.builder.build_struct_gep(struct_ty.into_struct_type(), ptr, i as u32, "gep").unwrap();
-            let loaded = self.builder.build_load(self.get_llvm_type(ty), gep, "load").unwrap();
-            self.compile_assignment(elt, loaded, ty)?;
-        }
-        Ok(())
-    }
-
-    // ---------------------------------------------------------------------
-    // NEW  list → tuple (supports one starred target)
-    // ---------------------------------------------------------------------
-    fn unpack_list(
-        &mut self,
-        elts: &[Box<Expr>],
-        list_val: BasicValueEnum<'ctx>,
-        elem_ty: &Type,
-    ) -> Result<(), String> {
-        // Runtime helpers we already have in src/runtime/list.rs
-        let list_len = self.module.get_function("list_len").ok_or("list_len missing")?;
-        let list_get = self.module.get_function("list_get").ok_or("list_get missing")?;
-        let list_slice = self.module.get_function("list_slice").ok_or("list_slice missing")?;
-
-        let i64_type = self.llvm_context.i64_type();
-
-        // len = list_len(list_val)
-        let len = self
-            .builder
-            .build_call(list_len, &[list_val.into()], "len").unwrap()
-            .try_as_basic_value()
-            .left()
-            .unwrap()
-            .into_int_value();
-
-        // locate a single Starred element if present
-        let star_pos = elts
-            .iter()
-            .position(|e| matches!(**e, Expr::Starred { .. }));
-
-        let total = elts.len() as i64;
-
-        // quickly bail out on arity errors when there is *no* starred target
-        if star_pos.is_none() {
-            let cmp = self
-                .builder
-                .build_int_compare(
-                    inkwell::IntPredicate::NE,
-                    len,
-                    i64_type.const_int(total as u64, false),
-                    "arity_cmp",
-                ).unwrap();
-            self.insert_runtime_assert(
-                cmp,
-                "Type error: list length does not match number of targets",
-            )?;
-        }
-
-        // walk through each element / starred segment
-        for (idx, target) in elts.iter().enumerate() {
-            match (&**target, star_pos) {
-                // ─── starred element *middle ────────────────────────────
-                (Expr::Starred { value, .. }, Some(star_idx)) if idx == star_idx => {
-                    // slice from head .. len - tail
-                    let head = i64_type.const_int(star_idx as u64, false);
-                    let tail = i64_type.const_int(
-                        (total - star_idx as i64 - 1) as u64,
-                        false,
-                    );
-                    let stop = self.builder.build_int_sub(len, tail, "stop").unwrap();
-
-                    let slice = self
-                        .builder
-                        .build_call(
-                            list_slice,
-                            &[
-                                list_val.into(),
-                                head.into(),
-                                stop.into(),
-                                i64_type.const_int(1, false).into(), // step = 1
-                            ],
-                            "slice",
-                        ).unwrap()
-                        .try_as_basic_value()
-                        .left()
-                        .unwrap();
-
-                    self.compile_assignment(value, slice, &Type::List(Box::new(elem_ty.clone())))?;
-                }
-
-                // ─── ordinary head element  a, …   before the star
-                (_, Some(star_idx)) if idx < star_idx => {
-                    let i = i64_type.const_int(idx as u64, false);
-                    self.load_and_assign(target, list_val, list_get, i, elem_ty)?;
-                }
-
-                // ─── ordinary tail element  …, z   after the star
-                (_, Some(star_idx)) if idx > star_idx => {
-                    let from_end = total - idx as i64;
-                    let i = self.builder.build_int_sub(len, i64_type.const_int(from_end as u64, false), "tail_idx").unwrap();
-                    self.load_and_assign(target, list_val, list_get, i, elem_ty)?;
-                }
-
-                // ─── no star at all – one‑to‑one mapping
-                _ => {
-                    let i = i64_type.const_int(idx as u64, false);
-                    self.load_and_assign(target, list_val, list_get, i, elem_ty)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    // tiny helper reused above
-    fn load_and_assign(
-        &mut self,
-        target: &Expr,
-        list_val: BasicValueEnum<'ctx>,
-        list_get: FunctionValue<'ctx>,
-        index: IntValue<'ctx>,
-        elem_ty: &Type,
-    ) -> Result<(), String> {
-        let call = self
-            .builder
-            .build_call(list_get, &[list_val.into(), index.into()], "get").unwrap()
-            .try_as_basic_value()
-            .left()
-            .unwrap();
-        self.compile_assignment(target, call, elem_ty)
-    }
-
-    fn insert_runtime_assert(
-        &mut self,
-        cond: inkwell::values::IntValue<'ctx>,
-        msg: &str,
-    ) -> Result<(), String> {
-        let cur_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-        let ok_bb = self.llvm_context.append_basic_block(cur_fn, "assert.ok");
-        let fail_bb = self.llvm_context.append_basic_block(cur_fn, "assert.fail");
-
-        self.builder.build_conditional_branch(cond, fail_bb, ok_bb).unwrap();
-
-        // fail_bb: call puts(msg); exit(1)
-        self.builder.position_at_end(fail_bb);
-        let puts = self
-            .module
-            .get_function("puts")
-            .ok_or("puts not declared")?;
-        let cstr = self.make_cstr("assert_msg", format!("{}\0", msg).as_bytes());
-        self.builder.build_call(puts, &[cstr.into()], "puts").unwrap();
-        let abort = self
-            .module
-            .get_function("abort")
-            .ok_or("abort not declared")?;
-        self.builder.build_call(abort, &[], "").unwrap();
-        self.builder.build_unreachable().unwrap();
-
-        // ok_bb
-        self.builder.position_at_end(ok_bb);
-        Ok(())
-    }
-
-
 
     /// Compile a subscript expression (e.g., tuple[0])
     fn compile_subscript(
@@ -6084,23 +5893,108 @@ impl<'ctx> AssignmentCompiler<'ctx> for CompilationContext<'ctx> {
     ) -> Result<(), String> {
         match target {
             Expr::Tuple { elts, .. } => {
-                match value_type {
-                    Type::Tuple(element_types) => {
-                        self.unpack_tuple(elts, value, element_types)?;
-                    }
-                    Type::List(elem_ty) => {
-                        self.unpack_list(elts, value, elem_ty)?;
-                    }
-                    _ => {
+                if let Type::Tuple(element_types) = value_type {
+                    if elts.len() != element_types.len() {
                         return Err(format!(
-                            "Type error in tuple unpacking: expected tuple or list, got {}",
-                            value_type
+                            "Tuple unpacking mismatch: expected {} elements, got {}",
+                            elts.len(),
+                            element_types.len()
                         ));
                     }
-                }
-                Ok(())
-            }
 
+                    let llvm_types: Vec<BasicTypeEnum> = element_types
+                        .iter()
+                        .map(|ty| self.get_llvm_type(ty))
+                        .collect();
+
+                    let tuple_struct = self.llvm_context.struct_type(&llvm_types, false);
+                    let tuple_ptr = if value.is_pointer_value() {
+                        value.into_pointer_value()
+                    } else if value.is_struct_value() {
+                        let temp_ptr = self
+                            .builder
+                            .build_alloca(tuple_struct, "temp_tuple")
+                            .unwrap();
+                        self.builder.build_store(temp_ptr, value).unwrap();
+                        temp_ptr
+                    } else if value.is_int_value() {
+                        let ptr = self
+                            .builder
+                            .build_int_to_ptr(
+                                value.into_int_value(),
+                                self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                "tuple_ptr",
+                            )
+                            .unwrap();
+
+                        self.builder
+                            .build_pointer_cast(
+                                ptr,
+                                self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
+                                "tuple_struct_ptr",
+                            )
+                            .unwrap()
+                    } else {
+                        return Err(format!(
+                            "Cannot unpack value of type {:?} - expected a tuple",
+                            value_type
+                        ));
+                    };
+
+                    for (i, target_expr) in elts.iter().enumerate() {
+                        let element_ptr = self
+                            .builder
+                            .build_struct_gep(
+                                tuple_struct,
+                                tuple_ptr,
+                                i as u32,
+                                &format!("tuple_element_{}", i),
+                            )
+                            .unwrap();
+
+                        let element_value = self
+                            .builder
+                            .build_load(
+                                self.get_llvm_type(&element_types[i]),
+                                element_ptr,
+                                &format!("load_tuple_element_{}", i),
+                            )
+                            .unwrap();
+
+                        if let Expr::Name { id, .. } = target_expr.as_ref() {
+                            self.register_variable(id.clone(), element_types[i].clone());
+
+                            if self.get_variable_ptr(id).is_none() {
+                                let ptr = self
+                                    .builder
+                                    .build_alloca(self.get_llvm_type(&element_types[i]), id)
+                                    .unwrap();
+
+                                self.builder.build_store(ptr, element_value).unwrap();
+
+                                self.add_variable_to_scope(
+                                    id.clone(),
+                                    ptr,
+                                    element_types[i].clone(),
+                                );
+
+                                self.variables.insert(id.clone(), ptr);
+
+                                continue;
+                            }
+                        }
+
+                        self.compile_assignment(target_expr, element_value, &element_types[i])?;
+                    }
+
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "Cannot unpack non-tuple value of type {:?}",
+                        value_type
+                    ))
+                }
+            }
             Expr::Name { id, .. } => {
                 let is_global = if let Some(current_scope) = self.scope_stack.current_scope() {
                     current_scope.is_global(id)

@@ -19,7 +19,7 @@ impl<'ctx> CompilationContext<'ctx> {
     }
 
     /// Get the current function from the builder's insertion point
-    pub fn current_fn(&self) -> inkwell::values::FunctionValue<'ctx> {
+    fn current_fn(&self) -> inkwell::values::FunctionValue<'ctx> {
         self.builder
             .get_insert_block()
             .and_then(|bb| bb.get_parent())
@@ -51,7 +51,7 @@ impl<'ctx> CompilationContext<'ctx> {
     }
 
     /// Create a global C string and return i8* pointer
-    pub fn make_cstr(&mut self, name: &str, bytes: &[u8]) -> PointerValue<'ctx> {
+    fn make_cstr(&mut self, name: &str, bytes: &[u8]) -> PointerValue<'ctx> {
         let const_str = self.llvm_context.const_string(bytes, false);
         let global = self.module.add_global(const_str.get_type(), None, name);
         global.set_initializer(&const_str);
