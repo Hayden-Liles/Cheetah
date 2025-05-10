@@ -2,8 +2,10 @@ use crate::ast::Expr;
 use crate::compiler::context::CompilationContext;
 use crate::compiler::expr::ExprCompiler;
 use crate::compiler::types::Type;
+use crate::compiler::runtime::list::{TypeTag, get_list_struct_type};
 use inkwell::AddressSpace;
 use inkwell::values::{BasicValueEnum, PointerValue};
+use inkwell::IntPredicate;
 
 impl<'ctx> CompilationContext<'ctx> {
     /// Helper function to safely cast a pointer or return the original if the cast is a no-op
@@ -145,6 +147,7 @@ impl<'ctx> CompilationContext<'ctx> {
                 Expr::Call { func, args, .. } => {
                     if let Expr::Name { id, .. } = func.as_ref() {
                         if id == "len" {
+                            let compiled_arg = self.compile_expr(&args[0])?;
                             self.compile_len_function_call(&args[0])?
                         } else {
                             self.compile_expr(arg)?

@@ -881,7 +881,7 @@ impl ExprParser for Parser {
         self.advance(); // Consume the left parenthesis
         
         let mut args = Vec::new();
-        let keywords = Vec::new();
+        let mut keywords = Vec::new();
         
         if !self.check(TokenType::RightParen) {
             // Parse first argument

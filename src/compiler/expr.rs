@@ -3574,7 +3574,6 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         result_list: inkwell::values::PointerValue<'ctx>,
         list_append_fn: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
-        // Get list length
         let list_len_fn = match self.module.get_function("list_len") {
             Some(f) => f,
             None => return Err("list_len function not found".to_string()),
@@ -3595,80 +3594,6 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             None => return Err("list_get function not found".to_string()),
         };
 
-        // Try to determine a more specific element type
-        let element_type = match self.lookup_variable_type(&generator.iter.to_string()) {
-            Some(Type::List(elem_type)) => *elem_type.clone(),
-            _ => {
-                // Try to determine element type from the list literal if available
-                if let Expr::List { elts, .. } = &*generator.iter {
-                    if !elts.is_empty() {
-                        if let Ok((_, element_type)) = self.compile_expr(&elts[0]) {
-                            // Check if all elements have the same type
-                            let mut all_same_type = true;
-                            let mut element_types = Vec::new();
-                            
-                            for elt in elts {
-                                if let Ok((_, elt_type)) = self.compile_expr(elt) {
-                                    element_types.push(elt_type.clone());
-                                    if elt_type != element_type {
-                                        all_same_type = false;
-                                    }
-                                }
-                            }
-                            
-                            if all_same_type {
-                                println!("All list elements have matching types: {:?}", element_type);
-                                element_type
-                            } else {
-                                // Try to find a common type
-                                match &element_type {
-                                    Type::Tuple(tuple_element_types) => {
-                                        if !tuple_element_types.is_empty()
-                                            && tuple_element_types
-                                                .iter()
-                                                .all(|t| t == &tuple_element_types[0])
-                                        {
-                                            // When all tuple elements are the same type, use that type
-                                            tuple_element_types[0].clone()
-                                        } else {
-                                            // For simplicity, use Int for this specific case
-                                            println!("Using Int for heterogeneous tuple elements");
-                                            Type::Int
-                                        }
-                                    }
-                                    _ => {
-                                        // If we have a list of numbers, prefer Int over Any
-                                        let all_ints = element_types.iter().all(|t| {
-                                            matches!(t, Type::Int) || matches!(t, Type::Any)
-                                        });
-                                        
-                                        if all_ints {
-                                            println!("All elements are potentially integers, using Int");
-                                            Type::Int
-                                        } else {
-                                            println!("Mixed element types, using original: {:?}", element_type);
-                                            element_type
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            println!("Could not compile first element, falling back to Int");
-                            Type::Int
-                        }
-                    } else {
-                        println!("Empty list, using Int");
-                        Type::Int
-                    }
-                } else {
-                    // Default to Int for unknown sources
-                    println!("Unknown list source, using Int");
-                    Type::Int
-                }
-            }
-        };
-
-        // Setup the loop
         let current_function = self
             .builder
             .get_insert_block()
@@ -3733,35 +3658,63 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .left()
             .ok_or_else(|| "Failed to get list element".to_string())?;
 
+        let element_type = match self.lookup_variable_type(&generator.iter.to_string()) {
+            Some(Type::List(element_type)) => *element_type.clone(),
+            _ => {
+                if let Expr::List { elts, .. } = &*generator.iter {
+                    if !elts.is_empty() {
+                        if let Ok((_, element_type)) = self.compile_expr(&elts[0]) {
+                            match &element_type {
+                                Type::Tuple(tuple_element_types) => {
+                                    if !tuple_element_types.is_empty()
+                                        && tuple_element_types
+                                            .iter()
+                                            .all(|t| t == &tuple_element_types[0])
+                                    {
+                                        tuple_element_types[0].clone()
+                                    } else {
+                                        Type::Int
+                                    }
+                                }
+                                _ => element_type,
+                            }
+                        } else {
+                            Type::Int
+                        }
+                    } else {
+                        Type::Int
+                    }
+                } else {
+                    Type::Int
+                }
+            }
+        };
+
+        let element_type = match &element_type {
+            Type::Tuple(tuple_element_types) => {
+                if !tuple_element_types.is_empty()
+                    && tuple_element_types
+                        .iter()
+                        .all(|t| t == &tuple_element_types[0])
+                {
+                    tuple_element_types[0].clone()
+                } else {
+                    Type::Int
+                }
+            }
+            _ => element_type,
+        };
+
         match generator.target.as_ref() {
             Expr::Name { id, .. } => {
                 println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
-                
-                // Create a local variable with the inferred element type
-                let llvm_type = self.get_llvm_type(&element_type);
-                let var_ptr = self.builder.build_alloca(llvm_type, id).unwrap();
-                
-                // Store the element value in the local variable
-                // (depending on the element type, we might need to load it first)
-                let value_to_store = if element_ptr.is_pointer_value() && is_reference_type(&element_type) {
-                    // For reference types like strings, lists, etc.
-                    element_ptr
-                } else {
-                    // For value types, load from the pointer
-                    self.builder.build_load(llvm_type, element_ptr.into_pointer_value(), &format!("load_{}", id)).unwrap()
-                };
-                
-                self.builder.build_store(var_ptr, value_to_store).unwrap();
-                
-                // Add the variable to the scope stack with the inferred type
-                self.scope_stack.add_variable(id.to_string(), var_ptr, element_type.clone());
+                self.scope_stack.add_variable(id.to_string(), element_ptr.into_pointer_value(), element_type.clone());
             },
             Expr::Tuple { elts, .. } => {
-                // Handle tuple unpacking
                 if let Type::Tuple(tuple_element_types) = &element_type {
                     if elts.len() != tuple_element_types.len() {
                         return Err(format!("Tuple unpacking mismatch: expected {} elements, got {}",
-                                        elts.len(), tuple_element_types.len()));
+                                          elts.len(), tuple_element_types.len()));
                     }
 
                     let llvm_types: Vec<BasicTypeEnum> = tuple_element_types.iter()
@@ -3793,7 +3746,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                             ).unwrap();
                             self.builder.build_store(element_alloca, element_val).unwrap();
 
-                            // Store with the correct type
+                            println!("Setting unpacked tuple element '{}' to type: {:?}", id, element_type);
                             self.scope_stack.add_variable(id.to_string(), element_alloca, element_type.clone());
                         } else {
                             return Err("Only simple variable names are supported in tuple unpacking".to_string());
@@ -4895,52 +4848,6 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
         right: inkwell::values::BasicValueEnum<'ctx>,
         right_type: &Type,
     ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
-
-        if left_type == &Type::Any || right_type == &Type::Any {
-            // Try to be smart about multiplication
-            if op == Operator::Mult {
-                // Try to determine runtime types and perform appropriate operation
-                if left.is_int_value() && right.is_int_value() {
-                    // Both are integers
-                    let left_int = left.into_int_value();
-                    let right_int = right.into_int_value();
-                    let result = self.builder.build_int_mul(left_int, right_int, "any_int_mul").unwrap();
-                    return Ok((result.into(), Type::Int));
-                } 
-                
-                // Try to extract values from pointers if needed
-                let left_val = if left.is_pointer_value() {
-                    // Assume it's an int pointer
-                    self.builder.build_load(
-                        self.llvm_context.i64_type(),
-                        left.into_pointer_value(),
-                        "load_left_int"
-                    ).unwrap()
-                } else {
-                    left
-                };
-                
-                let right_val = if right.is_pointer_value() {
-                    // Assume it's an int pointer
-                    self.builder.build_load(
-                        self.llvm_context.i64_type(),
-                        right.into_pointer_value(),
-                        "load_right_int"
-                    ).unwrap()
-                } else {
-                    right
-                };
-                
-                // Now try multiplication with the extracted values
-                if left_val.is_int_value() && right_val.is_int_value() {
-                    let left_int = left_val.into_int_value();
-                    let right_int = right_val.into_int_value();
-                    let result = self.builder.build_int_mul(left_int, right_int, "any_int_mul").unwrap();
-                    return Ok((result.into(), Type::Int));
-                }
-            }
-        }
-
         let common_type = self.get_common_type(left_type, right_type)?;
 
         let left_converted = if left_type != &common_type {
@@ -5076,7 +4983,6 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                 }
                 Type::String => {
                     if let Type::Int = *right_type {
-                        // ... string repetition logic ...
                         let string_repeat_fn = self
                             .module
                             .get_function("string_repeat")
@@ -5141,46 +5047,12 @@ impl<'ctx> BinaryOpCompiler<'ctx> for CompilationContext<'ctx> {
                         right_type
                     ))
                 }
-                Type::Any => {
-                    // Fall back to integer multiplication
-                    let left_int = if left_converted.is_int_value() {
-                        left_converted.into_int_value()
-                    } else if left_converted.is_pointer_value() {
-                        // Try to load it as an integer
-                        let ptr = left_converted.into_pointer_value();
-                        self.builder.build_load(
-                            self.llvm_context.i64_type(), 
-                            ptr, 
-                            "load_any_left"
-                        ).unwrap().into_int_value()
-                    } else {
-                        // Default to zero
-                        self.llvm_context.i64_type().const_int(0, false)
-                    };
-                    
-                    let right_int = if right_converted.is_int_value() {
-                        right_converted.into_int_value()
-                    } else if right_converted.is_pointer_value() {
-                        // Try to load it as an integer
-                        let ptr = right_converted.into_pointer_value();
-                        self.builder.build_load(
-                            self.llvm_context.i64_type(), 
-                            ptr, 
-                            "load_any_right"
-                        ).unwrap().into_int_value()
-                    } else {
-                        // Default to zero
-                        self.llvm_context.i64_type().const_int(0, false)
-                    };
-                    
-                    let result = self.builder.build_int_mul(left_int, right_int, "any_mul").unwrap();
-                    Ok((result.into(), Type::Int))
-                },
                 _ => Err(format!(
                     "Multiplication not supported for type {:?}",
                     common_type
                 )),
             },
+
             Operator::Div => match common_type {
                 Type::Int => {
                     let left_int = left_converted.into_int_value();

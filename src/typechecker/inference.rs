@@ -592,45 +592,8 @@ impl TypeInference {
                     if let Expr::Name { id, .. } = &*generator.target {
                         let element_type = match &iter_type {
                             Type::List(elem_type) => {
-                                // More aggressively try to determine the actual type
-                                if **elem_type == Type::Any {
-                                    // For literal lists, let's examine the actual elements
-                                    if let Expr::List { elts, .. } = &*generator.iter {
-                                        if !elts.is_empty() {
-                                            if let Ok(first_type) = Self::infer_expr(env, &elts[0]) {
-                                                println!("Using first element's concrete type: {:?} instead of Any", first_type);
-                                                // Check if all elements are the same type
-                                                let all_same = elts.iter().skip(1).all(|e| {
-                                                    if let Ok(e_type) = Self::infer_expr(env, e) {
-                                                        e_type == first_type
-                                                    } else {
-                                                        false
-                                                    }
-                                                });
-                                                
-                                                if all_same {
-                                                    println!("All elements have the same type, using {:?}", first_type);
-                                                    first_type
-                                                } else {
-                                                    println!("Mixed element types, keeping List(Any)");
-                                                    *elem_type.clone()
-                                                }
-                                            } else {
-                                                println!("Could not infer type of first element, keeping List(Any)");
-                                                *elem_type.clone()
-                                            }
-                                        } else {
-                                            println!("Empty list, using List(Any)");
-                                            *elem_type.clone()
-                                        }
-                                    } else {
-                                        println!("Not a literal list, keeping List(Any)");
-                                        *elem_type.clone()
-                                    }
-                                } else {
-                                    println!("List element type: {:?}", *elem_type);
-                                    *elem_type.clone()
-                                }
+                                println!("List element type: {:?}", *elem_type);
+                                *elem_type.clone()
                             }
                             Type::Tuple(elem_types) => {
                                 if !elem_types.is_empty() {
@@ -665,7 +628,6 @@ impl TypeInference {
                     Ok(Type::List(Box::new(Type::Unknown)))
                 }
             }
-
 
             Expr::DictComp {
                 key,
