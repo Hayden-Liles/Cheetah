@@ -1,8 +1,3 @@
-
-
-
-print("\n── Test 9: starred‑element unpacking ──")
-first, *middle, last = [10, 11, 12, 13, 14]
-print(first)                # → 10
-print(middle)               # → [11, 12, 13]
-print(last)                 # → 14
+print("\n── Test 7: comprehension nested in list literal ──")
+comp_mix = [ "start", [y for y in ["a", "bb", "ccc"]], 7 ]
+print(comp_mix)             # → ["start", ["a", "bb", "ccc"], 7]

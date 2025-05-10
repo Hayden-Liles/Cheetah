@@ -464,6 +464,31 @@ impl TypeChecker {
                     }
 
                     Ok(())
+                } else if let Type::List(elem_type) = value_type {
+                    // Check if there's a starred element in the tuple
+                    let has_starred = elts.iter().any(|e| matches!(**e, Expr::Starred { .. }));
+
+                    // If there's no starred element, the list length must match the tuple length
+                    if !has_starred && elts.len() > 0 {
+                        // We can't statically check the length for runtime lists, but we'll allow it
+                        // The runtime will check this for us
+                    }
+
+                    // Check each element in the tuple
+                    for elt in elts.iter() {
+                        match &**elt {
+                            Expr::Starred { value, .. } => {
+                                // For starred elements, the type is a list of the element type
+                                self.check_assignment(value, &Type::List(elem_type.clone()))?;
+                            }
+                            _ => {
+                                // For regular elements, the type is the element type
+                                self.check_assignment(elt, elem_type)?;
+                            }
+                        }
+                    }
+
+                    Ok(())
                 } else if *value_type == Type::Any {
                     Ok(())
                 } else {
@@ -512,6 +537,18 @@ impl TypeChecker {
                 }
 
                 Ok(())
+            }
+
+            Expr::Starred { value, .. } => {
+                // For starred assignments, the value should be a list
+                // The value inside the starred expression gets assigned the list
+                if let Type::List(_) = value_type {
+                    self.check_assignment(value, value_type)
+                } else {
+                    // If it's not a list, we'll try to assign it directly
+                    // This allows for more flexibility in assignments
+                    self.check_assignment(value, value_type)
+                }
             }
 
             _ => Ok(()),

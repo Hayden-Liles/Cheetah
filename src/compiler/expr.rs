@@ -2130,13 +2130,25 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         index: IntValue<'ctx>,
         elem_ty: &Type,
     ) -> Result<(), String> {
-        let call = self
+        // Get the pointer to the element
+        let ptr = self
             .builder
             .build_call(list_get, &[list_val.into(), index.into()], "get").unwrap()
             .try_as_basic_value()
             .left()
             .unwrap();
-        self.compile_assignment(target, call, elem_ty)
+
+        // For primitive types like Int, we need to load the value from the pointer
+        if matches!(elem_ty, Type::Int) {
+            let llvm_type = self.get_llvm_type(elem_ty);
+            let loaded_val = self.builder
+                .build_load(llvm_type, ptr.into_pointer_value(), "load_int")
+                .unwrap();
+            self.compile_assignment(target, loaded_val, elem_ty)
+        } else {
+            // For other types, pass the pointer directly
+            self.compile_assignment(target, ptr, elem_ty)
+        }
     }
 
     fn insert_runtime_assert(
