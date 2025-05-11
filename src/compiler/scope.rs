@@ -435,4 +435,9 @@ impl<'ctx> ScopeStack<'ctx> {
 
         self.get_type(name).cloned()
     }
+
+    /// Get the current depth of the scope stack
+    pub fn get_depth(&self) -> usize {
+        self.scopes.len()
+    }
 }

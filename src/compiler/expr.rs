@@ -3295,6 +3295,23 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             return Err("List comprehension must have at least one generator".to_string());
         }
 
+        // Special case for nested list comprehensions
+        if let Expr::ListComp { elt: inner_elt, generators: inner_generators, .. } = elt {
+            println!("Detected nested list comprehension, handling specially");
+
+            // Create a new scope for the outer list comprehension
+            self.scope_stack.push_scope(false, false, false);
+
+            // Compile the inner list comprehension first
+            let (inner_list_val, inner_list_type) = self.compile_list_comprehension(inner_elt, inner_generators)?;
+
+            // Pop the scope for the outer list comprehension
+            self.scope_stack.pop_scope();
+
+            // Return the inner list directly
+            return Ok((inner_list_val, inner_list_type));
+        }
+
         // Special case for list comprehensions to work around dominance issues
         if generators.len() == 1 {
             if let Expr::Name { id: target_id, .. } = generators[0].target.as_ref() {
@@ -3770,9 +3787,16 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         // IMPORTANT: Add the iteration variable to the scope FIRST, before any evaluation
         if let Expr::Name { id, .. } = generator.target.as_ref() {
+            // Create a new scope for each iteration to ensure proper variable dominance
+            self.scope_stack.push_scope(false, false, false);
+            println!("Created new scope for range iteration variable, depth: {}", self.scope_stack.get_depth());
+
+            // Use a unique name for the alloca to avoid conflicts in nested comprehensions
+            let unique_id = format!("{}_range_comp_{}", id, self.scope_stack.get_depth());
+
             let index_alloca = self
                 .builder
-                .build_alloca(self.llvm_context.i64_type(), "range_index_alloca")
+                .build_alloca(self.llvm_context.i64_type(), &format!("{}_alloca", unique_id))
                 .unwrap();
             self.builder
                 .build_store(index_alloca, current_index)
@@ -3796,6 +3820,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             list_append_fn,
             current_function,
         )?;
+
+        // Pop the scope we created for this iteration
+        println!("Popping scope for range iteration variable");
+        self.scope_stack.pop_scope();
 
         let next_index = self
             .builder
@@ -3824,6 +3852,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         result_list: inkwell::values::PointerValue<'ctx>,
         list_append_fn: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
+        // Create a new scope for the list iteration
+        println!("Creating new scope for list iteration in comprehension");
+        self.scope_stack.push_scope(false, false, false);
+
         let list_len_fn = match self.module.get_function("list_len") {
             Some(f) => f,
             None => return Err("list_len function not found".to_string()),
@@ -3962,15 +3994,18 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
 
                 // Create a local alloca for the variable to ensure proper dominance
+                // Use a unique name for the alloca to avoid conflicts in nested comprehensions
+                let unique_id = format!("{}_list_comp_{}", id, self.scope_stack.get_depth());
+
                 let element_val = self.builder.build_load(
                     self.get_llvm_type(&element_type),
                     element_ptr.into_pointer_value(),
-                    &format!("load_{}", id)
+                    &format!("load_{}", unique_id)
                 ).unwrap();
 
                 let local_alloca = self.builder.build_alloca(
                     element_val.get_type(),
-                    &format!("{}_alloca", id)
+                    &format!("{}_alloca", unique_id)
                 ).unwrap();
 
                 self.builder.build_store(local_alloca, element_val).unwrap();
@@ -4054,6 +4089,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         self.builder.position_at_end(loop_exit_block);
 
+        // We don't pop the scope here because we need the variables to remain accessible
+        // The scope will be popped by the caller (compile_list_comprehension)
+
         Ok(())
     }
 
@@ -4065,6 +4103,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         result_list: inkwell::values::PointerValue<'ctx>,
         list_append_fn: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
+        // Create a new scope for the string iteration
+        println!("Creating new scope for string iteration in comprehension");
+        self.scope_stack.push_scope(false, false, false);
+
         let string_len_fn = match self.module.get_function("string_len") {
             Some(f) => f,
             None => return Err("string_len function not found".to_string()),
@@ -4157,8 +4199,17 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         // IMPORTANT: Add the variable to scope FIRST
         if let Expr::Name { id, .. } = generator.target.as_ref() {
+            // Use a unique name for the variable to avoid conflicts in nested comprehensions
+            let unique_id = format!("{}_string_comp_{}", id, self.scope_stack.get_depth());
+
+            let char_alloca = self
+                .builder
+                .build_alloca(char_val.get_type(), &format!("{}_alloca", unique_id))
+                .unwrap();
+            self.builder.build_store(char_alloca, char_val).unwrap();
+
             self.scope_stack
-                .add_variable(id.clone(), char_ptr, Type::Int);
+                .add_variable(id.clone(), char_alloca, Type::Int);
         } else {
             return Err(
                 "Only simple variable targets are supported in list comprehensions".to_string(),
@@ -4192,6 +4243,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         self.builder.position_at_end(loop_exit_block);
 
+        // We don't pop the scope here because we need the variables to remain accessible
+        // The scope will be popped by the caller (compile_list_comprehension)
+
         Ok(())
     }
 
@@ -4205,6 +4259,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         result_list: inkwell::values::PointerValue<'ctx>,
         list_append_fn: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
+        // Create a new scope for the general iteration
+        println!("Creating new scope for general iteration in comprehension");
+        self.scope_stack.push_scope(false, false, false);
         match &iter_type {
             Type::Tuple(element_types) => {
                 println!("Handling tuple iteration directly in general handler");
@@ -4363,6 +4420,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             }
         }
 
+        // We don't pop the scope here because we need the variables to remain accessible
+        // The scope will be popped by the caller (compile_list_comprehension)
+
         Ok(())
     }
 
@@ -4448,6 +4508,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         current_function: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
         println!("Processing list comprehension element: {:?}", elt);
+
+        // Create a new scope for the element evaluation to ensure proper variable dominance
+        self.scope_stack.push_scope(false, false, false);
+        println!("Created new scope for list comprehension element evaluation, depth: {}", self.scope_stack.get_depth());
 
         // Create blocks for the element evaluation
         let then_block = self
@@ -4691,6 +4755,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .unwrap();
 
         self.builder.position_at_end(continue_block);
+
+        // Pop the scope we created for element evaluation
+        self.scope_stack.pop_scope();
 
         Ok(())
     }
@@ -5327,7 +5394,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
             // For string elements, we need to ensure we're storing the actual string pointer
             // not just the pointer to the pointer
-            let element_to_use = if element_type == Type::String {
+            let _element_to_use = if element_type == Type::String {
                 println!("Handling string element in list comprehension: preserving string value");
                 element_val
             } else {
