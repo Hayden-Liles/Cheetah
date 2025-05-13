@@ -212,6 +212,9 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                     Expr::Name { id, .. } => {
                         self.ensure_block_has_terminator();
 
+                        println!("Looking up variable: {}", id);
+
+                        // First, try to find the variable in the current scope stack
                         if let Some(var_ptr) =
                             self.scope_stack.get_variable_respecting_declarations(id)
                         {
@@ -237,6 +240,7 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                                         .unwrap()
                                 };
 
+                                println!("Found variable '{}' in scope stack with type: {:?}", id, var_type);
                                 result_stack.push(ExprResult {
                                     value: var_val,
                                     ty: var_type,
@@ -244,27 +248,51 @@ impl<'ctx> ExprNonRecursive<'ctx> for CompilationContext<'ctx> {
                             } else {
                                 return Err(format!("Variable found but type unknown: {}", id));
                             }
-                        } else {
-                            if let Some(var_ptr) = self.variables.get(id) {
-                                if let Some(var_type) = self.type_env.get(id) {
+                        }
+                        // Next, try to find the variable in the global variables
+                        else if let Some(var_ptr) = self.variables.get(id) {
+                            if let Some(var_type) = self.type_env.get(id) {
+                                let llvm_type = self.get_llvm_type(var_type);
+
+                                let var_val = self
+                                    .builder
+                                    .build_load(llvm_type, *var_ptr, &format!("load_{}", id))
+                                    .unwrap();
+
+                                self.ensure_block_has_terminator();
+
+                                println!("Found variable '{}' in global variables with type: {:?}", id, var_type);
+                                result_stack.push(ExprResult {
+                                    value: var_val,
+                                    ty: var_type.clone(),
+                                });
+                            } else {
+                                return Err(format!(
+                                    "Global variable found but type unknown: {}",
+                                    id
+                                ));
+                            }
+                        }
+                        // Special case for nested list comprehensions - try to find the variable in any scope
+                        else {
+                            // Try to find the variable in any scope, not just respecting declarations
+                            // This is needed for nested list comprehensions where variables from outer
+                            // comprehensions need to be accessible in inner comprehensions
+                            if let Some(var_ptr) = self.scope_stack.get_variable(id) {
+                                if let Some(var_type) = self.scope_stack.get_type(id) {
                                     let llvm_type = self.get_llvm_type(var_type);
 
-                                    let var_val = self
-                                        .builder
+                                    let var_val = self.builder
                                         .build_load(llvm_type, *var_ptr, &format!("load_{}", id))
                                         .unwrap();
 
-                                    self.ensure_block_has_terminator();
-
+                                    println!("Found variable '{}' in any scope with type: {:?}", id, var_type);
                                     result_stack.push(ExprResult {
                                         value: var_val,
                                         ty: var_type.clone(),
                                     });
                                 } else {
-                                    return Err(format!(
-                                        "Global variable found but type unknown: {}",
-                                        id
-                                    ));
+                                    return Err(format!("Variable found but type unknown: {}", id));
                                 }
                             } else {
                                 return Err(format!("Undefined variable: {}", id));
