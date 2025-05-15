@@ -32,6 +32,7 @@ pub struct RawList {
     pub capacity: i64,
     pub data:     *mut *mut c_void,
     pub tags:     *mut TypeTag,
+    pub bulk_storage: *mut c_void, // For tracking bulk allocations
 }
 
 #[no_mangle]
@@ -39,10 +40,11 @@ pub extern "C" fn list_new() -> *mut RawList {
     let ptr = unsafe { malloc(std::mem::size_of::<RawList>()) } as *mut RawList;
     if ptr.is_null() { return ptr; }
     unsafe {
-        (*ptr).length   = 0;
-        (*ptr).capacity = 0;
-        (*ptr).data     = ptr::null_mut();
-        (*ptr).tags     = ptr::null_mut();
+        (*ptr).length      = 0;
+        (*ptr).capacity    = 0;
+        (*ptr).data        = ptr::null_mut();
+        (*ptr).tags        = ptr::null_mut();
+        (*ptr).bulk_storage = ptr::null_mut();
     }
     println!("List created: {:p}", ptr); // Debug print
     ptr
@@ -68,6 +70,7 @@ pub extern "C" fn list_with_capacity(cap: i64) -> *mut RawList {
 
 /// Create a list of consecutive integers from start (inclusive) to end (exclusive)
 /// This is a specialized function for efficiently creating range lists
+/// Uses a single bulk allocation for all integers to improve memory efficiency
 #[no_mangle]
 pub extern "C" fn list_from_range(start: i64, end: i64) -> *mut RawList {
     unsafe {
@@ -78,15 +81,35 @@ pub extern "C" fn list_from_range(start: i64, end: i64) -> *mut RawList {
         let rl = list_with_capacity(size);
         if rl.is_null() { return rl; }
 
-        // Pre-allocate all integers at once
-        for i in 0..size {
-            let value = start + i;
-            let int_ptr = malloc(std::mem::size_of::<i64>()) as *mut i64;
-            *int_ptr = value;
+        // Allocate a single block for all integers
+        let bulk_size = size as usize * std::mem::size_of::<i64>();
+        let bulk_data = malloc(bulk_size) as *mut i64;
+        if bulk_data.is_null() {
+            // If bulk allocation fails, fall back to individual allocations
+            for i in 0..size {
+                let value = start + i;
+                let int_ptr = malloc(std::mem::size_of::<i64>()) as *mut i64;
+                *int_ptr = value;
 
-            // Store pointer and tag
-            *(*rl).data.add(i as usize) = int_ptr as *mut c_void;
-            *(*rl).tags.add(i as usize) = TypeTag::Int;
+                // Store pointer and tag
+                *(*rl).data.add(i as usize) = int_ptr as *mut c_void;
+                *(*rl).tags.add(i as usize) = TypeTag::Int;
+            }
+        } else {
+            // Store the bulk allocation in the list for later cleanup
+            (*rl).bulk_storage = bulk_data as *mut c_void;
+
+            // Fill the bulk data and set up pointers
+            for i in 0..size {
+                let value = start + i;
+                *bulk_data.add(i as usize) = value;
+
+                // Store pointer to the element in the bulk array
+                *(*rl).data.add(i as usize) = bulk_data.add(i as usize) as *mut c_void;
+                *(*rl).tags.add(i as usize) = TypeTag::Int;
+            }
+
+            println!("Created range list with bulk storage: {:p}", bulk_data);
         }
 
         // Set final length
@@ -214,46 +237,58 @@ pub extern "C" fn list_free(list_ptr: *mut RawList) {
 
         let rl = &mut *list_ptr;
 
-        // Free each element based on its tag type
-        if !rl.data.is_null() && !rl.tags.is_null() {
-            for i in 0..rl.length {
-                let elem_ptr = *rl.data.add(i as usize);
-                let tag = *rl.tags.add(i as usize);
+        // Check if we have a bulk storage allocation
+        if !rl.bulk_storage.is_null() {
+            println!("  Freeing bulk storage: {:p}", rl.bulk_storage); // Debug print
+            free(rl.bulk_storage);
+            // When using bulk storage, individual elements don't need to be freed
+            // as they're part of the bulk allocation
+        } else {
+            // Free each element based on its tag type
+            if !rl.data.is_null() && !rl.tags.is_null() {
+                for i in 0..rl.length {
+                    let elem_ptr = *rl.data.add(i as usize);
+                    let tag = *rl.tags.add(i as usize);
 
-                // Only free elements that should be owned by this list
-                // String, List, and Tuple types need to be freed
-                match tag {
-                    TypeTag::String => {
-                        if !elem_ptr.is_null() {
-                            println!("  Freeing string element at index {}", i); // Debug print
-                            free_string(elem_ptr as *mut c_char);
-                        }
-                    },
-                    TypeTag::List => {
-                        if !elem_ptr.is_null() {
-                            println!("  Freeing nested list element at index {}", i); // Debug print
-                            list_free(elem_ptr as *mut RawList);
-                        }
-                    },
-                    TypeTag::Tuple => {
-                        // Free tuple memory if it was dynamically allocated
-                        if !elem_ptr.is_null() {
-                            println!("  Freeing tuple element at index {}", i); // Debug print
-                            free(elem_ptr);
-                        }
-                    },
-                    _ => {
-                        // Other types still need their memory freed
-                        if !elem_ptr.is_null() {
-                            println!("  Freeing primitive element at index {}", i); // Debug print
-                            free(elem_ptr);
+                    // Only free elements that should be owned by this list
+                    // String, List, and Tuple types need to be freed
+                    match tag {
+                        TypeTag::String => {
+                            if !elem_ptr.is_null() {
+                                println!("  Freeing string element at index {}", i); // Debug print
+                                free_string(elem_ptr as *mut c_char);
+                            }
+                        },
+                        TypeTag::List => {
+                            if !elem_ptr.is_null() {
+                                println!("  Freeing nested list element at index {}", i); // Debug print
+                                list_free(elem_ptr as *mut RawList);
+                            }
+                        },
+                        TypeTag::Tuple => {
+                            // Free tuple memory if it was dynamically allocated
+                            if !elem_ptr.is_null() {
+                                println!("  Freeing tuple element at index {}", i); // Debug print
+                                free(elem_ptr);
+                            }
+                        },
+                        _ => {
+                            // Other types still need their memory freed
+                            if !elem_ptr.is_null() {
+                                println!("  Freeing primitive element at index {}", i); // Debug print
+                                free(elem_ptr);
+                            }
                         }
                     }
                 }
             }
+        }
 
-            // Free the data and tags arrays
+        // Free the data and tags arrays
+        if !rl.data.is_null() {
             free(rl.data as *mut _);
+        }
+        if !rl.tags.is_null() {
             free(rl.tags as *mut _);
         }
 
@@ -278,6 +313,7 @@ pub fn register_list_functions<'ctx>(context: &'ctx Context, module: &mut Module
             context.i64_type().into(),          // capacity
             context.ptr_type(AddressSpace::default()).into(), // data **
             context.ptr_type(AddressSpace::default()).into(), // tags **
+            context.ptr_type(AddressSpace::default()).into(), // bulk_storage *
         ],
         false);
 
@@ -391,6 +427,7 @@ pub fn get_list_struct_type<'ctx>(context: &'ctx Context) -> StructType<'ctx> {
             context.i64_type().into(),                    // capacity
             context.ptr_type(AddressSpace::default()).into(), // data **
             context.ptr_type(AddressSpace::default()).into(), // tags **
+            context.ptr_type(AddressSpace::default()).into(), // bulk_storage *
         ],
         false,
     );

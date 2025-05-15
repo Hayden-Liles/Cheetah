@@ -3343,16 +3343,129 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             // Compile the inner list comprehension first
             let (inner_list_val, inner_list_type) = self.compile_list_comprehension(inner_elt, inner_generators)?;
 
-            // If this is the outermost list comprehension, we need to ensure the inner list is freed
-            // when it's no longer needed. For now, we'll just return it directly.
+            // Create a result list for the outer comprehension
+            let result_list = self.build_empty_list("optimized_nested_comp_result")?;
 
-            // In a more complete implementation, we would:
-            // 1. Copy the elements from the inner list to the result list
-            // 2. Free the inner list
-            // 3. Return the result list
+            // Get the list_append function
+            let list_append_fn = match self.module.get_function("list_append") {
+                Some(f) => f,
+                None => return Err("list_append function not found".to_string()),
+            };
 
-            // But for now, we'll just return the inner list directly
-            return Ok((inner_list_val, inner_list_type));
+            // Get the list_len function
+            let list_len_fn = match self.module.get_function("list_len") {
+                Some(f) => f,
+                None => return Err("list_len function not found".to_string()),
+            };
+
+            // Get the list_get function
+            let list_get_fn = match self.module.get_function("list_get") {
+                Some(f) => f,
+                None => return Err("list_get function not found".to_string()),
+            };
+
+            // Get the list_free function
+            let list_free_fn = match self.module.get_function("list_free") {
+                Some(f) => f,
+                None => return Err("list_free function not found".to_string()),
+            };
+
+            // Get the inner list length
+            let inner_list_ptr = inner_list_val.into_pointer_value();
+            let inner_list_len_call = self.builder
+                .build_call(list_len_fn, &[inner_list_ptr.into()], "inner_list_len")
+                .unwrap();
+            let inner_list_len = inner_list_len_call
+                .try_as_basic_value()
+                .left()
+                .ok_or_else(|| "Failed to get inner list length".to_string())?
+                .into_int_value();
+
+            // Create a loop to copy elements from inner list to result list
+            let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+
+            let loop_entry_block = self.llvm_context.append_basic_block(current_function, "copy_loop_entry");
+            let loop_body_block = self.llvm_context.append_basic_block(current_function, "copy_loop_body");
+            let loop_exit_block = self.llvm_context.append_basic_block(current_function, "copy_loop_exit");
+
+            // Create an index variable
+            let index_ptr = self.builder
+                .build_alloca(self.llvm_context.i64_type(), "copy_index")
+                .unwrap();
+            self.builder
+                .build_store(index_ptr, self.llvm_context.i64_type().const_zero())
+                .unwrap();
+
+            // Branch to loop entry
+            self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+            // Loop entry block - check condition
+            self.builder.position_at_end(loop_entry_block);
+            let current_index = self.builder
+                .build_load(self.llvm_context.i64_type(), index_ptr, "current_index")
+                .unwrap()
+                .into_int_value();
+            let condition = self.builder
+                .build_int_compare(
+                    inkwell::IntPredicate::SLT,
+                    current_index,
+                    inner_list_len,
+                    "loop_condition",
+                )
+                .unwrap();
+            self.builder
+                .build_conditional_branch(condition, loop_body_block, loop_exit_block)
+                .unwrap();
+
+            // Loop body block - copy element
+            self.builder.position_at_end(loop_body_block);
+
+            // Get element from inner list
+            let get_call = self.builder
+                .build_call(
+                    list_get_fn,
+                    &[inner_list_ptr.into(), current_index.into()],
+                    "get_element",
+                )
+                .unwrap();
+            let element_ptr = get_call
+                .try_as_basic_value()
+                .left()
+                .ok_or_else(|| "Failed to get element from inner list".to_string())?
+                .into_pointer_value();
+
+            // Append element to result list
+            self.builder
+                .build_call(
+                    list_append_fn,
+                    &[result_list.into(), element_ptr.into()],
+                    "append_element",
+                )
+                .unwrap();
+
+            // Increment index
+            let next_index = self.builder
+                .build_int_add(
+                    current_index,
+                    self.llvm_context.i64_type().const_int(1, false),
+                    "next_index",
+                )
+                .unwrap();
+            self.builder.build_store(index_ptr, next_index).unwrap();
+
+            // Branch back to loop entry
+            self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+
+            // Loop exit block - free inner list and return result
+            self.builder.position_at_end(loop_exit_block);
+
+            // Free the inner list
+            self.builder
+                .build_call(list_free_fn, &[inner_list_ptr.into()], "free_inner_list")
+                .unwrap();
+
+            // Return the result list
+            return Ok((result_list.into(), inner_list_type));
         }
 
         // Special case for list comprehensions to work around dominance issues
