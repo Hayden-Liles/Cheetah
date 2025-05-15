@@ -4,7 +4,6 @@ use crate::compiler::types::is_reference_type;
 use crate::compiler::types::Type;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue};
-use inkwell::AddressSpace;
 
 
 /// Extension trait for handling expression code generation
@@ -3427,7 +3426,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     // Get the element type for the result list
                     let (_, element_type) = self.compile_expr(elt)?;
 
-                    // The iteration handler has already popped its scope
+                    // Now pop the scope after we've compiled the element expression
+                    self.scope_stack.pop_scope();
+
                     return Ok((result_list.into(), Type::List(Box::new(element_type))));
                 }
             }
@@ -3493,7 +3494,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             // Get the element type for the result list
             let (_, element_type) = self.compile_expr(elt)?;
 
-            // The iteration handler has already popped its scope
+            // Now pop the scope after we've compiled the element expression
+            self.scope_stack.pop_scope();
+
             return Ok((result_list.into(), Type::List(Box::new(element_type))));
         } else {
             match iter_type {
@@ -3716,7 +3719,9 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // from the iteration handlers
         let (_, element_type) = self.compile_expr(elt)?;
 
-        // The iteration handler has already popped its scope
+        // Now pop the scope after we've compiled the element expression
+        self.scope_stack.pop_scope();
+
         Ok((result_list.into(), Type::List(Box::new(element_type))))
     }
 
@@ -3724,83 +3729,119 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         &mut self,
         elt: &Expr,
         generator: &crate::ast::Comprehension,
-        range_val: BasicValueEnum<'ctx>,
+        range_val: inkwell::values::BasicValueEnum<'ctx>,
         result_list: inkwell::values::PointerValue<'ctx>,
         list_append_fn: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
         let range_val = range_val.into_int_value();
 
-        // Prepare loop blocks
         let current_function = self
             .builder
-            .get_insert_block().unwrap()
-            .get_parent().unwrap();
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+            
+        // Save the current block
         let current_block = self.builder.get_insert_block().unwrap();
-
-        // Create entry, body, and exit blocks
-        let loop_entry_block = self.llvm_context.append_basic_block(current_function, "list_comp_entry");
-        let loop_body_block = self.llvm_context.append_basic_block(current_function, "list_comp_body");
-        let loop_exit_block = self.llvm_context.append_basic_block(current_function, "list_comp_exit");
-
-        // Jump from current block to entry
+        
+        // Get entry block for allocations
+        let entry_block = current_function.get_first_basic_block().unwrap();
+        
+        // To ensure proper dominance, we need to position BEFORE the first instruction
+        // in the entry block, not at the end of it
+        if let Some(first_instr) = entry_block.get_first_instruction() {
+            self.builder.position_before(&first_instr);
+        } else {
+            // If there are no instructions, position at the end is fine
+            self.builder.position_at_end(entry_block);
+        }
+        
+        // Allocate loop variables in the entry block
+        let index_ptr = self
+            .builder
+            .build_alloca(self.llvm_context.i64_type(), "range_comp_index")
+            .unwrap();
+        
+        // Allocate the target variable if it's a named target
+        let target_alloca = if let Expr::Name { id, .. } = generator.target.as_ref() {
+            // Use a unique name for the alloca to avoid conflicts
+            let unique_id = format!("{}_range_comp_{}", id, self.scope_stack.get_depth());
+            let alloca = self
+                .builder
+                .build_alloca(self.llvm_context.i64_type(), &format!("{}_alloca", unique_id))
+                .unwrap();
+            Some((id.clone(), alloca))
+        } else {
+            None
+        };
+        
+        // Return to the original position
         self.builder.position_at_end(current_block);
-        self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+        
+        // Create the necessary basic blocks for the loop
+        let loop_entry_block = self
+            .llvm_context
+            .append_basic_block(current_function, "range_comp_entry");
+        let loop_body_block = self
+            .llvm_context
+            .append_basic_block(current_function, "range_comp_body");
+        let loop_exit_block = self
+            .llvm_context
+            .append_basic_block(current_function, "range_comp_exit");
 
-        // Initialize index in entry block
+        // Initialize the loop counter
+        self.builder
+            .build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false))
+            .unwrap();
+
+        // Branch to the loop entry
+        self.builder
+            .build_unconditional_branch(loop_entry_block)
+            .unwrap();
+
+        // Build the loop condition check
         self.builder.position_at_end(loop_entry_block);
-        let index_ptr = self.builder.build_alloca(self.llvm_context.i64_type(), "list_comp_index").unwrap();
-        self.builder.build_store(index_ptr, self.llvm_context.i64_type().const_int(0, false)).unwrap();
+        let current_index = self
+            .builder
+            .build_load(self.llvm_context.i64_type(), index_ptr, "current_index")
+            .unwrap()
+            .into_int_value();
+        let condition = self
+            .builder
+            .build_int_compare(
+                inkwell::IntPredicate::SLT,
+                current_index,
+                range_val,
+                "loop_condition",
+            )
+            .unwrap();
 
-        // Condition: index < range_val
-        let current_index = self.builder.build_load(
-            self.llvm_context.i64_type(),
-            index_ptr,
-            "current_index",
-        ).unwrap().into_int_value();
-        let cond = self.builder.build_int_compare(
-            inkwell::IntPredicate::ULT,
-            current_index,
-            range_val,
-            "range_cond",
-        ).unwrap();
-        self.builder.build_conditional_branch(cond, loop_body_block, loop_exit_block).unwrap();
+        self.builder
+            .build_conditional_branch(condition, loop_body_block, loop_exit_block)
+            .unwrap();
 
-        // Loop body
+        // Build the loop body
         self.builder.position_at_end(loop_body_block);
 
-        let list_get_fn = self.module.get_function("list_get").ok_or_else(|| "list_get function not found".to_string())?;
-        let call_site = self.builder.build_call(
-            list_get_fn,
-            &[result_list.into(), current_index.into()],
-            "list_get_result",
-        ).unwrap();
-        let element_ptr = call_site.try_as_basic_value().left().unwrap();
-
-        let element_type = match self.lookup_variable_type(&generator.iter.to_string()) {
-            Some(Type::List(inner)) => *inner.clone(),
-            _ => Type::Int,
-        };
-
-        if let Expr::Name { id, .. } = generator.target.as_ref() {
-            // Per-iteration alloca
-            let elem_alloca = self.builder.build_alloca(
-                self.get_llvm_type(&element_type),
-                &format!("{}_list_comp_{}", id, self.scope_stack.get_depth()),
-            ).unwrap();
-
+        // Add the iteration variable to the scope
+        if let Some((id, alloca)) = target_alloca {
+            // Create a scope for the iteration
             self.scope_stack.push_scope(false, false, false);
+            println!("Created new scope for range iteration variable, depth: {}", self.scope_stack.get_depth());
 
-            let element_val = self.builder.build_load(
-                self.get_llvm_type(&element_type),
-                element_ptr.into_pointer_value(),
-                &format!("load_{}", id),
-            ).unwrap();
-            self.builder.build_store(elem_alloca, element_val).unwrap();
+            // Store the current loop index in the variable
+            self.builder
+                .build_store(alloca, current_index)
+                .unwrap();
+                
+            // Add the variable to the scope
+            self.scope_stack.add_variable(id, alloca, Type::Int);
 
-            println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
-            self.scope_stack.add_variable(id.clone(), elem_alloca, element_type.clone());
-
+            // Evaluate conditions based on the variable
             let should_append = self.evaluate_comprehension_conditions(generator, current_function)?;
+
+            // Process the element with the variable in scope
             self.process_list_comprehension_element(
                 elt,
                 should_append,
@@ -3809,30 +3850,33 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 current_function,
             )?;
 
-            self.scope_stack.pop_scope();
+            // Don't pop the scope - we need to maintain it for the entire iteration
+        } else {
+            return Err("Only simple variable targets are supported in list comprehensions".to_string());
         }
 
-        // Increment and branch
-        let next_index = self.builder.build_int_add(
-            current_index,
-            self.llvm_context.i64_type().const_int(1, false),
-            "next_index",
-        ).unwrap();
+        // Increment the loop counter
+        let next_index = self
+            .builder
+            .build_int_add(
+                current_index,
+                self.llvm_context.i64_type().const_int(1, false),
+                "next_index",
+            )
+            .unwrap();
         self.builder.build_store(index_ptr, next_index).unwrap();
-        self.builder.build_unconditional_branch(loop_entry_block).unwrap();
+        
+        // Return to the loop entry
+        self.builder
+            .build_unconditional_branch(loop_entry_block)
+            .unwrap();
 
-        // Exit
+        // Position at the loop exit
         self.builder.position_at_end(loop_exit_block);
-
-        // Pop the scope we pushed in the loop body
-        self.scope_stack.pop_scope();
 
         Ok(())
     }
 
-
-    /// The big missing piece: after you pushed a new scope at the top,
-    /// you *must* pop it before returning, or else future lookups get confused.
     fn handle_list_iteration_for_comprehension(
         &mut self,
         elt: &Expr,
@@ -3841,13 +3885,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         result_list: inkwell::values::PointerValue<'ctx>,
         list_append_fn: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
-        println!(
-            "List iteration for comprehension, element is: {:?}, is_nested_list_comp: {}",
-            elt,
-            matches!(elt, Expr::ListComp { .. })
-        );
+        println!("List iteration for comprehension, element is: {:?}, is_nested_list_comp: {}", 
+                elt, matches!(elt, Expr::ListComp { .. }));
 
-        // This scope must be balanced!
+        // Create a scope for the list iteration
         println!("Creating new scope for list iteration in comprehension");
         self.scope_stack.push_scope(false, false, false);
 
@@ -3880,26 +3921,26 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .unwrap()
             .get_parent()
             .unwrap();
-
+        
         // Get current block
         let current_block = self.builder.get_insert_block().unwrap();
-
+        
         // Get entry block for allocations
         let entry_block = current_function.get_first_basic_block().unwrap();
-
+        
         // Position before first instruction in the entry block
         if let Some(first_instr) = entry_block.get_first_instruction() {
             self.builder.position_before(&first_instr);
         } else {
             self.builder.position_at_end(entry_block);
         }
-
+        
         // Allocate loop index in entry block
         let index_ptr = self
             .builder
             .build_alloca(self.llvm_context.i64_type(), "list_comp_index")
             .unwrap();
-
+        
         // Allocate target variable(s)
         let target_var = match &*generator.target {
             Expr::Name { id, .. } => {
@@ -3934,10 +3975,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             },
             _ => None
         };
-
+        
         // Return to original position
         self.builder.position_at_end(current_block);
-
+        
         // Create loop blocks
         let loop_entry_block = self
             .llvm_context
@@ -4015,16 +4056,16 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         element_ptr.into_pointer_value(),
                         &format!("load_{}", id)
                     ).unwrap();
-
+                    
                     // Store in our pre-allocated variable
                     self.builder.build_store(*alloca, element_val).unwrap();
-
+                    
                     // Add to scope
                     println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
                     self.scope_stack.add_variable(id.clone(), *alloca, element_type.clone());
                 }
             },
-            Expr::Tuple {  .. } => {
+            Expr::Tuple { elts, .. } => {
                 // Handle tuple unpacking - would need more complex logic here
                 // but let's keep it simple for now
                 return Err("Tuple unpacking in nested list comprehensions is not fully implemented".to_string());
@@ -4054,7 +4095,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             )
             .unwrap();
         self.builder.build_store(index_ptr, next_index).unwrap();
-
+        
         // Loop back
         self.builder
             .build_unconditional_branch(loop_entry_block)
@@ -4063,8 +4104,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Exit block
         self.builder.position_at_end(loop_exit_block);
 
-        // **Now pop the scope you pushed above!**
-        self.scope_stack.pop_scope();
+        // Don't pop scope here - let caller handle it
 
         Ok(())
     }
@@ -4217,8 +4257,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         self.builder.position_at_end(loop_exit_block);
 
-        // Pop the scope we pushed at the beginning
-        self.scope_stack.pop_scope();
+        // We don't pop the scope here because we need the variables to remain accessible
+        // The scope will be popped by the caller (compile_list_comprehension)
 
         Ok(())
     }
@@ -4400,10 +4440,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             }
         }
 
-        // Pop the scope if we pushed one
-        if !is_nested_list_comp {
-            self.scope_stack.pop_scope();
-        }
+        // We don't pop the scope here because we need the variables to remain accessible
+        // The scope will be popped by the caller (compile_list_comprehension)
 
         Ok(())
     }
@@ -4481,9 +4519,6 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         Ok(should_append)
     }
 
-    /// This used to push/pop its own scope; that's been removed entirely,
-    /// so that the comprehension‐variable binding (e.g. "i") stays visible
-    /// when we compile the element expression.
     fn process_list_comprehension_element(
         &mut self,
         elt: &Expr,
@@ -4493,78 +4528,84 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         current_function: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
         println!("Processing list comprehension element: {:?}", elt);
-        println!("Processing list comprehension element: {:?}, is_nested_list_comp: {}",
+        println!("Processing list comprehension element: {:?}, is_nested_list_comp: {}", 
                 elt, matches!(elt, Expr::ListComp { .. }));
 
-        // Remember where we branched off
+        // Create a scope for element evaluation
+        self.scope_stack.push_scope(false, false, false);
+        println!("Created new scope for list comprehension element evaluation, depth: {}", self.scope_stack.get_depth());
+
+        // Get the current block
         let current_block = self.builder.get_insert_block().unwrap();
+        
+        // Get entry block for proper allocations
         let entry_block = current_function.get_first_basic_block().unwrap();
+        
+        // Position before first instruction in entry block
         if let Some(first_instr) = entry_block.get_first_instruction() {
             self.builder.position_before(&first_instr);
         } else {
             self.builder.position_at_end(entry_block);
         }
-
-        // Pre-allocas for i64, f64, ptr
+        
+        // Pre-allocate result storage in the entry block for proper dominance
         let element_alloca_i64 = self
             .builder
             .build_alloca(self.llvm_context.i64_type(), "comp_element_i64")
             .unwrap();
+        
         let element_alloca_f64 = self
             .builder
             .build_alloca(self.llvm_context.f64_type(), "comp_element_f64")
             .unwrap();
+            
         let element_alloca_ptr = self
             .builder
             .build_alloca(
-                self.llvm_context.ptr_type(AddressSpace::default()),
+                self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
                 "comp_element_ptr"
             )
             .unwrap();
-
-        // Go back to the block we branched off from
+        
+        // Return to the original position
         self.builder.position_at_end(current_block);
 
-        // Create the “then” and “continue” blocks for the filter test
-        let then_block    = self.llvm_context.append_basic_block(current_function, "then_block");
-        let continue_block = self.llvm_context.append_basic_block(current_function, "continue_block");
+        // Create blocks for conditional evaluation
+        let then_block = self
+            .llvm_context
+            .append_basic_block(current_function, "comp_then");
+        let continue_block = self
+            .llvm_context
+            .append_basic_block(current_function, "comp_continue");
 
-        // Jump based on the predicate
+        // Branch based on the condition
         self.builder
             .build_conditional_branch(should_append, then_block, continue_block)
             .unwrap();
 
-        // THEN: actually compile the element
+        // Element passes the predicate - add it to the result list
         self.builder.position_at_end(then_block);
 
-        // Debug‐print the loop‐variable lookup
+        // Look up variables for better debug logs
         if let Expr::Name { id, .. } = elt {
             println!("Looking up variable: {}", id);
-            if let Some(_) = self.scope_stack.get_variable_respecting_declarations(id) {
+            if let Some(_var_ptr) = self.scope_stack.get_variable_respecting_declarations(id) {
                 if let Some(var_type) = self.scope_stack.get_type_respecting_declarations(id) {
-                    println!(
-                        "Found variable '{}' in scope stack with type: {:?}",
-                        id, var_type
-                    );
+                    println!("Found variable '{}' in scope stack with type: {:?}", id, var_type);
                 }
             }
         }
 
-        // This is the key compile‐step
+        // Compile the element expression
         let (element_val, mut element_type) = self.compile_expr(elt)?;
-        println!(
-            "Successfully compiled element expression with type: {:?}",
-            element_type
-        );
 
-        // If it’s a homogeneous tuple, collapse to its element type
+        println!("Successfully compiled element expression with type: {:?}", element_type);
+
+        // Normalize tuple element types if needed
         element_type = match &element_type {
             Type::Tuple(tuple_element_types) => {
-                if !tuple_element_types.is_empty()
-                   && tuple_element_types
-                         .iter()
-                         .all(|t| t == &tuple_element_types[0])
-                {
+                if !tuple_element_types.is_empty() && 
+                tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
                     tuple_element_types[0].clone()
                 } else {
                     element_type
@@ -4573,32 +4614,38 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             _ => element_type,
         };
 
-        // Store into the right alloca so we can get a pointer
+        // Determine the appropriate storage for the element based on its type
         let element_ptr = match &element_type {
             Type::Int => {
                 self.builder.build_store(element_alloca_i64, element_val).unwrap();
-                element_alloca_i64.into()
-            }
+                element_alloca_i64
+            },
             Type::Float => {
                 self.builder.build_store(element_alloca_f64, element_val).unwrap();
-                element_alloca_f64.into()
-            }
+                element_alloca_f64
+            },
             Type::Tuple(_) | Type::List(_) | Type::String | Type::Dict(_, _) => {
                 if element_val.is_pointer_value() {
                     self.builder.build_store(element_alloca_ptr, element_val).unwrap();
-                    element_alloca_ptr.into()
+                    element_alloca_ptr
                 } else {
-                    element_val
+                    // If not already a pointer, store it in the integer alloca
+                    self.builder.build_store(element_alloca_i64, element_val).unwrap();
+                    element_alloca_i64
                 }
+            },
+            _ => {
+                // Default to integer storage for other types
+                self.builder.build_store(element_alloca_i64, element_val).unwrap();
+                element_alloca_i64
             }
-            _ => element_val,
         };
 
-        // Try the tagged‐append runtime if it exists…
+        // Use tagged append if available
         let list_append_tagged_fn = match self.module.get_function("list_append_tagged") {
             Some(f) => f,
             None => {
-                // fallback to untagged
+                // Fall back to regular append
                 self.builder
                     .build_call(
                         list_append_fn,
@@ -4606,43 +4653,52 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         "list_append_result",
                     )
                     .unwrap();
+                    
                 self.builder
                     .build_unconditional_branch(continue_block)
                     .unwrap();
+                    
                 self.builder.position_at_end(continue_block);
-                // **Scope pop removed**
-                // self.scope_stack.pop_scope();
+                self.scope_stack.pop_scope();
                 return Ok(());
             }
         };
 
-        // Build the tag and call it
+        // Tag the element based on its type
         use crate::compiler::runtime::list::TypeTag;
         let tag = match &element_type {
-            Type::None    => TypeTag::None_,
-            Type::Bool    => TypeTag::Bool,
-            Type::Int     => TypeTag::Int,
-            Type::Float   => TypeTag::Float,
-            Type::String  => TypeTag::String,
+            Type::None => TypeTag::None_,
+            Type::Bool => TypeTag::Bool,
+            Type::Int => TypeTag::Int,
+            Type::Float => TypeTag::Float,
+            Type::String => TypeTag::String,
             Type::List(_) => TypeTag::List,
-            // you mentioned you don't yet have Dict in your TypeTag—
-            // mapping yours to Any is fine:
-            _             => TypeTag::Any,
-        } as u8;
-        let tag_val = self.llvm_context.i8_type().const_int(tag as u64, false);
-        self.builder.build_call(
-            list_append_tagged_fn,
-            &[result_list.into(), element_ptr.into(), tag_val.into()],
-            "list_append_tagged_result",
-        ).unwrap();
+            Type::Tuple(_) => TypeTag::Tuple,
+            _ => TypeTag::Any,
+        };
 
-        // GO TO continue
+        println!("Tagging list comprehension element as {:?}", tag);
+        let tag_val = self.llvm_context.i8_type().const_int(tag as u64, false);
+
+        // Append the tagged element to the result list
+        self.builder
+            .build_call(
+                list_append_tagged_fn,
+                &[result_list.into(), element_ptr.into(), tag_val.into()],
+                "list_append_tagged_result",
+            )
+            .unwrap();
+
+        // Branch to the continue block
         self.builder
             .build_unconditional_branch(continue_block)
             .unwrap();
 
-        // Finally, land in the continue block
+        // Continue block - cleanup
         self.builder.position_at_end(continue_block);
+        
+        // Pop the scope for element evaluation
+        self.scope_stack.pop_scope();
 
         Ok(())
     }

@@ -298,40 +298,27 @@ impl<'ctx> ScopeStack<'ctx> {
 
     /// Get a variable's storage location, respecting global and nonlocal declarations
     pub fn get_variable_respecting_declarations(&self, name: &str) -> Option<&PointerValue<'ctx>> {
-        println!("Getting variable '{}' respecting declarations", name);
         if let Some(current_scope) = self.current_scope() {
-            println!("Found current scope");
             if current_scope.is_global(name) {
-                println!("Variable '{}' is global", name);
                 if let Some(global_scope) = self.global_scope() {
-                    println!("Found global scope");
                     return global_scope.get_variable(name);
                 }
             }
 
-            println!("Checking if variable '{}' is nonlocal", name);
-
             if current_scope.is_nonlocal(name) {
-                println!("Variable '{}' is nonlocal", name);
                 if let Some(ptr) = current_scope.get_captured_variable(name) {
-                    println!("Found captured variable '{}' in current scope", name);
                     return Some(ptr);
                 }
 
                 if let Some(unique_name) = current_scope.get_nonlocal_mapping(name) {
-                    println!("Found nonlocal mapping for '{}' to '{}'", name, unique_name);
                     if let Some(ptr) = current_scope.get_variable(unique_name) {
-                        println!("Found variable '{}' in current scope using unique name '{}'", name, unique_name);
                         return Some(ptr);
                     }
                 }
 
-                println!("Searching for variable '{}' in outer scopes", name);
-
                 let current_index = self.scopes.len() - 1;
 
                 if current_index > 0 {
-                    println!("Current scope index: {}", current_index);
                     let parent_scope_index = current_index - 1;
 
                     if let Some(ptr) = self.scopes[parent_scope_index].get_variable(name) {
@@ -339,25 +326,21 @@ impl<'ctx> ScopeStack<'ctx> {
                     }
 
                     if self.scopes[parent_scope_index].is_nonlocal(name) {
-                        println!("Parent scope is also nonlocal");
                         if let Some(parent_unique_name) =
                             self.scopes[parent_scope_index].get_nonlocal_mapping(name)
                         {
                             if let Some(ptr) =
                                 self.scopes[parent_scope_index].get_variable(parent_unique_name)
                             {
-                                println!("Found variable '{}' in parent scope using unique name '{}'", name, parent_unique_name);
                                 return Some(ptr);
                             }
                         }
 
                         if parent_scope_index > 0 {
-                            println!("Parent scope index: {}", parent_scope_index);
                             let grandparent_scope_index = parent_scope_index - 1;
                             if let Some(ptr) =
                                 self.scopes[grandparent_scope_index].get_variable(name)
                             {
-                                println!("Found variable '{}' in grandparent scope", name);
                                 return Some(ptr);
                             }
                         }
@@ -366,12 +349,10 @@ impl<'ctx> ScopeStack<'ctx> {
 
                 for i in (0..current_index - 1).rev() {
                     if let Some(ptr) = self.scopes[i].get_variable(name) {
-                        println!("Found variable '{}' in scope {}", name, i);
                         return Some(ptr);
                     }
                 }
 
-                println!("Variable '{}' not found in any scope", name);
                 return None;
             }
         }
