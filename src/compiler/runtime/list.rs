@@ -6,9 +6,11 @@ use inkwell::types::{BasicType, BasicTypeEnum, StructType};
 use inkwell::AddressSpace;
 use inkwell::execution_engine::ExecutionEngine;
 
-use libc::{calloc, free, malloc, realloc};
+use libc::{calloc, free, malloc, realloc, c_char};
 use std::ffi::c_void;
 use std::ptr;
+
+use crate::compiler::runtime::string::free_string;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,8 +178,44 @@ pub extern "C" fn list_slice(src: *mut RawList, start: i64, stop: i64, step: i64
 pub extern "C" fn list_free(list_ptr: *mut RawList) {
     unsafe {
         if list_ptr.is_null() { return; }
+
         let rl = &mut *list_ptr;
-        if !rl.data.is_null() { free(rl.data as *mut _); }
+
+        // Free each element based on its tag type
+        if !rl.data.is_null() && !rl.tags.is_null() {
+            for i in 0..rl.length {
+                let elem_ptr = *rl.data.add(i as usize);
+                let tag = *rl.tags.add(i as usize);
+
+                // Only free elements that should be owned by this list
+                // String, List, and Tuple types need to be freed
+                match tag {
+                    TypeTag::String => {
+                        if !elem_ptr.is_null() {
+                            free_string(elem_ptr as *mut c_char);
+                        }
+                    },
+                    TypeTag::List => {
+                        if !elem_ptr.is_null() {
+                            list_free(elem_ptr as *mut RawList);
+                        }
+                    },
+                    TypeTag::Tuple => {
+                        // Free tuple memory if it was dynamically allocated
+                        if !elem_ptr.is_null() {
+                            free(elem_ptr);
+                        }
+                    },
+                    _ => {} // Other types don't need special handling
+                }
+            }
+
+            // Free the data and tags arrays
+            free(rl.data as *mut _);
+            free(rl.tags as *mut _);
+        }
+
+        // Finally free the list structure itself
         free(list_ptr as *mut _);
     }
 }

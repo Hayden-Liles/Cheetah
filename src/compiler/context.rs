@@ -67,6 +67,9 @@ pub struct CompilationContext<'ctx> {
 
     /// Pending method calls (object_ptr, method_name, element_type)
     pub pending_method_calls: HashMap<String, (String, Box<Type>)>,
+
+    /// Temporary objects that need cleanup
+    pub temp_objects: Vec<(*mut std::ffi::c_void, fn(*mut std::ffi::c_void))>,
 }
 
 impl<'ctx> CompilationContext<'ctx> {
@@ -92,6 +95,7 @@ impl<'ctx> CompilationContext<'ctx> {
             current_environment: None,
             unique_id_counter: 0,
             pending_method_calls: HashMap::new(),
+            temp_objects: Vec::new(),
         }
     }
 
@@ -407,6 +411,18 @@ impl<'ctx> CompilationContext<'ctx> {
     /// Set a pending method call for later processing
     pub fn set_pending_method_call(&mut self, object_ptr: String, method_name: String, element_type: Box<Type>) {
         self.pending_method_calls.insert(object_ptr, (method_name, element_type));
+    }
+
+    /// Register a temporary object that needs cleanup
+    pub fn register_temp_object(&mut self, ptr: *mut std::ffi::c_void, cleanup_fn: fn(*mut std::ffi::c_void)) {
+        self.temp_objects.push((ptr, cleanup_fn));
+    }
+
+    /// Cleanup all temporary objects
+    pub fn cleanup_temp_objects(&mut self) {
+        for (ptr, cleanup_fn) in self.temp_objects.drain(..) {
+            cleanup_fn(ptr);
+        }
     }
 
     /// Convert a value from one type to another

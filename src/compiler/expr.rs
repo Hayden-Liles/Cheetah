@@ -3283,6 +3283,27 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         elt: &Expr,
         generators: &[crate::ast::Comprehension],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // NEW: Check for nested list comprehension pattern
+        if let Expr::ListComp { generators: inner_generators, elt: inner_elt, .. } = elt {
+            // This is a nested comprehension like [x for x in [y for y in ...]]
+            // Optimize by directly using the inner generator and element expression
+
+            // Check if we're just passing through values (e.g., [x for x in [i for i in range(...)]])
+            if let Expr::Name { id: outer_var, .. } = elt {
+                if generators.len() == 1 {
+                    if let Expr::Name { id: inner_var, .. } = &generators[0].target.as_ref() {
+                        if outer_var == inner_var {
+                            // This is a pass-through comprehension, we can eliminate the nesting
+                            // by directly using the inner comprehension's generators and element
+                            println!("Optimizing nested list comprehension by flattening");
+                            return self.compile_list_comprehension(inner_elt, inner_generators);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Regular list comprehension implementation
         self.compile_list_comprehension_non_recursive(elt, generators)
     }
 
