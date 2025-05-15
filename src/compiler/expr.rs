@@ -3741,13 +3741,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .unwrap()
             .get_parent()
             .unwrap();
-            
+
         // Save the current block
         let current_block = self.builder.get_insert_block().unwrap();
-        
+
         // Get entry block for allocations
         let entry_block = current_function.get_first_basic_block().unwrap();
-        
+
         // To ensure proper dominance, we need to position BEFORE the first instruction
         // in the entry block, not at the end of it
         if let Some(first_instr) = entry_block.get_first_instruction() {
@@ -3756,13 +3756,13 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             // If there are no instructions, position at the end is fine
             self.builder.position_at_end(entry_block);
         }
-        
+
         // Allocate loop variables in the entry block
         let index_ptr = self
             .builder
             .build_alloca(self.llvm_context.i64_type(), "range_comp_index")
             .unwrap();
-        
+
         // Allocate the target variable if it's a named target
         let target_alloca = if let Expr::Name { id, .. } = generator.target.as_ref() {
             // Use a unique name for the alloca to avoid conflicts
@@ -3775,10 +3775,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         } else {
             None
         };
-        
+
         // Return to the original position
         self.builder.position_at_end(current_block);
-        
+
         // Create the necessary basic blocks for the loop
         let loop_entry_block = self
             .llvm_context
@@ -3834,7 +3834,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             self.builder
                 .build_store(alloca, current_index)
                 .unwrap();
-                
+
             // Add the variable to the scope
             self.scope_stack.add_variable(id, alloca, Type::Int);
 
@@ -3865,7 +3865,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             )
             .unwrap();
         self.builder.build_store(index_ptr, next_index).unwrap();
-        
+
         // Return to the loop entry
         self.builder
             .build_unconditional_branch(loop_entry_block)
@@ -3885,7 +3885,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         result_list: inkwell::values::PointerValue<'ctx>,
         list_append_fn: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
-        println!("List iteration for comprehension, element is: {:?}, is_nested_list_comp: {}", 
+        println!("List iteration for comprehension, element is: {:?}, is_nested_list_comp: {}",
                 elt, matches!(elt, Expr::ListComp { .. }));
 
         // Create a scope for the list iteration
@@ -3921,26 +3921,26 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             .unwrap()
             .get_parent()
             .unwrap();
-        
+
         // Get current block
         let current_block = self.builder.get_insert_block().unwrap();
-        
+
         // Get entry block for allocations
         let entry_block = current_function.get_first_basic_block().unwrap();
-        
+
         // Position before first instruction in the entry block
         if let Some(first_instr) = entry_block.get_first_instruction() {
             self.builder.position_before(&first_instr);
         } else {
             self.builder.position_at_end(entry_block);
         }
-        
+
         // Allocate loop index in entry block
         let index_ptr = self
             .builder
             .build_alloca(self.llvm_context.i64_type(), "list_comp_index")
             .unwrap();
-        
+
         // Allocate target variable(s)
         let target_var = match &*generator.target {
             Expr::Name { id, .. } => {
@@ -3975,10 +3975,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             },
             _ => None
         };
-        
+
         // Return to original position
         self.builder.position_at_end(current_block);
-        
+
         // Create loop blocks
         let loop_entry_block = self
             .llvm_context
@@ -4056,10 +4056,10 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         element_ptr.into_pointer_value(),
                         &format!("load_{}", id)
                     ).unwrap();
-                    
+
                     // Store in our pre-allocated variable
                     self.builder.build_store(*alloca, element_val).unwrap();
-                    
+
                     // Add to scope
                     println!("Setting list comprehension variable '{}' to type: {:?}", id, element_type);
                     self.scope_stack.add_variable(id.clone(), *alloca, element_type.clone());
@@ -4095,7 +4095,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             )
             .unwrap();
         self.builder.build_store(index_ptr, next_index).unwrap();
-        
+
         // Loop back
         self.builder
             .build_unconditional_branch(loop_entry_block)
@@ -4528,7 +4528,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         current_function: inkwell::values::FunctionValue<'ctx>,
     ) -> Result<(), String> {
         println!("Processing list comprehension element: {:?}", elt);
-        println!("Processing list comprehension element: {:?}, is_nested_list_comp: {}", 
+        println!("Processing list comprehension element: {:?}, is_nested_list_comp: {}",
                 elt, matches!(elt, Expr::ListComp { .. }));
 
         // Create a scope for element evaluation
@@ -4536,39 +4536,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         println!("Created new scope for list comprehension element evaluation, depth: {}", self.scope_stack.get_depth());
 
         // Get the current block
-        let current_block = self.builder.get_insert_block().unwrap();
-        
-        // Get entry block for proper allocations
-        let entry_block = current_function.get_first_basic_block().unwrap();
-        
-        // Position before first instruction in entry block
-        if let Some(first_instr) = entry_block.get_first_instruction() {
-            self.builder.position_before(&first_instr);
-        } else {
-            self.builder.position_at_end(entry_block);
-        }
-        
-        // Pre-allocate result storage in the entry block for proper dominance
-        let element_alloca_i64 = self
-            .builder
-            .build_alloca(self.llvm_context.i64_type(), "comp_element_i64")
-            .unwrap();
-        
-        let element_alloca_f64 = self
-            .builder
-            .build_alloca(self.llvm_context.f64_type(), "comp_element_f64")
-            .unwrap();
-            
-        let element_alloca_ptr = self
-            .builder
-            .build_alloca(
-                self.llvm_context.ptr_type(inkwell::AddressSpace::default()),
-                "comp_element_ptr"
-            )
-            .unwrap();
-        
-        // Return to the original position
-        self.builder.position_at_end(current_block);
+        let _current_block = self.builder.get_insert_block().unwrap();
 
         // Create blocks for conditional evaluation
         let then_block = self
@@ -4604,7 +4572,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         // Normalize tuple element types if needed
         element_type = match &element_type {
             Type::Tuple(tuple_element_types) => {
-                if !tuple_element_types.is_empty() && 
+                if !tuple_element_types.is_empty() &&
                 tuple_element_types.iter().all(|t| t == &tuple_element_types[0]) {
                     tuple_element_types[0].clone()
                 } else {
@@ -4614,30 +4582,117 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             _ => element_type,
         };
 
+        // We no longer need malloc since we're using build_malloc
+        // This code is kept as a reference but commented out
+        /*
+        let _malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
+            let i8_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+            let malloc_type = i8_ptr_type.fn_type(&[self.llvm_context.i64_type().into()], false);
+            self.module.add_function("malloc", malloc_type, None)
+        });
+        */
+
         // Determine the appropriate storage for the element based on its type
         let element_ptr = match &element_type {
             Type::Int => {
-                self.builder.build_store(element_alloca_i64, element_val).unwrap();
-                element_alloca_i64
+                // Allocate memory for an i64
+                let i64_type = self.llvm_context.i64_type();
+
+                // Allocate memory for the element
+                let int_ptr = self.builder.build_malloc(i64_type, "comp_element_i64").unwrap();
+
+                // Store the element value in the allocated memory
+                if let BasicValueEnum::IntValue(int_val) = element_val {
+                    self.builder.build_store(int_ptr, int_val).unwrap();
+                } else {
+                    // Convert to int if needed
+                    let int_val = self.builder.build_int_cast_sign_flag(
+                        element_val.into_int_value(),
+                        i64_type,
+                        false,
+                        "to_i64"
+                    ).unwrap();
+                    self.builder.build_store(int_ptr, int_val).unwrap();
+                }
+                int_ptr
             },
             Type::Float => {
-                self.builder.build_store(element_alloca_f64, element_val).unwrap();
-                element_alloca_f64
+                // Allocate memory for an f64
+                let f64_type = self.llvm_context.f64_type();
+
+                // Allocate memory for the element
+                let float_ptr = self.builder.build_malloc(f64_type, "comp_element_f64").unwrap();
+
+                // Store the element value in the allocated memory
+                if let BasicValueEnum::FloatValue(float_val) = element_val {
+                    self.builder.build_store(float_ptr, float_val).unwrap();
+                } else {
+                    // Convert to float if needed
+                    let float_val = self.builder.build_unsigned_int_to_float(
+                        element_val.into_int_value(),
+                        f64_type,
+                        "to_f64"
+                    ).unwrap();
+                    self.builder.build_store(float_ptr, float_val).unwrap();
+                }
+                float_ptr
             },
             Type::Tuple(_) | Type::List(_) | Type::String | Type::Dict(_, _) => {
                 if element_val.is_pointer_value() {
-                    self.builder.build_store(element_alloca_ptr, element_val).unwrap();
-                    element_alloca_ptr
+                    // For pointer types, allocate memory for a pointer
+                    let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
+
+                    // Allocate memory for the element
+                    let ptr_ptr = self.builder.build_malloc(ptr_type, "comp_element_ptr").unwrap();
+
+                    // Store the element pointer in the allocated memory
+                    let element_ptr_val = element_val.into_pointer_value();
+                    self.builder.build_store(ptr_ptr, element_ptr_val).unwrap();
+                    ptr_ptr
                 } else {
-                    // If not already a pointer, store it in the integer alloca
-                    self.builder.build_store(element_alloca_i64, element_val).unwrap();
-                    element_alloca_i64
+                    // If not already a pointer, store it as an integer
+                    let i64_type = self.llvm_context.i64_type();
+
+                    // Allocate memory for the element
+                    let int_ptr = self.builder.build_malloc(i64_type, "comp_element_i64").unwrap();
+
+                    // Store the element value in the allocated memory
+                    if let BasicValueEnum::IntValue(int_val) = element_val {
+                        self.builder.build_store(int_ptr, int_val).unwrap();
+                    } else {
+                        // Convert to int if needed
+                        let int_val = self.builder.build_int_cast_sign_flag(
+                            element_val.into_int_value(),
+                            i64_type,
+                            false,
+                            "to_i64"
+                        ).unwrap();
+                        self.builder.build_store(int_ptr, int_val).unwrap();
+                    }
+                    int_ptr
                 }
             },
             _ => {
                 // Default to integer storage for other types
-                self.builder.build_store(element_alloca_i64, element_val).unwrap();
-                element_alloca_i64
+                let i64_type = self.llvm_context.i64_type();
+
+                // Allocate memory for the element
+                let int_ptr = self.builder.build_malloc(i64_type, "comp_element_i64").unwrap();
+
+                // Store the element value in the allocated memory
+                if let BasicValueEnum::IntValue(int_val) = element_val {
+                    self.builder.build_store(int_ptr, int_val).unwrap();
+                } else {
+                    // Convert to int if needed
+                    let int_val = self.builder.build_int_cast_sign_flag(
+                        element_val.into_int_value(),
+                        i64_type,
+                        false,
+                        "to_i64"
+                    ).unwrap();
+                    self.builder.build_store(int_ptr, int_val).unwrap();
+                }
+                int_ptr
             }
         };
 
@@ -4653,11 +4708,11 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                         "list_append_result",
                     )
                     .unwrap();
-                    
+
                 self.builder
                     .build_unconditional_branch(continue_block)
                     .unwrap();
-                    
+
                 self.builder.position_at_end(continue_block);
                 self.scope_stack.pop_scope();
                 return Ok(());
@@ -4696,7 +4751,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         // Continue block - cleanup
         self.builder.position_at_end(continue_block);
-        
+
         // Pop the scope for element evaluation
         self.scope_stack.pop_scope();
 
