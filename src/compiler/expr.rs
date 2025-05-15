@@ -4065,7 +4065,7 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     self.scope_stack.add_variable(id.clone(), *alloca, element_type.clone());
                 }
             },
-            Expr::Tuple { elts, .. } => {
+            Expr::Tuple {  .. } => {
                 // Handle tuple unpacking - would need more complex logic here
                 // but let's keep it simple for now
                 return Err("Tuple unpacking in nested list comprehensions is not fully implemented".to_string());
