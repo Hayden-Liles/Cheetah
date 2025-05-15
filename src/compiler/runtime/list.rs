@@ -44,6 +44,7 @@ pub extern "C" fn list_new() -> *mut RawList {
         (*ptr).data     = ptr::null_mut();
         (*ptr).tags     = ptr::null_mut();
     }
+    println!("List created: {:p}", ptr); // Debug print
     ptr
 }
 
@@ -61,6 +62,36 @@ pub extern "C" fn list_with_capacity(cap: i64) -> *mut RawList {
         (*rl).tags = calloc(cap as usize,
                             std::mem::size_of::<TypeTag>())
                      as *mut TypeTag;
+        rl
+    }
+}
+
+/// Create a list of consecutive integers from start (inclusive) to end (exclusive)
+/// This is a specialized function for efficiently creating range lists
+#[no_mangle]
+pub extern "C" fn list_from_range(start: i64, end: i64) -> *mut RawList {
+    unsafe {
+        // Calculate size
+        let size = if end > start { end - start } else { 0 };
+
+        // Create list with exact capacity
+        let rl = list_with_capacity(size);
+        if rl.is_null() { return rl; }
+
+        // Pre-allocate all integers at once
+        for i in 0..size {
+            let value = start + i;
+            let int_ptr = malloc(std::mem::size_of::<i64>()) as *mut i64;
+            *int_ptr = value;
+
+            // Store pointer and tag
+            *(*rl).data.add(i as usize) = int_ptr as *mut c_void;
+            *(*rl).tags.add(i as usize) = TypeTag::Int;
+        }
+
+        // Set final length
+        (*rl).length = size;
+
         rl
     }
 }
@@ -179,6 +210,8 @@ pub extern "C" fn list_free(list_ptr: *mut RawList) {
     unsafe {
         if list_ptr.is_null() { return; }
 
+        println!("Freeing list: {:p}", list_ptr); // Debug print
+
         let rl = &mut *list_ptr;
 
         // Free each element based on its tag type
@@ -192,21 +225,30 @@ pub extern "C" fn list_free(list_ptr: *mut RawList) {
                 match tag {
                     TypeTag::String => {
                         if !elem_ptr.is_null() {
+                            println!("  Freeing string element at index {}", i); // Debug print
                             free_string(elem_ptr as *mut c_char);
                         }
                     },
                     TypeTag::List => {
                         if !elem_ptr.is_null() {
+                            println!("  Freeing nested list element at index {}", i); // Debug print
                             list_free(elem_ptr as *mut RawList);
                         }
                     },
                     TypeTag::Tuple => {
                         // Free tuple memory if it was dynamically allocated
                         if !elem_ptr.is_null() {
+                            println!("  Freeing tuple element at index {}", i); // Debug print
                             free(elem_ptr);
                         }
                     },
-                    _ => {} // Other types don't need special handling
+                    _ => {
+                        // Other types still need their memory freed
+                        if !elem_ptr.is_null() {
+                            println!("  Freeing primitive element at index {}", i); // Debug print
+                            free(elem_ptr);
+                        }
+                    }
                 }
             }
 
@@ -247,6 +289,14 @@ pub fn register_list_functions<'ctx>(context: &'ctx Context, module: &mut Module
     module.add_function(
         "list_with_capacity",
         context.ptr_type(AddressSpace::default()).fn_type(&[context.i64_type().into()], false),
+        None,
+    );
+    module.add_function(
+        "list_from_range",
+        context.ptr_type(AddressSpace::default()).fn_type(&[
+            context.i64_type().into(),
+            context.i64_type().into()
+        ], false),
         None,
     );
     module.add_function(
@@ -358,6 +408,7 @@ pub fn register_list_runtime_functions(
 ) -> Result<(), String> {
     if let Some(f) = module.get_function("list_new") { engine.add_global_mapping(&f, list_new as usize); }
     if let Some(f) = module.get_function("list_with_capacity") { engine.add_global_mapping(&f, list_with_capacity as usize); }
+    if let Some(f) = module.get_function("list_from_range") { engine.add_global_mapping(&f, list_from_range as usize); }
     if let Some(f) = module.get_function("list_append") { engine.add_global_mapping(&f, list_append as usize); }
     if let Some(f) = module.get_function("list_append_tagged") { engine.add_global_mapping(&f, list_append_tagged as usize); }
     if let Some(f) = module.get_function("list_get") { engine.add_global_mapping(&f, list_get as usize); }

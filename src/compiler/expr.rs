@@ -3283,19 +3283,33 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
         elt: &Expr,
         generators: &[crate::ast::Comprehension],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        // NEW: Check for nested list comprehension pattern
+        // Improved nested list comprehension pattern detection
         if let Expr::ListComp { generators: inner_generators, elt: inner_elt, .. } = elt {
             // This is a nested comprehension like [x for x in [y for y in ...]]
-            // Optimize by directly using the inner generator and element expression
+            println!("Detected nested list comprehension pattern");
 
             // Check if we're just passing through values (e.g., [x for x in [i for i in range(...)]])
-            if let Expr::Name { id: outer_var, .. } = elt {
-                if generators.len() == 1 {
+            if generators.len() == 1 {
+                // Check if the outer expression is a name
+                if let Expr::Name { id: outer_var, .. } = elt {
+                    // Check if the target of the outer generator is a name
                     if let Expr::Name { id: inner_var, .. } = &generators[0].target.as_ref() {
                         if outer_var == inner_var {
                             // This is a pass-through comprehension, we can eliminate the nesting
                             // by directly using the inner comprehension's generators and element
-                            println!("Optimizing nested list comprehension by flattening");
+                            println!("Optimizing nested list comprehension by flattening (name match)");
+                            return self.compile_list_comprehension(inner_elt, inner_generators);
+                        }
+                    }
+                }
+
+                // Check if the outer target is a name and matches the inner element
+                if let Expr::Name { id: target_var, .. } = &generators[0].target.as_ref() {
+                    // Check if the inner element is a name
+                    if let Expr::Name { id: inner_element_var, .. } = inner_elt.as_ref() {
+                        // Check if the inner element matches the outer target
+                        if target_var == inner_element_var {
+                            println!("Optimizing nested list comprehension by flattening (target-element match)");
                             return self.compile_list_comprehension(inner_elt, inner_generators);
                         }
                     }
@@ -3329,7 +3343,15 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             // Compile the inner list comprehension first
             let (inner_list_val, inner_list_type) = self.compile_list_comprehension(inner_elt, inner_generators)?;
 
-            // Return the inner list directly
+            // If this is the outermost list comprehension, we need to ensure the inner list is freed
+            // when it's no longer needed. For now, we'll just return it directly.
+
+            // In a more complete implementation, we would:
+            // 1. Copy the elements from the inner list to the result list
+            // 2. Free the inner list
+            // 3. Return the result list
+
+            // But for now, we'll just return the inner list directly
             return Ok((inner_list_val, inner_list_type));
         }
 
@@ -3432,10 +3454,97 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
 
         self.ensure_block_has_terminator();
 
-        if let Expr::Call { func, .. } = &*generator.iter {
+        if let Expr::Call { func, args, .. } = &*generator.iter {
             if let Expr::Name { id, .. } = func.as_ref() {
                 if id == "range" {
-                    // Handle range iteration without popping the scope
+                    // Check if this is a simple range call that we can optimize
+                    if args.len() <= 2 && matches!(elt, Expr::Name { .. }) {
+                        // For simple cases like [i for i in range(0, 1_000_000)], use our optimized path
+                        if let Expr::Name { id: target_id, .. } = &*generator.target {
+                            if let Expr::Name { id: element_id, .. } = elt {
+                                if target_id == element_id && generator.ifs.is_empty() {
+                                    println!("Using optimized range list creation for [i for i in range(...)]");
+
+                                    // Extract range parameters
+                                    let (start, end) = match args.len() {
+                                        1 => {
+                                            // range(end) - start is implicitly 0
+                                            let (end_val, _) = self.compile_expr(&args[0])?;
+                                            (self.llvm_context.i64_type().const_int(0, false), end_val.into_int_value())
+                                        },
+                                        2 => {
+                                            // range(start, end)
+                                            let (start_val, _) = self.compile_expr(&args[0])?;
+                                            let (end_val, _) = self.compile_expr(&args[1])?;
+                                            (start_val.into_int_value(), end_val.into_int_value())
+                                        },
+                                        _ => {
+                                            // Fall back to regular handling for range(start, end, step)
+                                            self.handle_range_list_comprehension(
+                                                elt,
+                                                generator,
+                                                iter_val,
+                                                result_list,
+                                                list_append_fn,
+                                            )?;
+
+                                            // Get the element type for the result list
+                                            let (_, element_type) = self.compile_expr(elt)?;
+
+                                            // Now pop the scope after we've compiled the element expression
+                                            self.scope_stack.pop_scope();
+
+                                            return Ok((result_list.into(), Type::List(Box::new(element_type))));
+                                        }
+                                    };
+
+                                    // Use our specialized function to create the range list directly
+                                    let list_from_range_fn = match self.module.get_function("list_from_range") {
+                                        Some(f) => f,
+                                        None => {
+                                            // Fall back to regular handling if function not found
+                                            self.handle_range_list_comprehension(
+                                                elt,
+                                                generator,
+                                                iter_val,
+                                                result_list,
+                                                list_append_fn,
+                                            )?;
+
+                                            // Get the element type for the result list
+                                            let (_, element_type) = self.compile_expr(elt)?;
+
+                                            // Now pop the scope after we've compiled the element expression
+                                            self.scope_stack.pop_scope();
+
+                                            return Ok((result_list.into(), Type::List(Box::new(element_type))));
+                                        }
+                                    };
+
+                                    // Call list_from_range(start, end)
+                                    let call_result = self.builder
+                                        .build_call(
+                                            list_from_range_fn,
+                                            &[start.into(), end.into()],
+                                            "optimized_range_list"
+                                        )
+                                        .unwrap();
+
+                                    let optimized_list = call_result
+                                        .try_as_basic_value()
+                                        .left()
+                                        .ok_or_else(|| "Failed to create optimized range list".to_string())?;
+
+                                    // Pop the scope
+                                    self.scope_stack.pop_scope();
+
+                                    return Ok((optimized_list, Type::List(Box::new(Type::Int))));
+                                }
+                            }
+                        }
+                    }
+
+                    // Fall back to regular handling for more complex cases
                     self.handle_range_list_comprehension(
                         elt,
                         generator,
@@ -4603,24 +4712,14 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
             _ => element_type,
         };
 
-        // We no longer need malloc since we're using build_malloc
-        // This code is kept as a reference but commented out
-        /*
-        let _malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
-            let i8_ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
-            let malloc_type = i8_ptr_type.fn_type(&[self.llvm_context.i64_type().into()], false);
-            self.module.add_function("malloc", malloc_type, None)
-        });
-        */
-
         // Determine the appropriate storage for the element based on its type
         let element_ptr = match &element_type {
             Type::Int => {
                 // Allocate memory for an i64
                 let i64_type = self.llvm_context.i64_type();
 
-                // Allocate memory for the element
-                let int_ptr = self.builder.build_malloc(i64_type, "comp_element_i64").unwrap();
+                // Use stack allocation for better performance
+                let int_ptr = self.builder.build_alloca(i64_type, "comp_element_i64").unwrap();
 
                 // Store the element value in the allocated memory
                 if let BasicValueEnum::IntValue(int_val) = element_val {
@@ -4641,8 +4740,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Allocate memory for an f64
                 let f64_type = self.llvm_context.f64_type();
 
-                // Allocate memory for the element
-                let float_ptr = self.builder.build_malloc(f64_type, "comp_element_f64").unwrap();
+                // Use stack allocation for better performance
+                let float_ptr = self.builder.build_alloca(f64_type, "comp_element_f64").unwrap();
 
                 // Store the element value in the allocated memory
                 if let BasicValueEnum::FloatValue(float_val) = element_val {
@@ -4663,8 +4762,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     // For pointer types, allocate memory for a pointer
                     let ptr_type = self.llvm_context.ptr_type(inkwell::AddressSpace::default());
 
-                    // Allocate memory for the element
-                    let ptr_ptr = self.builder.build_malloc(ptr_type, "comp_element_ptr").unwrap();
+                    // Use stack allocation for better performance
+                    let ptr_ptr = self.builder.build_alloca(ptr_type, "comp_element_ptr").unwrap();
 
                     // Store the element pointer in the allocated memory
                     let element_ptr_val = element_val.into_pointer_value();
@@ -4674,8 +4773,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                     // If not already a pointer, store it as an integer
                     let i64_type = self.llvm_context.i64_type();
 
-                    // Allocate memory for the element
-                    let int_ptr = self.builder.build_malloc(i64_type, "comp_element_i64").unwrap();
+                    // Use stack allocation for better performance
+                    let int_ptr = self.builder.build_alloca(i64_type, "comp_element_i64").unwrap();
 
                     // Store the element value in the allocated memory
                     if let BasicValueEnum::IntValue(int_val) = element_val {
@@ -4697,8 +4796,8 @@ impl<'ctx> ExprCompiler<'ctx> for CompilationContext<'ctx> {
                 // Default to integer storage for other types
                 let i64_type = self.llvm_context.i64_type();
 
-                // Allocate memory for the element
-                let int_ptr = self.builder.build_malloc(i64_type, "comp_element_i64").unwrap();
+                // Use stack allocation for better performance
+                let int_ptr = self.builder.build_alloca(i64_type, "comp_element_i64").unwrap();
 
                 // Store the element value in the allocated memory
                 if let BasicValueEnum::IntValue(int_val) = element_val {
