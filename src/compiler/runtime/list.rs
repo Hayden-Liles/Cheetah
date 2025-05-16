@@ -46,7 +46,7 @@ pub extern "C" fn list_new() -> *mut RawList {
         (*ptr).tags        = ptr::null_mut();
         (*ptr).bulk_storage = ptr::null_mut();
     }
-    println!("List created: {:p}", ptr); // Debug print
+    // Explicitly avoid printing the pointer address
     ptr
 }
 
@@ -109,7 +109,7 @@ pub extern "C" fn list_from_range(start: i64, end: i64) -> *mut RawList {
                 *(*rl).tags.add(i as usize) = TypeTag::Int;
             }
 
-            println!("Created range list with bulk storage: {:p}", bulk_data);
+            // Removed debug print
         }
 
         // Set final length
@@ -233,13 +233,13 @@ pub extern "C" fn list_free(list_ptr: *mut RawList) {
     unsafe {
         if list_ptr.is_null() { return; }
 
-        println!("Freeing list: {:p}", list_ptr); // Debug print
+        // Removed debug print
 
         let rl = &mut *list_ptr;
 
         // Check if we have a bulk storage allocation
         if !rl.bulk_storage.is_null() {
-            println!("  Freeing bulk storage: {:p}", rl.bulk_storage); // Debug print
+            // Removed debug print
             free(rl.bulk_storage);
             // When using bulk storage, individual elements don't need to be freed
             // as they're part of the bulk allocation
@@ -255,27 +255,27 @@ pub extern "C" fn list_free(list_ptr: *mut RawList) {
                     match tag {
                         TypeTag::String => {
                             if !elem_ptr.is_null() {
-                                println!("  Freeing string element at index {}", i); // Debug print
+                                // Removed debug print
                                 free_string(elem_ptr as *mut c_char);
                             }
                         },
                         TypeTag::List => {
                             if !elem_ptr.is_null() {
-                                println!("  Freeing nested list element at index {}", i); // Debug print
+                                // Removed debug print
                                 list_free(elem_ptr as *mut RawList);
                             }
                         },
                         TypeTag::Tuple => {
                             // Free tuple memory if it was dynamically allocated
                             if !elem_ptr.is_null() {
-                                println!("  Freeing tuple element at index {}", i); // Debug print
+                                // Removed debug print
                                 free(elem_ptr);
                             }
                         },
                         _ => {
                             // Other types still need their memory freed
                             if !elem_ptr.is_null() {
-                                println!("  Freeing primitive element at index {}", i); // Debug print
+                                // Removed debug print
                                 free(elem_ptr);
                             }
                         }
